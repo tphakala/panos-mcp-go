@@ -43,13 +43,17 @@ type Config struct {
 	// another struct that is logged through a JSON handler prints both in full.
 	Password   string `json:"-"`
 	SkipVerify bool
-	CACert     string
-	ReadOnly   bool
-	JobWait    time.Duration
-	Transport  string
-	HTTPHost   string
-	HTTPPort   int
-	LogLevel   slog.Level
+	// SkipVerifySource names the variable that set SkipVerify (PANOS_SKIP_VERIFY
+	// or the pango alias PANOS_SKIP_VERIFY_CERTIFICATE) so a startup warning can
+	// report which variable disabled TLS verification. Empty when neither is set.
+	SkipVerifySource string
+	CACert           string
+	ReadOnly         bool
+	JobWait          time.Duration
+	Transport        string
+	HTTPHost         string
+	HTTPPort         int
+	LogLevel         slog.Level
 }
 
 // LogValue implements slog.LogValuer. It reports whether the API key and the
@@ -86,14 +90,22 @@ func (c Config) String() string { return c.LogValue().String() }
 // LoadConfig reads configuration from environment variables. Authentication is
 // an API key, or a username and password pair. When an API key and a username
 // are both supplied the API key is what pango ends up using, so the pair is
-// accepted rather than rejected.
+// accepted rather than rejected. PANOS_HOSTNAME and PANOS_SKIP_VERIFY_CERTIFICATE
+// are accepted as fallback aliases for PANOS_HOST and PANOS_SKIP_VERIFY, and the
+// log level is read from PANOS_LOG_LEVEL only (issue #4); these are the names
+// pango reads under Client.CheckEnvironment (pango
+// v0.10.3-0.20260731153743-efa43570c367, client.go:161,269,1141, read 2026-08-11).
 func LoadConfig() (Config, error) {
 	// Trim the string inputs. A value like " " would otherwise satisfy a
 	// non-empty check and fail much later, at connection time, with a URL error
 	// instead of a configuration error. Password is deliberately not trimmed:
 	// leading or trailing whitespace can be part of a real password.
+	//
+	// PANOS_HOST is primary; PANOS_HOSTNAME is accepted as a fallback alias
+	// because it is the name pango itself reads (issue #4).
+	host, _ := envFirst("PANOS_HOST", "PANOS_HOSTNAME")
 	cfg := Config{
-		Host:     strings.TrimSpace(os.Getenv("PANOS_HOST")),
+		Host:     host,
 		APIKey:   strings.TrimSpace(os.Getenv("PANOS_API_KEY")),
 		Username: strings.TrimSpace(os.Getenv("PANOS_USERNAME")),
 		Password: os.Getenv("PANOS_PASSWORD"),
@@ -107,7 +119,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	if cfg.Host == "" {
-		return Config{}, errors.New("PANOS_HOST environment variable is required")
+		return Config{}, errors.New("PANOS_HOST (or PANOS_HOSTNAME) environment variable is required")
 	}
 	if cfg.APIKey == "" {
 		if cfg.Username == "" {
@@ -126,7 +138,7 @@ func LoadConfig() (Config, error) {
 	if cfg.Port, err = portEnv("PANOS_PORT", 0); err != nil {
 		return Config{}, err
 	}
-	if cfg.SkipVerify, err = parseBoolEnv("PANOS_SKIP_VERIFY"); err != nil {
+	if cfg.SkipVerify, cfg.SkipVerifySource, err = parseBoolEnvFirst("PANOS_SKIP_VERIFY", "PANOS_SKIP_VERIFY_CERTIFICATE"); err != nil {
 		return Config{}, err
 	}
 	// Writes are opt-in (issue #3): readOnlyFromEnv returns read-only unless
@@ -156,7 +168,12 @@ func LoadConfig() (Config, error) {
 	if cfg.HTTPPort, err = portEnv("MCP_HTTP_PORT", defaultHTTPPort); err != nil {
 		return Config{}, err
 	}
-	if cfg.LogLevel, err = levelEnv("LOG_LEVEL", slog.LevelInfo); err != nil {
+	// Read PANOS_LOG_LEVEL only, never a bare LOG_LEVEL (issue #4): MCP clients
+	// pass their own environment down, so an unrelated LOG_LEVEL would otherwise
+	// change this server's verbosity. Unlike the host and skip-verify aliases,
+	// there is deliberately no fallback here; ignoring the inherited name is the
+	// fix, and the namespaced name matches pango's own PANOS_LOG_LEVEL.
+	if cfg.LogLevel, err = levelEnv("PANOS_LOG_LEVEL", slog.LevelInfo); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -169,6 +186,45 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envFirst returns the trimmed value of the first non-empty variable, checking
+// primary first and then each alias in order, together with the name it came
+// from (so a caller can attribute a parse error to the variable that actually
+// carried the value). When none is set it returns "" and the primary name.
+// Aliases exist to honour pango's own environment contract (issue #4): the
+// project's own name stays primary and wins, the pango name is a fallback. The
+// primary parameter is separate from the variadic aliases so a zero-name call
+// cannot compile.
+func envFirst(primary string, aliases ...string) (value, from string) {
+	if v := strings.TrimSpace(os.Getenv(primary)); v != "" {
+		return v, primary
+	}
+	for _, n := range aliases {
+		if v := strings.TrimSpace(os.Getenv(n)); v != "" {
+			return v, n
+		}
+	}
+	return "", primary
+}
+
+// parseBoolEnvFirst parses the first set variable among primary and aliases as a
+// boolean, primary first. It resolves only the NAME through envFirst and then
+// reuses parseBoolEnv, so trimming, the empty-means-false rule, and the error
+// message format all stay single-sourced. It also returns that name (from), so a
+// caller can report which variable supplied a security-relevant value. A parse
+// failure is reported against the variable that actually carried the value, so
+// an operator using only a pango alias is pointed at the alias, never at a
+// primary they never set.
+func parseBoolEnvFirst(primary string, aliases ...string) (value bool, from string, err error) {
+	raw, name := envFirst(primary, aliases...)
+	if raw == "" {
+		// Nothing set: report no source, so from stays empty and cannot be mistaken
+		// for a variable that supplied the value.
+		return false, "", nil
+	}
+	value, err = parseBoolEnv(name)
+	return value, name, err
 }
 
 // intEnv parses an integer environment variable, returning def when the
