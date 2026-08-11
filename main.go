@@ -33,6 +33,14 @@ func runMain() error {
 		return err
 	}
 	levelVar.Set(cfg.LogLevel)
+	// A disabled TLS check is a security-relevant state, and PANOS_SKIP_VERIFY has
+	// a pango-alias fallback (PANOS_SKIP_VERIFY_CERTIFICATE) that could be inherited
+	// from the environment, so make it loud and name the variable that set it
+	// rather than letting it pass silently (issue #4 review).
+	if cfg.SkipVerify {
+		logger.Warn("TLS certificate verification is disabled; the firewall session can be intercepted",
+			"source", cfg.SkipVerifySource)
+	}
 	logger.Debug("configuration loaded", "version", version, "config", cfg)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

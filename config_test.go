@@ -113,6 +113,11 @@ func TestLoadConfigSkipVerifyAlias(t *testing.T) {
 		if !cfg.SkipVerify {
 			t.Error("SkipVerify = false, want true from the PANOS_SKIP_VERIFY_CERTIFICATE fallback")
 		}
+		// The startup warning names the source, so a skip-verify supplied by the
+		// alias must be attributed to the alias.
+		if cfg.SkipVerifySource != "PANOS_SKIP_VERIFY_CERTIFICATE" {
+			t.Errorf("SkipVerifySource = %q, want PANOS_SKIP_VERIFY_CERTIFICATE", cfg.SkipVerifySource)
+		}
 	})
 	t.Run("primary wins when both set", func(t *testing.T) {
 		setEnv(t, map[string]string{
@@ -125,6 +130,9 @@ func TestLoadConfigSkipVerifyAlias(t *testing.T) {
 		}
 		if cfg.SkipVerify {
 			t.Error("SkipVerify = true, want false: PANOS_SKIP_VERIFY must win over the alias")
+		}
+		if cfg.SkipVerifySource != "PANOS_SKIP_VERIFY" {
+			t.Errorf("SkipVerifySource = %q, want PANOS_SKIP_VERIFY (the primary supplied the value)", cfg.SkipVerifySource)
 		}
 	})
 }
@@ -427,9 +435,10 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 		// range, so this case pins that the cap sits below the wrap point.
 		{"job wait past duration wrap", map[string]string{"PANOS_JOB_WAIT": "9223372037"}, "PANOS_JOB_WAIT"},
 		{"job wait beyond int64", map[string]string{"PANOS_JOB_WAIT": "9223372036854775808"}, "PANOS_JOB_WAIT"},
-		// Trailing space pins attribution to the primary: "PANOS_SKIP_VERIFY " does
-		// not occur in the alias error "invalid PANOS_SKIP_VERIFY_CERTIFICATE value".
-		{"bad skip verify", map[string]string{"PANOS_SKIP_VERIFY": "yes"}, "PANOS_SKIP_VERIFY "},
+		// Match the stable phrase "PANOS_SKIP_VERIFY value" to pin attribution to
+		// the primary: it cannot occur in the alias error, whose text is
+		// "invalid PANOS_SKIP_VERIFY_CERTIFICATE value".
+		{"bad skip verify", map[string]string{"PANOS_SKIP_VERIFY": "yes"}, "PANOS_SKIP_VERIFY value"},
 		// The alias is set and invalid; the error must name the variable that
 		// carried the value, so the full _CERTIFICATE name (not the primary that
 		// is a prefix of it) is required.

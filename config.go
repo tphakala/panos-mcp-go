@@ -43,13 +43,17 @@ type Config struct {
 	// another struct that is logged through a JSON handler prints both in full.
 	Password   string `json:"-"`
 	SkipVerify bool
-	CACert     string
-	ReadOnly   bool
-	JobWait    time.Duration
-	Transport  string
-	HTTPHost   string
-	HTTPPort   int
-	LogLevel   slog.Level
+	// SkipVerifySource names the variable that set SkipVerify (PANOS_SKIP_VERIFY
+	// or the pango alias PANOS_SKIP_VERIFY_CERTIFICATE) so a startup warning can
+	// report which variable disabled TLS verification. Empty when neither is set.
+	SkipVerifySource string
+	CACert           string
+	ReadOnly         bool
+	JobWait          time.Duration
+	Transport        string
+	HTTPHost         string
+	HTTPPort         int
+	LogLevel         slog.Level
 }
 
 // LogValue implements slog.LogValuer. It reports whether the API key and the
@@ -134,7 +138,7 @@ func LoadConfig() (Config, error) {
 	if cfg.Port, err = portEnv("PANOS_PORT", 0); err != nil {
 		return Config{}, err
 	}
-	if cfg.SkipVerify, err = parseBoolEnvFirst("PANOS_SKIP_VERIFY", "PANOS_SKIP_VERIFY_CERTIFICATE"); err != nil {
+	if cfg.SkipVerify, cfg.SkipVerifySource, err = parseBoolEnvFirst("PANOS_SKIP_VERIFY", "PANOS_SKIP_VERIFY_CERTIFICATE"); err != nil {
 		return Config{}, err
 	}
 	// Writes are opt-in (issue #3): readOnlyFromEnv returns read-only unless
@@ -207,12 +211,15 @@ func envFirst(primary string, aliases ...string) (value, from string) {
 // parseBoolEnvFirst parses the first set variable among primary and aliases as a
 // boolean, primary first. It resolves only the NAME through envFirst and then
 // reuses parseBoolEnv, so trimming, the empty-means-false rule, and the error
-// message format all stay single-sourced. A parse failure is reported against
-// the variable that actually carried the value, so an operator using only a
-// pango alias is pointed at the alias, never at a primary they never set.
-func parseBoolEnvFirst(primary string, aliases ...string) (bool, error) {
-	_, from := envFirst(primary, aliases...)
-	return parseBoolEnv(from)
+// message format all stay single-sourced. It also returns that name (from), so a
+// caller can report which variable supplied a security-relevant value. A parse
+// failure is reported against the variable that actually carried the value, so
+// an operator using only a pango alias is pointed at the alias, never at a
+// primary they never set.
+func parseBoolEnvFirst(primary string, aliases ...string) (value bool, from string, err error) {
+	_, from = envFirst(primary, aliases...)
+	value, err = parseBoolEnv(from)
+	return value, from, err
 }
 
 // intEnv parses an integer environment variable, returning def when the
