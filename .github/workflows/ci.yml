@@ -9,13 +9,35 @@ on:
 permissions:
   contents: read
 
+# Cancel a superseded run on the same ref. A new push to a PR branch makes the
+# previous run's result irrelevant, and main only cares about its latest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Deliberate, manual tool pins. Dependabot cannot see these (no action ref, no
+# go.mod entry), so they are bumped by hand, exactly as the golangci-lint-action
+# version input was before. golangci-lint must stay on 2.x: .golangci.yaml is the
+# v2 config schema and Taskfile.yml's go:lint:selftest was verified against 2.12.2.
+env:
+  TASK_VERSION: v3.50.0
+  GOLANGCI_LINT_VERSION: v2.12.2
+  # Commit the golangci-lint v2.12.2 tag points at; pins the install script
+  # itself, not just the binary it fetches. Bump with GOLANGCI_LINT_VERSION.
+  GOLANGCI_LINT_INSTALL_SHA: c0d3ddc9cf3faa61a4e378e879ece580256d76e5
+
 jobs:
-  test:
+  # One job runs `task ci`, so the Taskfile is the single source of truth for the
+  # gate and CI cannot drift from what developers run locally. Notably this is the
+  # only place CI runs go:lint:selftest, which proves the ruleguard rules in rules/
+  # actually load; a broken gocritic ruleguard path would otherwise reach main
+  # with CI green.
+  ci:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       # persist-credentials: false keeps the GITHUB_TOKEN out of .git/config,
-      # where any later step in the job could read it. Neither job pushes.
+      # where any later step in the job could read it. This job never pushes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -24,45 +46,27 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Download dependencies
-        run: go mod download
+      # go install pins task by version and verifies it against the Go checksum
+      # database (sum.golang.org); it is a supported install path for task. The
+      # GITHUB_PATH line puts $(go env GOPATH)/bin on PATH for the later steps,
+      # covering both this binary and the golangci-lint installed into the same
+      # directory below.
+      - name: Install Task
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install "github.com/go-task/task/v3/cmd/task@${TASK_VERSION}"
 
-      # Guards pin_deps.go. If that file is deleted or broken, go mod tidy drops
-      # the pinned pango and go-sdk requirements, and vet, test and build all
-      # still pass because no code imports them yet. -diff writes nothing and
-      # exits non-zero on any difference.
-      - name: Tidy check
-        run: go mod tidy -diff
+      # golangci-lint ships a prebuilt, checksum-verified release binary, used
+      # here rather than `go install`: the maintainers do not support source
+      # installs, and the prebuilt binary avoids compiling its large dependency
+      # tree. curl -f plus the default bash pipefail make a failed download fail
+      # the step.
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL "https://raw.githubusercontent.com/golangci/golangci-lint/${GOLANGCI_LINT_INSTALL_SHA}/install.sh" \
+            | sh -s -- -b "$(go env GOPATH)/bin" "${GOLANGCI_LINT_VERSION}"
 
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -v -race ./...
-
-      - name: Build
-        run: go build -o panos-mcp-go .
-
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      # persist-credentials: false keeps the GITHUB_TOKEN out of .git/config,
-      # where any later step in the job could read it. Neither job pushes.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: "1.26"
-
-      # Pinned rather than "latest" so a golangci-lint release cannot turn this
-      # workflow red with no change to the repository, and so CI reproduces the
-      # version developers run locally. Dependabot bumps the action ref; this
-      # input is bumped deliberately. The pin must stay on 2.x: .golangci.yaml
-      # declares the v2 config schema.
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
-        with:
-          version: v2.12.2
+      # task ci = go:fmt:check, go:tidy:check, go:vet, go:lint, go:lint:selftest,
+      # go:test (-race), go:build.
+      - name: Run task ci
+        run: task ci
