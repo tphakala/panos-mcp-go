@@ -99,6 +99,11 @@ func LoadConfig() (Config, error) {
 		Password: os.Getenv("PANOS_PASSWORD"),
 		CACert:   strings.TrimSpace(os.Getenv("PANOS_CA_CERT")),
 		HTTPHost: envOr("MCP_HTTP_HOST", defaultHTTPHost),
+		// ReadOnly defaults to true so writes are opt-in (issue #3). The assignment
+		// below overwrites it in the normal path; keeping the safe value here means
+		// that if that assignment is ever removed, the server fails closed
+		// (read-only) rather than open.
+		ReadOnly: true,
 	}
 
 	if cfg.Host == "" {
@@ -124,7 +129,10 @@ func LoadConfig() (Config, error) {
 	if cfg.SkipVerify, err = parseBoolEnv("PANOS_SKIP_VERIFY"); err != nil {
 		return Config{}, err
 	}
-	if cfg.ReadOnly, err = parseBoolEnv("PANOS_READ_ONLY"); err != nil {
+	// Writes are opt-in (issue #3): readOnlyFromEnv returns read-only unless
+	// PANOS_ALLOW_WRITES=true. The ReadOnly default set above explains why a lost
+	// assignment fails closed.
+	if cfg.ReadOnly, err = readOnlyFromEnv(); err != nil {
 		return Config{}, err
 	}
 
@@ -211,6 +219,29 @@ func parseBoolEnv(name string) (bool, error) {
 		return false, fmt.Errorf("invalid %s value %q: expected true/false", name, raw)
 	}
 	return v, nil
+}
+
+// readOnlyFromEnv resolves the read-only setting. Writes are opt-in via
+// PANOS_ALLOW_WRITES (issue #3): absent or empty means read-only, so a typo in
+// the variable NAME fails safe; a typo in the VALUE still fails loudly through
+// parseBoolEnv. A lingering PANOS_READ_ONLY aborts startup rather than being
+// silently ignored: it governed the same safety property under the old
+// contract, so disregarding it could leave the server in a mode the operator
+// did not intend. Forcing a conscious migration is the point of issue #3.
+//
+// Both error paths return true (read-only), so the helper fails safe in
+// isolation: a caller that logged the error instead of aborting would still get
+// read-only, not writes.
+func readOnlyFromEnv() (bool, error) {
+	if strings.TrimSpace(os.Getenv("PANOS_READ_ONLY")) != "" {
+		return true, errors.New(
+			"PANOS_READ_ONLY has been removed: writes are disabled unless PANOS_ALLOW_WRITES=true; unset PANOS_READ_ONLY")
+	}
+	allowWrites, err := parseBoolEnv("PANOS_ALLOW_WRITES")
+	if err != nil {
+		return true, err
+	}
+	return !allowWrites, nil
 }
 
 // levelEnv parses a slog level, returning def when the variable is unset or

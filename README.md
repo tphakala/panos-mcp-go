@@ -14,13 +14,15 @@ The goal is to give an AI assistant configuration management of a single device:
 - Security and NAT policy, including rule movement
 - The candidate commit lifecycle: commit, push, validate, revert, config diff, job status
 
-Two safety properties are planned alongside it. Writes will touch the candidate configuration only, so nothing reaches the running configuration until an explicit commit tool is called, and a read-only mode will be available that registers no write tools at all.
+Two safety properties are planned alongside it. Writes will touch the candidate configuration only, so nothing reaches the running configuration until an explicit commit tool is called, and the server is read-only by default: write tools will be registered only when `PANOS_ALLOW_WRITES=true` is set explicitly.
 
 None of the above is implemented yet.
 
 ## Configuration
 
 Configuration comes from environment variables. `PANOS_HOST` is required, along with either `PANOS_API_KEY` or both `PANOS_USERNAME` and `PANOS_PASSWORD`.
+
+The server is read-only unless `PANOS_ALLOW_WRITES=true` is set, so a stale deployment cannot silently come up writable: enabling writes now requires the new variable. `PANOS_ALLOW_WRITES` replaces the earlier `PANOS_READ_ONLY`, and the server refuses to start while a non-empty `PANOS_READ_ONLY` is still set, forcing a conscious migration rather than silently ignoring a prior write-intent.
 
 See [.env.example](.env.example) for the full set with defaults and notes. Nothing loads a `.env` file automatically; export the variables yourself or set them in your MCP client's server configuration.
 

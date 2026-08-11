@@ -15,9 +15,11 @@ import (
 // configEnvVars is every variable LoadConfig reads. Keep in sync with config.go:
 // a variable missing here is not cleared, so the developer's real environment
 // leaks into the tests and they pass or fail depending on the machine.
+// PANOS_READ_ONLY is removed as a functional setting but stays here: LoadConfig
+// still reads it for the migration guard, so it must be scrubbed like the rest.
 var configEnvVars = []string{
 	"PANOS_HOST", "PANOS_PORT", "PANOS_API_KEY", "PANOS_USERNAME", "PANOS_PASSWORD",
-	"PANOS_SKIP_VERIFY", "PANOS_CA_CERT", "PANOS_READ_ONLY", "PANOS_JOB_WAIT",
+	"PANOS_SKIP_VERIFY", "PANOS_CA_CERT", "PANOS_ALLOW_WRITES", "PANOS_READ_ONLY", "PANOS_JOB_WAIT",
 	"MCP_TRANSPORT", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "LOG_LEVEL",
 }
 
@@ -122,8 +124,14 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Port != 0 {
 		t.Errorf("Port = %d, want 0 so the scheme default applies", cfg.Port)
 	}
-	if cfg.ReadOnly || cfg.SkipVerify {
-		t.Errorf("boolean defaults must be false, got ReadOnly=%v SkipVerify=%v", cfg.ReadOnly, cfg.SkipVerify)
+	// Writes are opt-in (issue #3): with PANOS_ALLOW_WRITES unset the server is
+	// read-only, the safe default. Dropping the negation in readOnlyFromEnv, so an
+	// absent variable yields read-write, turns this red.
+	if !cfg.ReadOnly {
+		t.Error("ReadOnly = false, want true: writes must be opt-in via PANOS_ALLOW_WRITES")
+	}
+	if cfg.SkipVerify {
+		t.Errorf("SkipVerify = %v, want false", cfg.SkipVerify)
 	}
 }
 
@@ -131,7 +139,7 @@ func TestLoadConfigParsesValues(t *testing.T) {
 	setEnv(t, map[string]string{
 		"PANOS_HOST": "fw.example.net", "PANOS_PORT": "8443",
 		"PANOS_USERNAME": "admin", "PANOS_PASSWORD": "pw",
-		"PANOS_SKIP_VERIFY": "true", "PANOS_READ_ONLY": "true",
+		"PANOS_SKIP_VERIFY": "true", "PANOS_ALLOW_WRITES": "true",
 		"PANOS_CA_CERT": "/etc/ssl/ca.pem", "PANOS_JOB_WAIT": "30",
 		"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_PORT": "9090",
 		"LOG_LEVEL": "debug",
@@ -160,8 +168,13 @@ func TestLoadConfigParsesValues(t *testing.T) {
 	if cfg.HTTPPort != 9090 {
 		t.Errorf("HTTPPort = %d, want 9090", cfg.HTTPPort)
 	}
-	if !cfg.SkipVerify || !cfg.ReadOnly {
-		t.Errorf("SkipVerify = %v, ReadOnly = %v, want both true", cfg.SkipVerify, cfg.ReadOnly)
+	if !cfg.SkipVerify {
+		t.Errorf("SkipVerify = %v, want true", cfg.SkipVerify)
+	}
+	// PANOS_ALLOW_WRITES=true is the one input that flips ReadOnly off; dropping
+	// the negation (cfg.ReadOnly stays true) turns this red.
+	if cfg.ReadOnly {
+		t.Errorf("ReadOnly = %v, want false when PANOS_ALLOW_WRITES=true", cfg.ReadOnly)
 	}
 	if cfg.JobWait != 30*time.Second {
 		t.Errorf("JobWait = %v, want 30s", cfg.JobWait)
@@ -173,12 +186,13 @@ func TestLoadConfigParsesValues(t *testing.T) {
 
 // TestLoadConfigParsesExplicitFalse pins that an explicit "false" is read as
 // false. Without it, a parseBoolEnv that ignored its parsed value and always
-// returned true would survive the suite, silently disabling TLS verification
-// for an operator who asked for it.
+// returned true would survive the suite, silently disabling TLS verification or
+// enabling writes for an operator who asked for neither. PANOS_ALLOW_WRITES=false
+// must behave exactly like the absent default: read-only.
 func TestLoadConfigParsesExplicitFalse(t *testing.T) {
 	setEnv(t, map[string]string{
 		"PANOS_HOST": "fw", "PANOS_API_KEY": "k",
-		"PANOS_SKIP_VERIFY": "false", "PANOS_READ_ONLY": "false",
+		"PANOS_SKIP_VERIFY": "false", "PANOS_ALLOW_WRITES": "false",
 	})
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -187,8 +201,67 @@ func TestLoadConfigParsesExplicitFalse(t *testing.T) {
 	if cfg.SkipVerify {
 		t.Error("SkipVerify = true, want false for an explicit false")
 	}
-	if cfg.ReadOnly {
-		t.Error("ReadOnly = true, want false for an explicit false")
+	if !cfg.ReadOnly {
+		t.Error("ReadOnly = false, want true: PANOS_ALLOW_WRITES=false means read-only")
+	}
+}
+
+// TestLoadConfigRejectsRemovedReadOnlyVar pins the migration guard. A lingering
+// PANOS_READ_ONLY with any non-empty value must abort startup and name both the
+// old and the new variable, so an operator who still sets the old variable is
+// forced to migrate consciously instead of having a prior write-intent silently
+// dropped. Both "true" and "false" must trip it: the guard keys on a non-empty
+// value, not on the parsed boolean. Deleting the guard block turns this red.
+func TestLoadConfigRejectsRemovedReadOnlyVar(t *testing.T) {
+	for _, val := range []string{"true", "false"} {
+		t.Run(val, func(t *testing.T) {
+			setEnv(t, map[string]string{
+				"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "PANOS_READ_ONLY": val,
+			})
+			_, err := LoadConfig()
+			if err == nil {
+				t.Fatal("expected an error when the removed PANOS_READ_ONLY is set")
+			}
+			for _, want := range []string{"PANOS_READ_ONLY", "PANOS_ALLOW_WRITES"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error should name %s, got %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestLoadConfigIgnoresBlankRemovedVar pins that an empty or whitespace-only
+// PANOS_READ_ONLY does not trip the migration guard, matching how the rest of
+// LoadConfig treats empty as unset. The server boots read-only. Replacing the
+// TrimSpace guard condition with a bare LookupEnv presence check turns this red.
+func TestLoadConfigIgnoresBlankRemovedVar(t *testing.T) {
+	setEnv(t, map[string]string{
+		"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "PANOS_READ_ONLY": "   ",
+	})
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("a blank PANOS_READ_ONLY must not abort startup: %v", err)
+	}
+	if !cfg.ReadOnly {
+		t.Error("ReadOnly = false, want true: a blank PANOS_READ_ONLY leaves the safe default")
+	}
+}
+
+// TestLoadConfigGuardPrecedesAllowWrites pins that the migration guard is checked
+// before PANOS_ALLOW_WRITES, so an operator who adds the new variable but forgets
+// to delete the old one is stopped rather than silently booting writable.
+func TestLoadConfigGuardPrecedesAllowWrites(t *testing.T) {
+	setEnv(t, map[string]string{
+		"PANOS_HOST": "fw", "PANOS_API_KEY": "k",
+		"PANOS_READ_ONLY": "true", "PANOS_ALLOW_WRITES": "true",
+	})
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected the guard to abort when PANOS_READ_ONLY is set alongside PANOS_ALLOW_WRITES")
+	}
+	if !strings.Contains(err.Error(), "PANOS_READ_ONLY") {
+		t.Errorf("error should name PANOS_READ_ONLY, got %v", err)
 	}
 }
 
@@ -263,7 +336,7 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 		{"job wait past duration wrap", map[string]string{"PANOS_JOB_WAIT": "9223372037"}, "PANOS_JOB_WAIT"},
 		{"job wait beyond int64", map[string]string{"PANOS_JOB_WAIT": "9223372036854775808"}, "PANOS_JOB_WAIT"},
 		{"bad skip verify", map[string]string{"PANOS_SKIP_VERIFY": "yes"}, "PANOS_SKIP_VERIFY"},
-		{"bad read only", map[string]string{"PANOS_READ_ONLY": "maybe"}, "PANOS_READ_ONLY"},
+		{"bad allow writes", map[string]string{"PANOS_ALLOW_WRITES": "maybe"}, "PANOS_ALLOW_WRITES"},
 		{"bad log level", map[string]string{"LOG_LEVEL": "verbose"}, "LOG_LEVEL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -352,7 +425,8 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 		"PANOS_USERNAME": "  admin  ", "PANOS_CA_CERT": "  /ca.pem  ",
 		"MCP_TRANSPORT": "  http  ", "MCP_HTTP_HOST": "  0.0.0.0  ",
 		"MCP_HTTP_PORT": "  9090  ", "PANOS_JOB_WAIT": "  30  ",
-		"PANOS_SKIP_VERIFY": "  true  ", "LOG_LEVEL": "  debug  ",
+		"PANOS_SKIP_VERIFY": "  true  ", "PANOS_ALLOW_WRITES": "  true  ",
+		"LOG_LEVEL": "  debug  ",
 	})
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -378,6 +452,12 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 	}
 	if !cfg.SkipVerify {
 		t.Error("SkipVerify = false, want true")
+	}
+	// The whitespace an operator pastes around a value must still enable writes
+	// rather than error. Removing TrimSpace from parseBoolEnv makes ParseBool fail
+	// on "  true  ", which surfaces here as an unexpected LoadConfig error.
+	if cfg.ReadOnly {
+		t.Error(`ReadOnly = true, want false: PANOS_ALLOW_WRITES="  true  " enables writes after trimming`)
 	}
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Errorf("LogLevel = %v, want DEBUG", cfg.LogLevel)
