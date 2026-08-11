@@ -12,15 +12,21 @@ import (
 	"time"
 )
 
-// configEnvVars is every variable LoadConfig reads. Keep in sync with config.go:
-// a variable missing here is not cleared, so the developer's real environment
+// configEnvVars lists every variable LoadConfig reads, plus LOG_LEVEL which is
+// only scrubbed, not read (see below). Keep in sync with config.go: a read
+// variable missing here is not cleared, so the developer's real environment
 // leaks into the tests and they pass or fail depending on the machine.
 // PANOS_READ_ONLY is removed as a functional setting but stays here: LoadConfig
 // still reads it for the migration guard, so it must be scrubbed like the rest.
+// LOG_LEVEL is likewise no longer read (issue #4 renamed it to PANOS_LOG_LEVEL),
+// but it stays so a developer's exported LOG_LEVEL cannot mask a regression that
+// reintroduces the read; TestLoadConfigIgnoresBareLogLevel is the dedicated guard
+// that reddens if a bare LOG_LEVEL read is added back.
 var configEnvVars = []string{
-	"PANOS_HOST", "PANOS_PORT", "PANOS_API_KEY", "PANOS_USERNAME", "PANOS_PASSWORD",
-	"PANOS_SKIP_VERIFY", "PANOS_CA_CERT", "PANOS_ALLOW_WRITES", "PANOS_READ_ONLY", "PANOS_JOB_WAIT",
-	"MCP_TRANSPORT", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "LOG_LEVEL",
+	"PANOS_HOST", "PANOS_HOSTNAME", "PANOS_PORT", "PANOS_API_KEY", "PANOS_USERNAME", "PANOS_PASSWORD",
+	"PANOS_SKIP_VERIFY", "PANOS_SKIP_VERIFY_CERTIFICATE", "PANOS_CA_CERT",
+	"PANOS_ALLOW_WRITES", "PANOS_READ_ONLY", "PANOS_JOB_WAIT",
+	"MCP_TRANSPORT", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "PANOS_LOG_LEVEL", "LOG_LEVEL",
 }
 
 // setEnv unsets every configuration variable, then applies kv. The variables are
@@ -47,9 +53,80 @@ func TestLoadConfigRequiresHost(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing PANOS_HOST")
 	}
-	if !strings.Contains(err.Error(), "PANOS_HOST") {
-		t.Fatalf("error should name PANOS_HOST, got %v", err)
+	// Assert the composite phrase, not just "PANOS_HOST": that substring also
+	// occurs inside "PANOS_HOSTNAME", so a message naming only the alias would
+	// pass a bare Contains("PANOS_HOST") check vacuously.
+	if !strings.Contains(err.Error(), "PANOS_HOST (or PANOS_HOSTNAME)") {
+		t.Fatalf("error should name both PANOS_HOST and PANOS_HOSTNAME, got %v", err)
 	}
+}
+
+// TestLoadConfigHostAlias pins that PANOS_HOSTNAME (the name pango itself reads)
+// is accepted as a fallback for PANOS_HOST, that the primary wins when both are
+// set, and that a whitespace-only primary falls through to the alias (issue #4).
+func TestLoadConfigHostAlias(t *testing.T) {
+	t.Run("fallback used when primary unset", func(t *testing.T) {
+		setEnv(t, map[string]string{"PANOS_HOSTNAME": "  fw2  ", "PANOS_API_KEY": "k"})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Host != "fw2" {
+			t.Errorf("Host = %q, want fw2 from the PANOS_HOSTNAME fallback (trimmed)", cfg.Host)
+		}
+	})
+	t.Run("primary wins when both set", func(t *testing.T) {
+		setEnv(t, map[string]string{"PANOS_HOST": "primary", "PANOS_HOSTNAME": "alias", "PANOS_API_KEY": "k"})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Host != "primary" {
+			t.Errorf("Host = %q, want primary: PANOS_HOST must win over PANOS_HOSTNAME", cfg.Host)
+		}
+	})
+	t.Run("blank primary falls through to alias", func(t *testing.T) {
+		setEnv(t, map[string]string{"PANOS_HOST": "   ", "PANOS_HOSTNAME": "fw2", "PANOS_API_KEY": "k"})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Host != "fw2" {
+			t.Errorf("Host = %q, want fw2: a whitespace-only PANOS_HOST is treated as unset", cfg.Host)
+		}
+	})
+}
+
+// TestLoadConfigSkipVerifyAlias pins that PANOS_SKIP_VERIFY_CERTIFICATE (pango's
+// name) is accepted as a fallback for PANOS_SKIP_VERIFY, and that the primary
+// wins when both are set (issue #4).
+func TestLoadConfigSkipVerifyAlias(t *testing.T) {
+	t.Run("fallback used when primary unset", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"PANOS_HOST": "fw", "PANOS_API_KEY": "k",
+			"PANOS_SKIP_VERIFY_CERTIFICATE": "true",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.SkipVerify {
+			t.Error("SkipVerify = false, want true from the PANOS_SKIP_VERIFY_CERTIFICATE fallback")
+		}
+	})
+	t.Run("primary wins when both set", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"PANOS_HOST": "fw", "PANOS_API_KEY": "k",
+			"PANOS_SKIP_VERIFY": "false", "PANOS_SKIP_VERIFY_CERTIFICATE": "true",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SkipVerify {
+			t.Error("SkipVerify = true, want false: PANOS_SKIP_VERIFY must win over the alias")
+		}
+	})
 }
 
 // TestLoadConfigRejectsBlankHost pins that a whitespace-only host is rejected at
@@ -142,7 +219,7 @@ func TestLoadConfigParsesValues(t *testing.T) {
 		"PANOS_SKIP_VERIFY": "true", "PANOS_ALLOW_WRITES": "true",
 		"PANOS_CA_CERT": "/etc/ssl/ca.pem", "PANOS_JOB_WAIT": "30",
 		"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_PORT": "9090",
-		"LOG_LEVEL": "debug",
+		"PANOS_LOG_LEVEL": "debug",
 	})
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -268,13 +345,28 @@ func TestLoadConfigGuardPrecedesAllowWrites(t *testing.T) {
 // TestLoadConfigLogLevelIsCaseInsensitive pins that the spelling most operators
 // type actually works, rather than silently resolving to the default.
 func TestLoadConfigLogLevelIsCaseInsensitive(t *testing.T) {
-	setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "LOG_LEVEL": "DEBUG"})
+	setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "PANOS_LOG_LEVEL": "DEBUG"})
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.LogLevel != slog.LevelDebug {
-		t.Fatalf("LOG_LEVEL=DEBUG gave %v, want DEBUG", cfg.LogLevel)
+		t.Fatalf("PANOS_LOG_LEVEL=DEBUG gave %v, want DEBUG", cfg.LogLevel)
+	}
+}
+
+// TestLoadConfigIgnoresBareLogLevel pins the deliberate asymmetry of issue #4:
+// unlike PANOS_HOST and PANOS_SKIP_VERIFY, the log level has NO fallback. The
+// server reads only PANOS_LOG_LEVEL, so a bare LOG_LEVEL inherited from whatever
+// environment the MCP client passes down is ignored and the default holds.
+func TestLoadConfigIgnoresBareLogLevel(t *testing.T) {
+	setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "LOG_LEVEL": "debug"})
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("LogLevel = %v, want INFO: a bare LOG_LEVEL must not be read", cfg.LogLevel)
 	}
 }
 
@@ -335,9 +427,15 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 		// range, so this case pins that the cap sits below the wrap point.
 		{"job wait past duration wrap", map[string]string{"PANOS_JOB_WAIT": "9223372037"}, "PANOS_JOB_WAIT"},
 		{"job wait beyond int64", map[string]string{"PANOS_JOB_WAIT": "9223372036854775808"}, "PANOS_JOB_WAIT"},
-		{"bad skip verify", map[string]string{"PANOS_SKIP_VERIFY": "yes"}, "PANOS_SKIP_VERIFY"},
+		// Trailing space pins attribution to the primary: "PANOS_SKIP_VERIFY " does
+		// not occur in the alias error "invalid PANOS_SKIP_VERIFY_CERTIFICATE value".
+		{"bad skip verify", map[string]string{"PANOS_SKIP_VERIFY": "yes"}, "PANOS_SKIP_VERIFY "},
+		// The alias is set and invalid; the error must name the variable that
+		// carried the value, so the full _CERTIFICATE name (not the primary that
+		// is a prefix of it) is required.
+		{"bad skip verify certificate alias", map[string]string{"PANOS_SKIP_VERIFY_CERTIFICATE": "yes"}, "PANOS_SKIP_VERIFY_CERTIFICATE"},
 		{"bad allow writes", map[string]string{"PANOS_ALLOW_WRITES": "maybe"}, "PANOS_ALLOW_WRITES"},
-		{"bad log level", map[string]string{"LOG_LEVEL": "verbose"}, "LOG_LEVEL"},
+		{"bad log level", map[string]string{"PANOS_LOG_LEVEL": "verbose"}, "PANOS_LOG_LEVEL"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setEnv(t, base(tc.env))
@@ -426,7 +524,7 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 		"MCP_TRANSPORT": "  http  ", "MCP_HTTP_HOST": "  0.0.0.0  ",
 		"MCP_HTTP_PORT": "  9090  ", "PANOS_JOB_WAIT": "  30  ",
 		"PANOS_SKIP_VERIFY": "  true  ", "PANOS_ALLOW_WRITES": "  true  ",
-		"LOG_LEVEL": "  debug  ",
+		"PANOS_LOG_LEVEL": "  debug  ",
 	})
 	cfg, err := LoadConfig()
 	if err != nil {

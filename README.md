@@ -24,6 +24,8 @@ Configuration comes from environment variables. `PANOS_HOST` is required, along 
 
 The server is read-only unless `PANOS_ALLOW_WRITES=true` is set, so a stale deployment cannot silently come up writable: enabling writes now requires the new variable. `PANOS_ALLOW_WRITES` replaces the earlier `PANOS_READ_ONLY`, and the server refuses to start while a non-empty `PANOS_READ_ONLY` is still set, forcing a conscious migration rather than silently ignoring a prior write-intent.
 
+Several variable names align with the pango SDK's own environment contract. `PANOS_HOSTNAME` is accepted as a fallback for `PANOS_HOST`, and `PANOS_SKIP_VERIFY_CERTIFICATE` for `PANOS_SKIP_VERIFY`; the project's own names stay primary and win when both are set. The log level is read from `PANOS_LOG_LEVEL` only, and a bare `LOG_LEVEL` is intentionally ignored so an unrelated value inherited from the MCP client's environment cannot change this server's verbosity.
+
 See [.env.example](.env.example) for the full set with defaults and notes. Nothing loads a `.env` file automatically; export the variables yourself or set them in your MCP client's server configuration.
 
 ## Building
