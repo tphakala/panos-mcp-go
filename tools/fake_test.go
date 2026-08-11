@@ -53,10 +53,11 @@ func (f *fakeAPI) handler() http.HandlerFunc {
 				return
 			}
 		}
-		// Unmatched requests get a generic success, never an error, so a later
-		// test that forgets to register a route will not fail on the response
-		// alone; such tests should assert on Requests().
-		_, _ = io.WriteString(w, `<response status="success"/>`)
+		// An unmatched request returns a PAN-OS error, not success, so a later
+		// test that forgets to register a required route fails loudly instead of
+		// passing on a request it never modelled. PAN-OS signals errors with
+		// HTTP 200 and status="error", which is what pango parses.
+		_, _ = io.WriteString(w, `<response status="error"><msg><line>unmatched fake API request</line></msg></response>`)
 	}
 }
 
@@ -203,5 +204,37 @@ func TestNilMatchRouteSkipped(t *testing.T) {
 	_, f := newTestDeps(t, "PA-VM", fakeRoute{Body: "<unused/>"})
 	if len(f.Requests()) == 0 {
 		t.Fatal("expected the system-info request to be recorded")
+	}
+}
+
+// TestUnmatchedRequestReturnsError pins the fail-loud contract: a request that
+// matches no route gets a PAN-OS error, not success, so a later test that
+// forgets to register a required route cannot pass on an unmodelled request. It
+// also records the request, so a test can still assert on Requests().
+func TestUnmatchedRequestReturnsError(t *testing.T) {
+	f := &fakeAPI{}
+	srv := httptest.NewServer(f.handler())
+	t.Cleanup(srv.Close)
+
+	form := url.Values{"type": {"op"}, "cmd": {"<unrouted/>"}}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `status="error"`) {
+		t.Fatalf("unmatched request must get status=error, got: %s", body)
+	}
+	if len(f.Requests()) != 1 {
+		t.Fatalf("the unmatched request should still be recorded, got %d", len(f.Requests()))
 	}
 }
