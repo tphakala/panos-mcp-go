@@ -27,6 +27,9 @@ dist/
 *.crt
 *.p12
 *.pfx
+# Test fixtures are checked in on purpose. Without this the patterns above
+# swallow a testdata PEM silently, with no error from git add.
+!testdata/**
 
 # Test and coverage artifacts
 *.test

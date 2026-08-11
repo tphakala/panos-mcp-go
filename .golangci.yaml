@@ -85,13 +85,19 @@ linters:
         - name: unused-parameter
           disabled: true
     gosec:
-      # No severity or confidence floor. gosec emits G402 (TLS InsecureSkipVerify
-      # in its variable-assignment form), G101 (hardcoded credentials) and G112
-      # (missing ReadHeaderTimeout) at Low confidence, and those are exactly the
-      # rules a server holding PAN-OS API keys needs. Measured 2026-08-11 with
-      # golangci-lint 2.12.2: a file containing all three patterns yields 0
-      # issues with a medium confidence floor and 3 issues without it.
-      # Exclude specific rule IDs with a written reason instead.
+      # No severity or confidence floor. G101 (hardcoded credentials) and G112
+      # (missing ReadHeaderTimeout) are emitted below a medium confidence floor,
+      # and both matter for a server holding PAN-OS API keys. Measured 2026-08-11
+      # with golangci-lint 2.12.2: a probe containing both reports 0 issues with
+      # the floor and 2 without it.
+      #
+      # Do NOT read this as full InsecureSkipVerify coverage. gosec detects G402
+      # only in composite-literal form, tls.Config{InsecureSkipVerify: x}. The
+      # assignment form, c.InsecureSkipVerify = x, produces no finding with or
+      # without a floor (measured the same day), so a skip-verify path written
+      # that way has to be caught in review.
+      #
+      # Exclude specific rule IDs with a written reason instead of a floor.
       excludes:
         - G104  # Audit errors not checked (covered by errcheck)
     prealloc:

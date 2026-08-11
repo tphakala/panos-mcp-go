@@ -20,6 +20,7 @@ tasks:
       - task: go:tidy:check
       - task: go:vet
       - task: go:lint
+      - task: go:lint:selftest
       - task: go:test
 
   ci:
@@ -59,23 +60,30 @@ tasks:
   # in .golangci.yaml, not through the Go build, so the //go:build ruleguard tag on
   # those files does not keep them out and --build-tags=ruleguard does not affect
   # whether they load. Verified with golangci-lint 2.12.2 by "task go:lint:selftest".
-  # Do not check this by grepping "golangci-lint run -v": that output never mentions
-  # ruleguard whether the rules loaded or not, so the grep passes on a broken config.
   go:lint:
     desc: Run golangci-lint
     cmds:
       - golangci-lint run
 
   # Proves the ruleguard rules are actually loaded, by planting a violation one of
-  # them detects and requiring a hit. A silently empty rule set is otherwise
-  # invisible: golangci-lint still reports success on the real tree.
+  # them detects and requiring the rule's OWN message back. A silently empty rule
+  # set is otherwise invisible: golangci-lint still reports success on the tree.
+  #
+  # Two things this check gets wrong if written casually. Grepping for the word
+  # "ruleguard" matches golangci-lint's own error text ("gocritic: ruleguard init
+  # error: no file matching ..."), so a broken rules path reports success; match
+  # the rule's message instead, and keep stderr out of the comparison. And writing
+  # the probe into the repo leaves a stray Go file behind when a developer hits
+  # Ctrl-C, because Task's shell does not run an EXIT trap on SIGINT; build it in
+  # a temp directory instead.
   go:lint:selftest:
     desc: Verify the ruleguard rules in rules/ are loaded and firing
     cmds:
       - |
-        set -e
-        trap 'rm -f ruleguard_selftest.go' EXIT
-        cat > ruleguard_selftest.go <<'EOF'
+        set -eu
+        probe=$(mktemp -d)
+        trap 'rm -rf "$probe"' EXIT
+        cat > "$probe/probe.go" <<'EOF'
         package main
 
         import (
@@ -91,10 +99,14 @@ tasks:
         	return ""
         }
         EOF
-        if golangci-lint run ruleguard_selftest.go 2>&1 | grep -q 'ruleguard'; then
-          echo "ruleguard rules are loaded"
+        cp go.mod go.sum .golangci.yaml "$probe/"
+        cp -R rules "$probe/"
+        out=$(cd "$probe" && golangci-lint run probe.go 2>/dev/null) || true
+        if printf '%s' "$out" | grep -q 'errors.AsType'; then
+          echo "ruleguard rules are loaded and firing"
         else
-          echo "FAIL: ruleguard rules are NOT loaded; check dsl in go.mod and rules/*.go" >&2
+          echo "FAIL: ruleguard rules did not fire. Check that go-ruleguard/dsl is in" >&2
+          echo "go.mod and that gocritic settings.ruleguard.rules matches rules/*.go." >&2
           exit 1
         fi
 
