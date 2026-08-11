@@ -135,6 +135,21 @@ func TestLoadConfigSkipVerifyAlias(t *testing.T) {
 			t.Errorf("SkipVerifySource = %q, want PANOS_SKIP_VERIFY (the primary supplied the value)", cfg.SkipVerifySource)
 		}
 	})
+	t.Run("no source when neither set", func(t *testing.T) {
+		setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k"})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SkipVerify {
+			t.Error("SkipVerify = true, want false when neither variable is set")
+		}
+		// Empty means unset: the field must not name a variable that supplied
+		// nothing, or a reader that treats empty as "unset" is misled.
+		if cfg.SkipVerifySource != "" {
+			t.Errorf("SkipVerifySource = %q, want empty when neither variable is set", cfg.SkipVerifySource)
+		}
+	})
 }
 
 // TestLoadConfigRejectsBlankHost pins that a whitespace-only host is rejected at

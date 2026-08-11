@@ -217,9 +217,14 @@ func envFirst(primary string, aliases ...string) (value, from string) {
 // an operator using only a pango alias is pointed at the alias, never at a
 // primary they never set.
 func parseBoolEnvFirst(primary string, aliases ...string) (value bool, from string, err error) {
-	_, from = envFirst(primary, aliases...)
-	value, err = parseBoolEnv(from)
-	return value, from, err
+	raw, name := envFirst(primary, aliases...)
+	if raw == "" {
+		// Nothing set: report no source, so from stays empty and cannot be mistaken
+		// for a variable that supplied the value.
+		return false, "", nil
+	}
+	value, err = parseBoolEnv(name)
+	return value, name, err
 }
 
 // intEnv parses an integer environment variable, returning def when the
