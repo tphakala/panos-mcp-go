@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # persist-credentials: false keeps the GITHUB_TOKEN out of .git/config,
+      # where any later step in the job could read it. Neither job pushes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26"
+
+      - name: Download dependencies
+        run: go mod download
+
+      # Guards pin_deps.go. If that file is deleted or broken, go mod tidy drops
+      # the pinned pango and go-sdk requirements, and vet, test and build all
+      # still pass because no code imports them yet. -diff writes nothing and
+      # exits non-zero on any difference.
+      - name: Tidy check
+        run: go mod tidy -diff
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -v -race ./...
+
+      - name: Build
+        run: go build -o panos-mcp-go .
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # persist-credentials: false keeps the GITHUB_TOKEN out of .git/config,
+      # where any later step in the job could read it. Neither job pushes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26"
+
+      # Pinned rather than "latest" so a golangci-lint release cannot turn this
+      # workflow red with no change to the repository, and so CI reproduces the
+      # version developers run locally. Dependabot bumps the action ref; this
+      # input is bumped deliberately. The pin must stay on 2.x: .golangci.yaml
+      # declares the v2 config schema.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
