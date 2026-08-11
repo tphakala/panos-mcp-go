@@ -1,0 +1,109 @@
+version: "2"
+output:
+  sort-order:
+    - linter
+    - severity
+    - file
+# golangci-lint v2 runs formatters from this top-level key, not from linters.enable.
+# Without it, "golangci-lint run" reports no formatting issues at all, so CI would
+# accept unformatted code even though the local Taskfile runs goimports.
+formatters:
+  enable:
+    - goimports
+linters:
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - decorder
+    - durationcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - forcetypeassert
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - iface
+    - ineffassign
+    - makezero
+    - misspell
+    - mnd
+    #- modernize  # disabled - using ruleguard for Go 1.24+/1.25+ modernization instead
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    #- nolintlint
+    - prealloc
+    - predeclared
+    - recvcheck
+    - revive
+    - sloglint
+    - staticcheck
+    - testifylint
+    - thelper
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+  disable:
+    - unused
+  exclusions:
+    rules:
+      - path: '_test\.go'
+        linters:
+          - goconst
+  settings:
+    gocognit:
+      min-complexity: 20
+    gocritic:
+      disabled-checks:
+        - commentFormatting
+        - commentedOutCode
+      enabled-tags:
+        - style
+        - diagnostic
+        - performance
+      settings:
+        ruleguard:
+          rules: "rules/*.go"
+    gocyclo:
+      min-complexity: 15
+    revive:
+      rules:
+        - name: unused-parameter
+          disabled: true
+    gosec:
+      # No severity or confidence floor. gosec emits G402 (TLS InsecureSkipVerify
+      # in its variable-assignment form), G101 (hardcoded credentials) and G112
+      # (missing ReadHeaderTimeout) at Low confidence, and those are exactly the
+      # rules a server holding PAN-OS API keys needs. Measured 2026-08-11 with
+      # golangci-lint 2.12.2: a file containing all three patterns yields 0
+      # issues with a medium confidence floor and 3 issues without it.
+      # Exclude specific rule IDs with a written reason instead.
+      excludes:
+        - G104  # Audit errors not checked (covered by errcheck)
+    prealloc:
+      # Configure prealloc for slice optimization
+      simple: true
+      range-loops: true
+      for-loops: true
+    exhaustive:
+      # Check exhaustiveness of enum switch statements
+      default-signifies-exhaustive: true
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: true
+  new: false

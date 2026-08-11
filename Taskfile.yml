@@ -1,0 +1,136 @@
+version: '3'
+
+vars:
+  BINARY_NAME: panos-mcp-go
+
+tasks:
+
+  default:
+    desc: Run all local checks (fmt, tidy, vet, lint, test)
+    cmds:
+      - task: check
+
+  # check must not modify the working tree: it has to be able to answer "is this
+  # branch clean" and to run in CI. The mutating go:fmt and go:tidy stay
+  # available for local use.
+  check:
+    desc: Run all local checks (fmt, tidy, vet, lint, test) without modifying files
+    cmds:
+      - task: go:fmt:check
+      - task: go:tidy:check
+      - task: go:vet
+      - task: go:lint
+      - task: go:test
+
+  ci:
+    desc: Full CI pipeline, check then build
+    cmds:
+      - task: check
+      - task: go:build
+
+  go:build:
+    desc: Build the binary
+    aliases: [build]
+    sources:
+      - '**/*.go'
+      - go.mod
+      - go.sum
+    generates:
+      - '{{.BINARY_NAME}}'
+    cmds:
+      - go build -o {{.BINARY_NAME}} .
+
+  go:run:
+    desc: Run the server in stdio mode (requires env vars)
+    cmds:
+      - go run .
+
+  go:test:
+    desc: Run tests with race detector
+    cmds:
+      - go test -v -race ./...
+
+  go:vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  # gocritic reads rules/*.go through linters.settings.gocritic.settings.ruleguard
+  # in .golangci.yaml, not through the Go build, so the //go:build ruleguard tag on
+  # those files does not keep them out and --build-tags=ruleguard does not affect
+  # whether they load. Verified with golangci-lint 2.12.2 by "task go:lint:selftest".
+  # Do not check this by grepping "golangci-lint run -v": that output never mentions
+  # ruleguard whether the rules loaded or not, so the grep passes on a broken config.
+  go:lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run
+
+  # Proves the ruleguard rules are actually loaded, by planting a violation one of
+  # them detects and requiring a hit. A silently empty rule set is otherwise
+  # invisible: golangci-lint still reports success on the real tree.
+  go:lint:selftest:
+    desc: Verify the ruleguard rules in rules/ are loaded and firing
+    cmds:
+      - |
+        set -e
+        trap 'rm -f ruleguard_selftest.go' EXIT
+        cat > ruleguard_selftest.go <<'EOF'
+        package main
+
+        import (
+        	"errors"
+        	"io/fs"
+        )
+
+        func ruleguardSelftest(err error) string {
+        	var pathErr *fs.PathError
+        	if errors.As(err, &pathErr) {
+        		return pathErr.Path
+        	}
+        	return ""
+        }
+        EOF
+        if golangci-lint run ruleguard_selftest.go 2>&1 | grep -q 'ruleguard'; then
+          echo "ruleguard rules are loaded"
+        else
+          echo "FAIL: ruleguard rules are NOT loaded; check dsl in go.mod and rules/*.go" >&2
+          exit 1
+        fi
+
+  # Formatting goes through golangci-lint, not a standalone goimports, because
+  # the two disagree: golangci-lint's formatter applies gofmt's doc comment
+  # rules (which relocate //nolint and other directives) and a standalone
+  # goimports does not. Using both means a tree that passes locally and fails in
+  # CI, since CI formats through the lint job.
+  go:fmt:
+    desc: Format code (modifies files)
+    cmds:
+      - golangci-lint fmt
+
+  go:fmt:check:
+    desc: Fail if any file is not formatted
+    cmds:
+      - golangci-lint fmt --diff
+
+  go:tidy:
+    desc: Tidy go modules (modifies go.mod and go.sum)
+    cmds:
+      - go mod tidy
+
+  # go mod tidy -diff writes nothing and exits non-zero when tidy would change
+  # go.mod or go.sum. This is the guard on pin_deps.go: if that file is deleted
+  # or broken, tidy silently strips the pango and go-sdk pins, and build, vet and
+  # test all stay green because nothing imports them yet.
+  go:tidy:check:
+    desc: Fail if go.mod or go.sum is not tidy
+    cmds:
+      - go mod tidy -diff
+
+  go:clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -f {{.BINARY_NAME}}
+
+  # image:build lands with the Dockerfile in the packaging task. A task that
+  # cannot succeed is worse than a missing one.
