@@ -1,0 +1,207 @@
+package tools
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/PaloAltoNetworks/pango"
+)
+
+// fakeRoute matches an incoming XML API request and supplies a canned body.
+type fakeRoute struct {
+	Match func(v url.Values) bool
+	Body  string
+}
+
+type fakeAPI struct {
+	mu       sync.Mutex
+	requests []url.Values
+	routes   []fakeRoute
+}
+
+// Requests returns a snapshot of all recorded request form values. The slice is
+// a fresh copy, but each url.Values map aliases the recorded request, so callers
+// must treat the returned values as read-only.
+func (f *fakeAPI) Requests() []url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.requests)
+}
+
+func (f *fakeAPI) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.requests = append(f.requests, r.Form)
+		routes := slices.Clone(f.routes)
+		f.mu.Unlock()
+		for _, rt := range routes {
+			// A fakeRoute with a nil Match is a caller error; skip it rather than
+			// panic in this server goroutine (net/http would turn the panic into
+			// an opaque EOF at the client).
+			if rt.Match != nil && rt.Match(r.Form) {
+				_, _ = io.WriteString(w, rt.Body)
+				return
+			}
+		}
+		// Unmatched requests get a generic success, never an error, so a later
+		// test that forgets to register a route will not fail on the response
+		// alone; such tests should assert on Requests().
+		_, _ = io.WriteString(w, `<response status="success"/>`)
+	}
+}
+
+// opContains matches type=op requests whose cmd contains sub.
+func opContains(sub string) func(url.Values) bool {
+	return func(v url.Values) bool {
+		return v.Get("type") == "op" && strings.Contains(v.Get("cmd"), sub)
+	}
+}
+
+// configAction matches type=config requests with the given action.
+func configAction(action string) func(url.Values) bool {
+	return func(v url.Values) bool {
+		return v.Get("type") == "config" && v.Get("action") == action
+	}
+}
+
+func systemInfoBody(model string) string {
+	return `<response status="success"><result><system>` +
+		`<hostname>dev1</hostname><model>` + model + `</model>` +
+		`<serial>0123456789</serial><sw-version>11.0.2</sw-version>` +
+		`</system></result></response>`
+}
+
+// newTestDeps builds a pango client against a fake XML API server and wraps
+// it in Deps. model selects firewall ("PA-VM") or Panorama ("Panorama").
+func newTestDeps(t *testing.T, model string, routes ...fakeRoute) (*Deps, *fakeAPI) {
+	t.Helper()
+	f := &fakeAPI{}
+	// Caller routes are matched before the built-in system-info route, so a
+	// caller route must be specific enough not to shadow <show><system><info>.
+	// Routes are fixed here, before httptest.NewServer starts serving.
+	f.routes = append(f.routes, routes...)
+	f.routes = append(f.routes, fakeRoute{Match: opContains("<system><info"), Body: systemInfoBody(model)})
+	srv := httptest.NewServer(f.handler())
+	t.Cleanup(srv.Close)
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &pango.Client{Hostname: u.Hostname(), Port: port, Protocol: "http", ApiKey: "test-key"}
+	if err := c.Setup(); err != nil {
+		t.Fatalf("pango setup: %v", err)
+	}
+	ctx := t.Context()
+	if err := c.Initialize(ctx); err != nil {
+		t.Fatalf("pango initialize: %v", err)
+	}
+	if err := c.RetrieveSystemInfo(ctx); err != nil {
+		t.Fatalf("system info: %v", err)
+	}
+	pano, err := c.IsPanorama()
+	if err != nil {
+		t.Fatalf("IsPanorama: %v", err)
+	}
+	return &Deps{
+		Client:     c,
+		Logger:     slog.New(slog.DiscardHandler),
+		IsPanorama: pano,
+		JobWait:    5 * time.Second,
+	}, f
+}
+
+// TestLockWritesSerializes proves LockWrites gives mutual exclusion: concurrent
+// writers guarded only by it must not race and must all land. Under -race an
+// unlocked implementation would flag the counter write; a no-op unlock would
+// deadlock the second acquirer.
+func TestLockWritesSerializes(t *testing.T) {
+	d := &Deps{}
+	const workers = 50
+	counter := 0
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			unlock := d.LockWrites()
+			defer unlock()
+			counter++
+		}()
+	}
+	wg.Wait()
+	if counter != workers {
+		t.Fatalf("counter = %d, want %d: LockWrites must serialize writers", counter, workers)
+	}
+}
+
+// TestMatchers pins the request matchers that later tools tests use to route
+// fake responses. A matcher that silently stopped discriminating would make
+// those tests assert against the wrong canned body.
+func TestMatchers(t *testing.T) {
+	// A substring other than the system-info one newTestDeps registers, so this
+	// also proves opContains discriminates on an arbitrary op command.
+	opReq := url.Values{"type": {"op"}, "cmd": {"<commit><partial></partial></commit>"}}
+	if !opContains("<commit>")(opReq) {
+		t.Error("opContains must match a type=op cmd containing the substring")
+	}
+	if opContains("<commit>")(url.Values{"type": {"config"}, "cmd": {"<commit>"}}) {
+		t.Error("opContains must require type=op, not just the substring")
+	}
+	if opContains("<commit>")(url.Values{"type": {"op"}, "cmd": {"<show><config>"}}) {
+		t.Error("opContains must not match a cmd lacking the substring")
+	}
+
+	cfgReq := url.Values{"type": {"config"}, "action": {"set"}}
+	if !configAction("set")(cfgReq) {
+		t.Error("configAction must match type=config with the exact action")
+	}
+	if configAction("set")(url.Values{"type": {"config"}, "action": {"edit"}}) {
+		t.Error("configAction must match the exact action, not a different one")
+	}
+	if configAction("set")(url.Values{"type": {"op"}, "action": {"set"}}) {
+		t.Error("configAction must require type=config, not just the action")
+	}
+}
+
+func TestNewTestDepsFirewall(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	if d.IsPanorama {
+		t.Fatal("PA-VM must not be detected as Panorama")
+	}
+	if len(f.Requests()) == 0 {
+		t.Fatal("expected recorded requests")
+	}
+}
+
+func TestNewTestDepsPanorama(t *testing.T) {
+	d, _ := newTestDeps(t, "Panorama")
+	if !d.IsPanorama {
+		t.Fatal("Panorama model must be detected as Panorama")
+	}
+}
+
+// TestNilMatchRouteSkipped proves the handler skips a fakeRoute with a nil Match
+// instead of panicking the server goroutine. newTestDeps registers the nil-Match
+// route first, so if it were not skipped it would panic on the system-info
+// request, surface as an EOF, and fail newTestDeps at RetrieveSystemInfo.
+func TestNilMatchRouteSkipped(t *testing.T) {
+	_, f := newTestDeps(t, "PA-VM", fakeRoute{Body: "<unused/>"})
+	if len(f.Requests()) == 0 {
+		t.Fatal("expected the system-info request to be recorded")
+	}
+}
