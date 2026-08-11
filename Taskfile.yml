@@ -131,9 +131,8 @@ tasks:
       - go mod tidy
 
   # go mod tidy -diff writes nothing and exits non-zero when tidy would change
-  # go.mod or go.sum. This is the guard on pin_deps.go: if that file is deleted
-  # or broken, tidy silently strips the pango and go-sdk pins, and build, vet and
-  # test all stay green because nothing imports them yet.
+  # go.mod or go.sum, catching an un-tidied dependency change (a stray require,
+  # a dropped one, a stale go.sum entry) before it reaches CI.
   go:tidy:check:
     desc: Fail if go.mod or go.sum is not tidy
     cmds:

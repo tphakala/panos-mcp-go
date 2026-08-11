@@ -65,6 +65,13 @@ linters:
         linters:
           - goconst
   settings:
+    goconst:
+      # Do not count string literals in _test.go files toward the
+      # extract-a-constant threshold. Test inputs like "pre"/"post" are the
+      # API contract a test pins by literal; counting them would force a
+      # production constant and weaken the test. Verified 2026-08-11 with
+      # golangci-lint 2.12.2.
+      ignore-tests: true
     gocognit:
       min-complexity: 20
     gocritic:

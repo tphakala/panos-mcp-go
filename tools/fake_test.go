@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PaloAltoNetworks/pango"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // fakeRoute matches an incoming XML API request and supplies a canned body.
@@ -237,4 +238,19 @@ func TestUnmatchedRequestReturnsError(t *testing.T) {
 	if len(f.Requests()) != 1 {
 		t.Fatalf("the unmatched request should still be recorded, got %d", len(f.Requests()))
 	}
+}
+
+// textContent extracts the first text content block from a result. Content
+// stores pointer values because mcp.TextContent's MarshalJSON has a pointer
+// receiver, so the element is *mcp.TextContent.
+func textContent(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	if len(res.Content) == 0 {
+		t.Fatal("result has no content")
+	}
+	tc, ok := res.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("content is %T, want *mcp.TextContent", res.Content[0])
+	}
+	return tc.Text
 }
