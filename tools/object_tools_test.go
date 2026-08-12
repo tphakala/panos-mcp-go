@@ -7,6 +7,7 @@ import (
 
 	"github.com/PaloAltoNetworks/pango/objects/address"
 	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
+	"github.com/PaloAltoNetworks/pango/objects/service"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -148,19 +149,10 @@ func TestAddressAPIErrorSurfaces(t *testing.T) {
 	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
 		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
 	}
-	// The request must reach the API with the wrapped entry xpath, not a raw name;
-	// asserting the entry[@name='...'] shape (not just the "nope" substring) pins
-	// that the adapter wrapped the name. A client-side xpath rejection would also
-	// produce IsError but vacuously, never consulting the canned route.
-	var sawGet bool
-	for _, req := range f.Requests() {
-		if req.Get("type") == "config" && req.Get("action") == "get" && strings.Contains(req.Get("xpath"), "entry[@name='nope']") {
-			sawGet = true
-		}
-	}
-	if !sawGet {
-		t.Fatal("get never reached the API: the service must wrap the name into an entry xpath")
-	}
+	// The request must reach the API wrapped exactly once: a raw name is rejected
+	// client-side, and a double-wrap would flag a pango upgrade that started
+	// wrapping names internally.
+	assertSingleWrappedGet(t, f, "entry[@name='nope']")
 }
 
 func TestAddressUpdate(t *testing.T) {
@@ -386,6 +378,32 @@ func getConfigXpaths(f *fakeAPI) []string {
 	return xs
 }
 
+// assertSingleWrappedGet fails unless some recorded config get carries the
+// singly-wrapped entry xpath in wrapped (e.g. entry[@name='nope']) and no get is
+// double-wrapped. A double-wrapped entry[@name='entry[@name=...']' still CONTAINS
+// the single-wrapped substring, so a plain Contains would pass vacuously if a
+// pango upgrade started wrapping names internally; the negative check flags that
+// regression (see nameFixAdapter's doc comment).
+func assertSingleWrappedGet(t *testing.T, f *fakeAPI, wrapped string) {
+	t.Helper()
+	var sawGet bool
+	for _, req := range f.Requests() {
+		if req.Get("type") != "config" || req.Get("action") != "get" {
+			continue
+		}
+		xpath := req.Get("xpath")
+		if strings.Contains(xpath, "entry[@name='entry[") {
+			t.Fatalf("name double-wrapped: adapter and SDK both wrapped it: %s", xpath)
+		}
+		if strings.Contains(xpath, wrapped) {
+			sawGet = true
+		}
+	}
+	if !sawGet {
+		t.Fatalf("get never reached the API wrapped as %s: the adapter must wrap the name into an entry xpath", wrapped)
+	}
+}
+
 // TestAddressPanoramaLocations exercises the Panorama location branches of
 // addressParts: the shared default and an explicit device group. Each subtest
 // asserts the request xpath so it pins the resolved location, not merely that a
@@ -431,15 +449,16 @@ func TestAddressPanoramaLocations(t *testing.T) {
 	})
 }
 
-// registeredToolNames registers the address and address group tools on a fresh
-// in-memory MCP server/client pair and returns the set of tool names the server
-// exposes.
+// registeredToolNames registers the address, address group and service tools on
+// a fresh in-memory MCP server/client pair and returns the set of tool names the
+// server exposes.
 func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	t.Helper()
 	ctx := t.Context()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterAddressTools(srv, d)
 	RegisterAddressGroupTools(srv, d)
+	RegisterServiceTools(srv, d)
 
 	clientT, serverT := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, serverT, nil)
@@ -731,18 +750,10 @@ func TestAddressGroupAPIErrorSurfaces(t *testing.T) {
 	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
 		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
 	}
-	// Pin that the shared adapter wraps the name into an entry xpath for the group
-	// instantiation too; a client-side raw-name rejection would set IsError
-	// vacuously, never consulting the canned route.
-	var sawGet bool
-	for _, req := range f.Requests() {
-		if req.Get("type") == "config" && req.Get("action") == "get" && strings.Contains(req.Get("xpath"), "entry[@name='nope']") {
-			sawGet = true
-		}
-	}
-	if !sawGet {
-		t.Fatal("get never reached the API: the adapter must wrap the name into an entry xpath")
-	}
+	// Pin that the shared adapter wraps the name into an entry xpath exactly once
+	// for the group instantiation too; a raw-name rejection or a double-wrap would
+	// both be caught here.
+	assertSingleWrappedGet(t, f, "entry[@name='nope']")
 }
 
 // multiConfigElement returns the element of the single recorded multi-config
@@ -942,6 +953,599 @@ func TestAddressGroupPanoramaLocations(t *testing.T) {
 func TestRegisterAddressGroupToolsReadOnly(t *testing.T) {
 	reads := []string{"panos_address_group_list", "panos_address_group_get"}
 	writes := []string{"panos_address_group_create", "panos_address_group_update", "panos_address_group_delete"}
+
+	dRO, _ := newTestDeps(t, "PA-VM")
+	dRO.ReadOnly = true
+	ro := registeredToolNames(t, dRO)
+	for _, n := range reads {
+		if !ro[n] {
+			t.Errorf("read-only: %q must be registered", n)
+		}
+	}
+	for _, n := range writes {
+		if ro[n] {
+			t.Errorf("read-only: %q must NOT be registered", n)
+		}
+	}
+
+	dRW, _ := newTestDeps(t, "PA-VM")
+	dRW.ReadOnly = false
+	rw := registeredToolNames(t, dRW)
+	for _, n := range append(reads, writes...) {
+		if !rw[n] {
+			t.Errorf("writes enabled: %q must be registered", n)
+		}
+	}
+}
+
+// serviceListBody lists a tcp service with a source port, description and tag,
+// and a bare udp service. Ports marshal as <protocol><tcp|udp><port>; a source
+// port as <source-port>. The list xpath ends at .../service/entry, so there is
+// no <service> wrapper element in the response.
+const serviceListBody = `<response status="success"><result>` +
+	`<entry name="web-8080"><protocol><tcp><port>8080</port><source-port>1024-65535</source-port></tcp></protocol><description>web svc</description><tag><member>prod</member></tag></entry>` +
+	`<entry name="dns-u"><protocol><udp><port>53</port></udp></protocol></entry>` +
+	`</result></response>`
+
+// serviceCreatedBody answers the read-back get pango's Create issues after the
+// set; the read-back requires exactly one entry.
+const serviceCreatedBody = `<response status="success"><result><entry name="web-8080">` +
+	`<protocol><tcp><port>8080</port></tcp></protocol><tag><member>prod</member></tag></entry></result></response>`
+
+// serviceCurrentBody is the entry as it exists before an update: tcp/8080 with a
+// description. Every update input below must differ from it, or pango's
+// UpdateWithXpath short-circuits on SpecMatches and issues no multi-config
+// request, making the edit assertions vacuous.
+const serviceCurrentBody = `<response status="success"><result><entry name="svc-1">` +
+	`<protocol><tcp><port>8080</port></tcp></protocol><description>old desc</description></entry></result></response>`
+
+func serviceResolve(d *Deps) func(LocationInput) (service.Location, error) {
+	return func(in LocationInput) (service.Location, error) {
+		return resolveLocation(d, in, serviceParts())
+	}
+}
+
+func serviceName(e *service.Entry) string { return e.Name }
+
+// TestBuildServiceEntry pins that a create entry is built from tcp or udp with a
+// required destination port, that source_port, description and tags map onto the
+// entry, and that a missing name, missing port, or unknown protocol is rejected.
+func TestBuildServiceEntry(t *testing.T) {
+	t.Run("tcp with source port", func(t *testing.T) {
+		e, err := buildServiceEntry(ServiceInput{Name: "s", Protocol: "tcp", Port: "8080", SourcePort: "1024"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Protocol == nil || e.Protocol.Tcp == nil || e.Protocol.Udp != nil {
+			t.Fatalf("tcp build wrong: %+v", e.Protocol)
+		}
+		if strVal(e.Protocol.Tcp.Port) != "8080" || strVal(e.Protocol.Tcp.SourcePort) != "1024" {
+			t.Fatalf("tcp port/source wrong: %+v", e.Protocol.Tcp)
+		}
+	})
+	t.Run("udp with description and tags", func(t *testing.T) {
+		e, err := buildServiceEntry(ServiceInput{Name: "s", Protocol: "udp", Port: "53", Description: "d", Tags: []string{"t"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Protocol == nil || e.Protocol.Udp == nil || e.Protocol.Tcp != nil || strVal(e.Protocol.Udp.Port) != "53" {
+			t.Fatalf("udp build wrong: %+v", e.Protocol)
+		}
+		if strVal(e.Description) != "d" || len(e.Tag) != 1 {
+			t.Fatalf("udp build lost description or tags: desc=%v tags=%v", e.Description, e.Tag)
+		}
+	})
+}
+
+// TestBuildServiceEntryRejects pins that a create entry requires a name, a port,
+// and a known protocol.
+func TestBuildServiceEntryRejects(t *testing.T) {
+	bad := map[string]ServiceInput{
+		"no name":      {Protocol: "tcp", Port: "80"},
+		"no port":      {Name: "s", Protocol: "tcp"},
+		"bad protocol": {Name: "s", Protocol: "icmp", Port: "1"},
+	}
+	for name, in := range bad {
+		t.Run(name, func(t *testing.T) {
+			if _, err := buildServiceEntry(in); err == nil {
+				t.Fatalf("%s: expected error", name)
+			}
+		})
+	}
+}
+
+// TestOverlayServiceProtocol pins that touching the protocol side replaces the
+// whole block: switching tcp to udp clears the tcp side, an omitted source_port
+// clears a pre-existing one, and providing only one of protocol/port is rejected.
+func TestOverlayServiceProtocol(t *testing.T) {
+	t.Run("switch tcp to udp clears tcp", func(t *testing.T) {
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080")}}}
+		if err := overlayService(e, ServiceInput{Protocol: "udp", Port: "53"}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Protocol.Udp == nil || strVal(e.Protocol.Udp.Port) != "53" || e.Protocol.Tcp != nil {
+			t.Fatalf("switch wrong: %+v", e.Protocol)
+		}
+	})
+	t.Run("replacing tcp clears a pre-existing source port", func(t *testing.T) {
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080"), SourcePort: ptr("1024")}}}
+		if err := overlayService(e, ServiceInput{Protocol: "tcp", Port: "9090"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Protocol.Tcp.Port) != "9090" || e.Protocol.Tcp.SourcePort != nil {
+			t.Fatalf("block replacement must drop the old source port: %+v", e.Protocol.Tcp)
+		}
+	})
+	bad := map[string]ServiceInput{
+		"port only":        {Port: "9090"},
+		"protocol only":    {Protocol: "tcp"},
+		"source port only": {SourcePort: "1024"},
+		// protocol and port both set, but the protocol is unknown: this passes the
+		// requires-both guard and must surface buildServiceProtocol's rejection.
+		"invalid protocol": {Protocol: "icmp", Port: "80"},
+	}
+	for name, in := range bad {
+		t.Run(name, func(t *testing.T) {
+			e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080")}}}
+			if err := overlayService(e, in); err == nil {
+				t.Fatalf("%s: changing ports requires protocol and port together", name)
+			}
+		})
+	}
+}
+
+// TestOverlayServicePreservesOverride pins that a same-protocol port change
+// carries the existing timeout override (a field this tool does not expose, so a
+// rebuild would otherwise destroy it), while a protocol-type switch drops it with
+// the old side.
+func TestOverlayServicePreservesOverride(t *testing.T) {
+	t.Run("same protocol keeps override", func(t *testing.T) {
+		ov := &service.ProtocolTcpOverride{}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080"), Override: ov}}}
+		if err := overlayService(e, ServiceInput{Protocol: "tcp", Port: "9090"}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Protocol.Tcp == nil || e.Protocol.Tcp.Override != ov {
+			t.Fatalf("same-protocol port change must preserve the timeout override: %+v", e.Protocol.Tcp)
+		}
+		if strVal(e.Protocol.Tcp.Port) != "9090" {
+			t.Fatalf("port not updated: %+v", e.Protocol.Tcp)
+		}
+	})
+	t.Run("protocol switch drops the old override", func(t *testing.T) {
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080"), Override: &service.ProtocolTcpOverride{}}}}
+		if err := overlayService(e, ServiceInput{Protocol: "udp", Port: "53"}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Protocol.Udp == nil || e.Protocol.Tcp != nil {
+			t.Fatalf("switch must move to udp and clear tcp: %+v", e.Protocol)
+		}
+		if e.Protocol.Udp.Override != nil {
+			t.Fatalf("protocol switch must not carry the tcp override onto udp: %+v", e.Protocol.Udp)
+		}
+	})
+}
+
+// TestOverlayServiceUDPKeepsOverride mirrors the tcp override-preservation case
+// for the udp branch of carryServiceOverride, and also exercises the udp
+// source_port build path. Pointer identity proves the override survived the
+// block rebuild.
+func TestOverlayServiceUDPKeepsOverride(t *testing.T) {
+	ov := &service.ProtocolUdpOverride{}
+	e := &service.Entry{Name: "s", Protocol: &service.Protocol{Udp: &service.ProtocolUdp{Port: ptr("53"), Override: ov}}}
+	if err := overlayService(e, ServiceInput{Protocol: "udp", Port: "5353", SourcePort: "1024"}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Protocol.Udp == nil || e.Protocol.Udp.Override != ov {
+		t.Fatalf("udp same-protocol change must preserve the timeout override: %+v", e.Protocol.Udp)
+	}
+	if strVal(e.Protocol.Udp.Port) != "5353" || strVal(e.Protocol.Udp.SourcePort) != "1024" {
+		t.Fatalf("udp port/source_port not applied: %+v", e.Protocol.Udp)
+	}
+}
+
+// TestOverlayServiceNilProtocol pins that overlaying protocol fields onto an entry
+// with no existing protocol block builds the block without panicking (the update
+// path always reads a block back, so this is the defensive carryServiceOverride
+// nil-src path).
+func TestOverlayServiceNilProtocol(t *testing.T) {
+	e := &service.Entry{Name: "s"}
+	if err := overlayService(e, ServiceInput{Protocol: "tcp", Port: "80"}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Protocol == nil || e.Protocol.Tcp == nil || strVal(e.Protocol.Tcp.Port) != "80" {
+		t.Fatalf("overlay on a nil-protocol entry must build the block: %+v", e.Protocol)
+	}
+}
+
+// TestOverlayServiceFields pins the non-protocol overlay semantics: a provided
+// description updates, an omitted description or nil tags leave the existing
+// values unchanged, and a non-nil empty tags slice clears the tags.
+func TestOverlayServiceFields(t *testing.T) {
+	t.Run("description updates when provided", func(t *testing.T) {
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("80")}}, Description: ptr("old")}
+		if err := overlayService(e, ServiceInput{Description: "new"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Description) != "new" {
+			t.Fatalf("description not updated: %v", e.Description)
+		}
+	})
+	t.Run("omitted fields unchanged", func(t *testing.T) {
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("80")}}, Description: ptr("old"), Tag: []string{"a"}}
+		if err := overlayService(e, ServiceInput{}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Description) != "old" || len(e.Tag) != 1 || e.Protocol.Tcp == nil {
+			t.Fatalf("empty overlay changed entry: desc=%v tags=%v proto=%+v", e.Description, e.Tag, e.Protocol)
+		}
+	})
+	t.Run("tags replace when non-nil and clear when empty", func(t *testing.T) {
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("80")}}, Tag: []string{"a"}}
+		if err := overlayService(e, ServiceInput{Tags: []string{"b", "c"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Tag) != 2 {
+			t.Fatalf("tags not replaced: %v", e.Tag)
+		}
+		if err := overlayService(e, ServiceInput{Tags: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Tag) != 0 {
+			t.Fatalf("empty tags slice must clear tags: %v", e.Tag)
+		}
+	})
+}
+
+func TestServiceCreateBuildsEntry(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		// pango's Create reads the object back with a config get after the set.
+		fakeRoute{Match: configAction("get"), Body: serviceCreatedBody},
+	)
+	h := createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create",
+		newServiceService(d), serviceResolve(d),
+		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry)
+
+	res, _, err := h(t.Context(), nil, ServiceInput{Name: "web-8080", Protocol: "tcp", Port: "8080", Description: "web svc", Tags: []string{"prod"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	var sawSet bool
+	for _, req := range f.Requests() {
+		if req.Get("type") == "config" && req.Get("action") == "set" {
+			sawSet = true
+			el := req.Get("element")
+			if !strings.Contains(el, `name="web-8080"`) || !strings.Contains(el, "<tcp>") ||
+				!strings.Contains(el, "<port>8080</port>") || !strings.Contains(el, "<member>prod</member>") ||
+				!strings.Contains(el, "web svc") {
+				t.Fatalf("element missing fields: %s", el)
+			}
+			if xp := req.Get("xpath"); !strings.Contains(xp, "vsys1") || !strings.Contains(xp, "service") {
+				t.Fatalf("xpath missing default vsys or service endpoint: %s", xp)
+			}
+		}
+	}
+	if !sawSet {
+		t.Fatal("no config set request recorded")
+	}
+}
+
+func TestServiceCreateValidation(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	h := createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create",
+		newServiceService(d), serviceResolve(d),
+		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry)
+
+	for name, in := range map[string]ServiceInput{
+		"no name":        {Protocol: "tcp", Port: "80"},
+		"no port":        {Name: "x", Protocol: "tcp"},
+		"bad protocol":   {Name: "x", Protocol: "icmp", Port: "1"},
+		"dg on firewall": {Name: "x", Protocol: "tcp", Port: "80", Location: LocationInput{DeviceGroup: "dg1"}},
+	} {
+		res, _, err := h(t.Context(), nil, in)
+		if err != nil {
+			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s: expected IsError", name)
+		}
+	}
+	// Validation must reject before any API call: only the bootstrap system-info
+	// request may exist.
+	if got := len(f.Requests()); got != 1 {
+		t.Fatalf("validation must fail before any API call; recorded %d requests", got)
+	}
+}
+
+func TestServiceAPIErrorSurfaces(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
+	h := getHandler[service.Location, service.Entry](d, "panos_service_get",
+		newServiceService(d), serviceResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("API error must surface as IsError result")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+	// Pin that the shared adapter wraps the name into an entry xpath exactly once
+	// for the service instantiation too; a raw-name rejection or a double-wrap
+	// would both be caught here.
+	assertSingleWrappedGet(t, f, "entry[@name='nope']")
+}
+
+// newServiceUpdateHandler builds the update handler used by the update tests,
+// keeping their setup to one line.
+func newServiceUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ServiceInput) (*mcp.CallToolResult, any, error) {
+	return updateHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_update",
+		newServiceService(d), serviceResolve(d),
+		func(in ServiceInput) LocationInput { return in.Location },
+		func(in ServiceInput) string { return in.Name }, overlayService)
+}
+
+func TestServiceUpdate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	// Switch tcp/8080 to udp/53; the input differs from the current entry, so
+	// SpecMatches cannot short-circuit, and the protocol switch proves the block
+	// replacement clears the tcp side end-to-end.
+	res, _, err := newServiceUpdateHandler(d)(t.Context(), nil, ServiceInput{Name: "svc-1", Protocol: "udp", Port: "53"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<udp>") || !strings.Contains(el, "<port>53</port>") {
+		t.Fatalf("edit element missing new udp port: %s", el)
+	}
+	if strings.Contains(el, "<tcp>") || strings.Contains(el, "8080") {
+		t.Fatalf("switching protocol must clear the tcp side: %s", el)
+	}
+	if !strings.Contains(el, "old desc") {
+		t.Fatalf("read-modify-write must preserve the untouched description: %s", el)
+	}
+	if !strings.Contains(el, "svc-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("edit element missing entry xpath: %s", el)
+	}
+}
+
+func TestServiceUpdateRequiresProtocolAndPort(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	for name, in := range map[string]ServiceInput{
+		"port only":        {Name: "svc-1", Port: "9090"},
+		"protocol only":    {Name: "svc-1", Protocol: "tcp"},
+		"source port only": {Name: "svc-1", SourcePort: "1024"},
+	} {
+		res, _, err := newServiceUpdateHandler(d)(t.Context(), nil, in)
+		if err != nil {
+			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s: changing ports requires protocol and port together", name)
+		}
+		// Assert the guard's own message, not merely IsError: buildServiceProtocol
+		// would also reject each of these inputs ("port is required" / "protocol
+		// must be ..."), so without this the test passes even when the overlay
+		// requires-both guard is deleted. The guard fires first and gives the
+		// clearer message, and this pins it.
+		if body := textContent(t, res); !strings.Contains(body, "protocol and port") {
+			t.Fatalf("%s: error must name the requires-both guard, got: %s", name, body)
+		}
+	}
+	// A rejected overlay must never edit the device.
+	for _, req := range f.Requests() {
+		if req.Get("action") == "multi-config" {
+			t.Fatal("rejected update must not issue a multi-config edit")
+		}
+	}
+}
+
+func TestServiceUpdateAPIError(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>edit rejected</line></msg></response>`
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: errBody},
+	)
+	res, _, err := newServiceUpdateHandler(d)(t.Context(), nil, ServiceInput{Name: "svc-1", Protocol: "udp", Port: "53"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("a device-rejected edit must surface as IsError")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "edit rejected") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+}
+
+func TestServiceUpdateRejectsRename(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM")
+	svc := newServiceService(d)
+	// The guard fires before the location is used, so a zero Location is fine.
+	if _, err := svc.Update(t.Context(), service.Location{}, &service.Entry{Name: "svc-1"}, "svc-2"); err == nil {
+		t.Fatal("Update must reject a name that differs from entry.Name (rename)")
+	} else if !strings.Contains(err.Error(), "renaming") {
+		t.Fatalf("expected a rename-not-supported error, got: %v", err)
+	}
+}
+
+func TestServiceDelete(t *testing.T) {
+	// pango Delete removes through a multi-config request.
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody})
+	h := deleteHandler[service.Location, service.Entry](d, "panos_service_delete",
+		newServiceService(d), serviceResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "svc-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// Delete must reach the API with the entry xpath carrying the name and default
+	// vsys, proving serviceParts wires the location end-to-end.
+	if el := multiConfigElement(t, f); !strings.Contains(el, "svc-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("delete did not reach the API with the entry xpath: %s", el)
+	}
+}
+
+// assertContainsAll fails the test if body is missing any of subs. Collapsing a
+// row of substring checks into one call keeps the calling test's cyclomatic
+// complexity down.
+func assertContainsAll(t *testing.T, body string, subs ...string) {
+	t.Helper()
+	for _, s := range subs {
+		if !strings.Contains(body, s) {
+			t.Fatalf("missing %q in: %s", s, body)
+		}
+	}
+}
+
+func TestServiceList(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: serviceListBody})
+	h := listHandler[service.Location, service.Entry](d, "panos_service_list",
+		newServiceService(d), serviceResolve(d), serviceName, serviceSummary)
+
+	res, _, err := h(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	// Both entries appear, and the summary surfaces protocol, port and source_port
+	// for the tcp entry, the udp side, and the description and tags.
+	assertContainsAll(t, textContent(t, res),
+		`"total": 2`, "web-8080", "dns-u",
+		`"protocol": "tcp"`, `"port": "8080"`, `"source_port": "1024-65535"`,
+		`"protocol": "udp"`, `"port": "53"`, "web svc", "prod")
+
+	res, _, err = h(t.Context(), nil, ListInput{Filter: "dns"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); strings.Contains(body, "web-8080") || !strings.Contains(body, "dns-u") {
+		t.Fatalf("name filter failed: %s", body)
+	}
+}
+
+// TestServicePanoramaLocations exercises the Panorama location branches of
+// serviceParts: the shared default and an explicit device group, asserting the
+// request xpath so it pins the resolved location.
+func TestServicePanoramaLocations(t *testing.T) {
+	t.Run("shared list", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: serviceListBody})
+		h := listHandler[service.Location, service.Entry](d, "panos_service_list",
+			newServiceService(d), serviceResolve(d), serviceName, serviceSummary)
+		res, _, err := h(t.Context(), nil, ListInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if body := textContent(t, res); !strings.Contains(body, "web-8080") {
+			t.Fatalf("shared list missing entries: %s", body)
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "/config/shared") || strings.Contains(joined, "vsys") {
+			t.Fatalf("shared list must target the shared xpath and not a vsys, got: %s", joined)
+		}
+	})
+
+	t.Run("device group get", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: serviceCurrentBody})
+		h := getHandler[service.Location, service.Entry](d, "panos_service_get",
+			newServiceService(d), serviceResolve(d))
+		res, _, err := h(t.Context(), nil, NameInput{Name: "svc-1", Location: LocationInput{DeviceGroup: "dg1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "dg1") {
+			t.Fatalf("device_group get did not target the device group xpath, got: %s", joined)
+		}
+	})
+}
+
+// TestServiceGetUpdateViaRegisteredTools drives panos_service_get and
+// panos_service_update through a registered MCP server over the in-memory
+// transport. It is the proof of the adapter wiring: the raw pango service also
+// satisfies crudService, so wiring service.NewService directly would COMPILE and
+// only fail here, where the calls must actually reach the fake API. A raw-name
+// wiring is rejected client-side and records no request.
+func TestServiceGetUpdateViaRegisteredTools(t *testing.T) {
+	ctx := t.Context()
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterServiceTools(srv, d)
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := cli.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_get", Arguments: map[string]any{"name": "svc-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getRes.IsError {
+		t.Fatalf("registered get failed: %s", textContent(t, getRes))
+	}
+	// The registered get must reach the fake API wrapped exactly once and target
+	// the service endpoint; a raw-service wiring (which also satisfies crudService)
+	// would compile but record no such request.
+	assertSingleWrappedGet(t, f, "entry[@name='svc-1']")
+	if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "service") {
+		t.Fatalf("registered get did not target the service endpoint: %s", joined)
+	}
+
+	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_update", Arguments: map[string]any{"name": "svc-1", "protocol": "tcp", "port": "9090"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updRes.IsError {
+		t.Fatalf("registered update failed: %s", textContent(t, updRes))
+	}
+	if el := multiConfigElement(t, f); !strings.Contains(el, "9090") || !strings.Contains(el, "svc-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("registered update did not reach the API with the new port: %s", el)
+	}
+}
+
+func TestRegisterServiceToolsReadOnly(t *testing.T) {
+	reads := []string{"panos_service_list", "panos_service_get"}
+	writes := []string{"panos_service_create", "panos_service_update", "panos_service_delete"}
 
 	dRO, _ := newTestDeps(t, "PA-VM")
 	dRO.ReadOnly = true
