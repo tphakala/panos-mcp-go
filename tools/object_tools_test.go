@@ -7,6 +7,7 @@ import (
 
 	"github.com/PaloAltoNetworks/pango/objects/address"
 	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
+	"github.com/PaloAltoNetworks/pango/objects/admintag"
 	"github.com/PaloAltoNetworks/pango/objects/service"
 	service_group "github.com/PaloAltoNetworks/pango/objects/service/group"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -450,9 +451,9 @@ func TestAddressPanoramaLocations(t *testing.T) {
 	})
 }
 
-// registeredToolNames registers the address, address group, service and service
-// group tools on a fresh in-memory MCP server/client pair and returns the set of
-// tool names the server exposes.
+// registeredToolNames registers the address, address group, service, service
+// group and tag tools on a fresh in-memory MCP server/client pair and returns
+// the set of tool names the server exposes.
 func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	t.Helper()
 	ctx := t.Context()
@@ -461,6 +462,7 @@ func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	RegisterAddressGroupTools(srv, d)
 	RegisterServiceTools(srv, d)
 	RegisterServiceGroupTools(srv, d)
+	RegisterTagTools(srv, d)
 
 	clientT, serverT := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, serverT, nil)
@@ -1963,6 +1965,425 @@ func TestServiceGroupGetUpdateViaRegisteredTools(t *testing.T) {
 func TestRegisterServiceGroupToolsReadOnly(t *testing.T) {
 	reads := []string{"panos_service_group_list", "panos_service_group_get"}
 	writes := []string{"panos_service_group_create", "panos_service_group_update", "panos_service_group_delete"}
+
+	dRO, _ := newTestDeps(t, "PA-VM")
+	dRO.ReadOnly = true
+	ro := registeredToolNames(t, dRO)
+	for _, n := range reads {
+		if !ro[n] {
+			t.Errorf("read-only: %q must be registered", n)
+		}
+	}
+	for _, n := range writes {
+		if ro[n] {
+			t.Errorf("read-only: %q must NOT be registered", n)
+		}
+	}
+
+	dRW, _ := newTestDeps(t, "PA-VM")
+	dRW.ReadOnly = false
+	rw := registeredToolNames(t, dRW)
+	for _, n := range append(reads, writes...) {
+		if !rw[n] {
+			t.Errorf("writes enabled: %q must be registered", n)
+		}
+	}
+}
+
+// TestBuildTagEntry pins that a create entry carries the name, color and
+// comments, and that omitted optional fields stay nil so the XML omits them.
+func TestBuildTagEntry(t *testing.T) {
+	t.Run("full", func(t *testing.T) {
+		e, err := buildTagEntry(TagInput{Name: "prod", Color: "color13", Comments: "production workloads"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Name != "prod" || strVal(e.Color) != "color13" || strVal(e.Comments) != "production workloads" {
+			t.Fatalf("entry built wrong: %+v", e)
+		}
+	})
+	t.Run("bare", func(t *testing.T) {
+		e, err := buildTagEntry(TagInput{Name: "lab"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Name != "lab" || e.Color != nil || e.Comments != nil {
+			t.Fatalf("omitted fields must stay nil: %+v", e)
+		}
+	})
+}
+
+// TestBuildTagEntryRejects pins that a create entry requires a name.
+func TestBuildTagEntryRejects(t *testing.T) {
+	if _, err := buildTagEntry(TagInput{Color: "color13"}); err == nil {
+		t.Fatal("expected error for missing name")
+	}
+}
+
+// TestOverlayTagFields pins the overlay semantics: a non-empty color or
+// comments replaces the current value, and an empty one leaves it unchanged.
+// Consequently neither field can be cleared in place, matching how the
+// sibling overlays treat their description fields.
+func TestOverlayTagFields(t *testing.T) {
+	t.Run("color replaces when non-empty", func(t *testing.T) {
+		e := &admintag.Entry{Name: "t", Color: ptr("color13")}
+		if err := overlayTag(e, TagInput{Color: "color20"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Color) != "color20" {
+			t.Fatalf("color not replaced: %q", strVal(e.Color))
+		}
+	})
+	t.Run("comments replace when non-empty", func(t *testing.T) {
+		e := &admintag.Entry{Name: "t", Comments: ptr("old note")}
+		if err := overlayTag(e, TagInput{Comments: "new note"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Comments) != "new note" {
+			t.Fatalf("comments not replaced: %q", strVal(e.Comments))
+		}
+	})
+	t.Run("empty overlay leaves entry unchanged", func(t *testing.T) {
+		e := &admintag.Entry{Name: "t", Color: ptr("color13"), Comments: ptr("old note")}
+		if err := overlayTag(e, TagInput{}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Color) != "color13" || strVal(e.Comments) != "old note" {
+			t.Fatalf("empty overlay changed entry: color=%q comments=%q", strVal(e.Color), strVal(e.Comments))
+		}
+	})
+	t.Run("disable-override passes through untouched", func(t *testing.T) {
+		e := &admintag.Entry{Name: "t", Color: ptr("color13"), DisableOverride: ptr("yes")}
+		if err := overlayTag(e, TagInput{Color: "color20"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.DisableOverride) != "yes" {
+			t.Fatalf("overlay must not touch DisableOverride: %q", strVal(e.DisableOverride))
+		}
+	})
+}
+
+// tagListBody lists a tag with a color and comments, and a bare tag. The list
+// xpath ends at .../tag/entry, so there is no wrapper element in the response.
+const tagListBody = `<response status="success"><result>` +
+	`<entry name="prod"><color>color13</color><comments>production workloads</comments></entry>` +
+	`<entry name="lab"></entry>` +
+	`</result></response>`
+
+// tagCreatedBody answers the read-back get pango's Create issues after the
+// set; the read-back requires exactly one entry.
+const tagCreatedBody = `<response status="success"><result><entry name="prod">` +
+	`<color>color13</color><comments>production workloads</comments></entry></result></response>`
+
+// tagCurrentBody is the entry as it exists before an update: a color and
+// comments. Every update input below must differ from it, or pango's
+// UpdateWithXpath short-circuits on SpecMatches and issues no multi-config
+// request, making the edit assertions vacuous.
+const tagCurrentBody = `<response status="success"><result><entry name="t-1">` +
+	`<color>color13</color><comments>old note</comments></entry></result></response>`
+
+func tagResolve(d *Deps) func(LocationInput) (admintag.Location, error) {
+	return func(in LocationInput) (admintag.Location, error) {
+		return resolveLocation(d, in, tagParts())
+	}
+}
+
+func tagName(e *admintag.Entry) string { return e.Name }
+
+func TestTagCreateBuildsEntry(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		// pango's Create reads the object back with a config get after the set.
+		fakeRoute{Match: configAction("get"), Body: tagCreatedBody},
+	)
+	h := createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create",
+		newTagService(d), tagResolve(d),
+		func(in TagInput) LocationInput { return in.Location }, buildTagEntry)
+
+	res, _, err := h(t.Context(), nil, TagInput{Name: "prod", Color: "color13", Comments: "production workloads"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	var sawSet bool
+	for _, req := range f.Requests() {
+		if req.Get("type") == "config" && req.Get("action") == "set" {
+			sawSet = true
+			el := req.Get("element")
+			if !strings.Contains(el, `name="prod"`) || !strings.Contains(el, "<color>color13</color>") ||
+				!strings.Contains(el, "<comments>production workloads</comments>") {
+				t.Fatalf("element missing fields: %s", el)
+			}
+			if xp := req.Get("xpath"); !strings.Contains(xp, "vsys1") || !strings.Contains(xp, "/tag") {
+				t.Fatalf("xpath missing default vsys or tag endpoint: %s", xp)
+			}
+		}
+	}
+	if !sawSet {
+		t.Fatal("no config set request recorded")
+	}
+}
+
+func TestTagCreateValidation(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	h := createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create",
+		newTagService(d), tagResolve(d),
+		func(in TagInput) LocationInput { return in.Location }, buildTagEntry)
+
+	for name, in := range map[string]TagInput{
+		"no name":        {Color: "color13"},
+		"dg on firewall": {Name: "t", Location: LocationInput{DeviceGroup: "dg1"}},
+	} {
+		res, _, err := h(t.Context(), nil, in)
+		if err != nil {
+			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s: expected IsError", name)
+		}
+	}
+	// Validation must reject before any API call: only the bootstrap system-info
+	// request may exist.
+	if got := len(f.Requests()); got != 1 {
+		t.Fatalf("validation must fail before any API call; recorded %d requests", got)
+	}
+}
+
+func TestTagAPIErrorSurfaces(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
+	h := getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get",
+		newTagService(d), tagResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("API error must surface as IsError result")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+	// Pin that the shared adapter wraps the name into an entry xpath exactly
+	// once for the tag instantiation too; a raw-name rejection or a double-wrap
+	// would both be caught here.
+	assertSingleWrappedGet(t, f, "entry[@name='nope']")
+}
+
+// newTagUpdateHandler builds the update handler used by the update tests,
+// keeping their setup to one line.
+func newTagUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, TagInput) (*mcp.CallToolResult, any, error) {
+	return updateHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_update",
+		newTagService(d), tagResolve(d),
+		func(in TagInput) LocationInput { return in.Location },
+		func(in TagInput) string { return in.Name }, overlayTag)
+}
+
+func TestTagUpdate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: tagCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	// Change the color; the input differs from the current entry, so
+	// SpecMatches cannot short-circuit.
+	res, _, err := newTagUpdateHandler(d)(t.Context(), nil, TagInput{Name: "t-1", Color: "color20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<color>color20</color>") {
+		t.Fatalf("edit element missing new color: %s", el)
+	}
+	if strings.Contains(el, "color13") {
+		t.Fatalf("color must replace, not keep the old value: %s", el)
+	}
+	if !strings.Contains(el, "old note") {
+		t.Fatalf("read-modify-write must preserve the untouched comments: %s", el)
+	}
+	if !strings.Contains(el, "t-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("edit element missing entry xpath: %s", el)
+	}
+}
+
+func TestTagUpdateAPIError(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>edit rejected</line></msg></response>`
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: tagCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: errBody},
+	)
+	res, _, err := newTagUpdateHandler(d)(t.Context(), nil, TagInput{Name: "t-1", Color: "color20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("a device-rejected edit must surface as IsError")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "edit rejected") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+}
+
+func TestTagDelete(t *testing.T) {
+	// pango Delete removes through a multi-config request.
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody})
+	h := deleteHandler[admintag.Location, admintag.Entry](d, "panos_tag_delete",
+		newTagService(d), tagResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "t-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// Delete must reach the API with the entry xpath carrying the name and
+	// default vsys, proving tagParts wires the location end-to-end.
+	if el := multiConfigElement(t, f); !strings.Contains(el, "t-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("delete did not reach the API with the entry xpath: %s", el)
+	}
+}
+
+func TestTagList(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: tagListBody})
+	h := listHandler[admintag.Location, admintag.Entry](d, "panos_tag_list",
+		newTagService(d), tagResolve(d), tagName, tagSummary)
+
+	res, _, err := h(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	body := textContent(t, res)
+	// Both entries appear; the summary surfaces color and comments, and the
+	// bare entry emits them as empty strings rather than dropping the keys.
+	assertContainsAll(t, body,
+		`"total": 2`, "prod", "lab",
+		`"color": "color13"`, `"comments": "production workloads"`,
+		`"color": ""`, `"comments": ""`)
+	// Tags have neither a description nor tags of their own; the hand-rolled
+	// summary must not emit bogus summaryBase fields.
+	if strings.Contains(body, `"description"`) || strings.Contains(body, `"tags"`) {
+		t.Fatalf("tag summary must contain only name, color and comments: %s", body)
+	}
+
+	res, _, err = h(t.Context(), nil, ListInput{Filter: "lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); strings.Contains(body, "prod") || !strings.Contains(body, "lab") {
+		t.Fatalf("name filter failed: %s", body)
+	}
+}
+
+// TestTagPanoramaLocations exercises the Panorama location branches of
+// tagParts: the shared default and an explicit device group, asserting the
+// request xpath so it pins the resolved location.
+func TestTagPanoramaLocations(t *testing.T) {
+	t.Run("shared list", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: tagListBody})
+		h := listHandler[admintag.Location, admintag.Entry](d, "panos_tag_list",
+			newTagService(d), tagResolve(d), tagName, tagSummary)
+		res, _, err := h(t.Context(), nil, ListInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if body := textContent(t, res); !strings.Contains(body, "prod") {
+			t.Fatalf("shared list missing entries: %s", body)
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "/config/shared") || strings.Contains(joined, "vsys") {
+			t.Fatalf("shared list must target the shared xpath and not a vsys, got: %s", joined)
+		}
+	})
+
+	t.Run("device group get", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: tagCurrentBody})
+		h := getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get",
+			newTagService(d), tagResolve(d))
+		res, _, err := h(t.Context(), nil, NameInput{Name: "t-1", Location: LocationInput{DeviceGroup: "dg1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "dg1") {
+			t.Fatalf("device_group get did not target the device group xpath, got: %s", joined)
+		}
+	})
+}
+
+// TestTagGetUpdateViaRegisteredTools drives panos_tag_get and panos_tag_update
+// through a registered MCP server over the in-memory transport. It is the
+// proof of the adapter wiring: the raw pango service also satisfies
+// crudService, so wiring admintag.NewService directly would COMPILE and only
+// fail here, where the calls must actually reach the fake API. A raw-name
+// wiring is rejected client-side and records no request.
+func TestTagGetUpdateViaRegisteredTools(t *testing.T) {
+	ctx := t.Context()
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: tagCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterTagTools(srv, d)
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := cli.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_tag_get", Arguments: map[string]any{"name": "t-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getRes.IsError {
+		t.Fatalf("registered get failed: %s", textContent(t, getRes))
+	}
+	// The registered get must reach the fake API wrapped exactly once and
+	// target the tag endpoint; a raw-service wiring (which also satisfies
+	// crudService) would compile but record no such request.
+	assertSingleWrappedGet(t, f, "entry[@name='t-1']")
+	if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "/tag/entry") {
+		t.Fatalf("registered get did not target the tag endpoint: %s", joined)
+	}
+
+	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_tag_update", Arguments: map[string]any{"name": "t-1", "color": "color20"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updRes.IsError {
+		t.Fatalf("registered update failed: %s", textContent(t, updRes))
+	}
+	if el := multiConfigElement(t, f); !strings.Contains(el, "color20") || !strings.Contains(el, "t-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("registered update did not reach the API with the new color: %s", el)
+	}
+}
+
+func TestRegisterTagToolsReadOnly(t *testing.T) {
+	reads := []string{"panos_tag_list", "panos_tag_get"}
+	writes := []string{"panos_tag_create", "panos_tag_update", "panos_tag_delete"}
 
 	dRO, _ := newTestDeps(t, "PA-VM")
 	dRO.ReadOnly = true

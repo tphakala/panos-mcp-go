@@ -42,10 +42,10 @@ type nameFixService[L xpathLocation, E any] interface {
 // off E directly.
 //
 // Revisit on any pango upgrade: if the SDK starts wrapping names internally,
-// this adapter would double-wrap. The *APIErrorSurfaces tests (address, address
-// group, service) assert via assertSingleWrappedGet that the get reaches the API
-// wrapped exactly once, rejecting a double-wrapped entry[@name='entry[@name=...',
-// which flags such a regression.
+// this adapter would double-wrap. Every object resource's *APIErrorSurfaces test
+// asserts via assertSingleWrappedGet that the get reaches the API wrapped exactly
+// once, rejecting a double-wrapped entry[@name='entry[@name=...', which flags such
+// a regression.
 type nameFixAdapter[L xpathLocation, E any] struct {
 	svc    nameFixService[L, E]
 	client util.PangoClient

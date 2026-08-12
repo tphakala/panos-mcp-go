@@ -6,6 +6,7 @@ import (
 
 	"github.com/PaloAltoNetworks/pango/objects/address"
 	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
+	"github.com/PaloAltoNetworks/pango/objects/admintag"
 	"github.com/PaloAltoNetworks/pango/objects/service"
 	service_group "github.com/PaloAltoNetworks/pango/objects/service/group"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -638,4 +639,134 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 		Description: "Delete a service group from the candidate config. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete service group"),
 	}, deleteHandler[service_group.Location, service_group.Entry](d, "panos_service_group_delete", svc, resolve))
+}
+
+// TagInput is the input for tag create and update tools. DisableOverride is
+// not exposed, matching how the sibling inputs omit their override fields; it
+// rides through the read-modify-write untouched.
+type TagInput struct {
+	Name     string        `json:"name" jsonschema:"Tag name"`
+	Location LocationInput `json:"location,omitempty"`
+	Color    string        `json:"color,omitempty" jsonschema:"PAN-OS named color code, color1 to color42, excluding the unused color11 and color18"`
+	Comments string        `json:"comments,omitempty"`
+}
+
+// buildTagEntry validates a TagInput and builds a create entry; only the name
+// is required. Color and comments map to pointer fields and are set only when
+// non-empty, so a bare create omits them from the XML.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildTagEntry(in TagInput) (*admintag.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	e := &admintag.Entry{Name: in.Name}
+	if in.Color != "" {
+		e.Color = ptr(in.Color)
+	}
+	if in.Comments != "" {
+		e.Comments = ptr(in.Comments)
+	}
+	return e, nil
+}
+
+// overlayTag applies provided fields onto the current entry. An omitted
+// (empty) color or comments leaves the current value unchanged, matching how
+// the sibling overlays treat their description fields; consequently neither
+// field can be cleared in place, only overwritten. DisableOverride is not a
+// tool input and passes through the read-modify-write untouched.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func overlayTag(e *admintag.Entry, in TagInput) error {
+	if in.Color != "" {
+		e.Color = ptr(in.Color)
+	}
+	if in.Comments != "" {
+		e.Comments = ptr(in.Comments)
+	}
+	return nil
+}
+
+// tagParts supplies tag locations for resolveLocation. The pango package is
+// objects/admintag: it targets the same .../tag config node as objects/tag,
+// but exposes the XpathWithComponents and *WithXpath surface nameFixAdapter
+// needs, which objects/tag does not.
+func tagParts() locParts[admintag.Location] {
+	return locParts[admintag.Location]{
+		shared: func(string) admintag.Location {
+			return admintag.Location{Shared: &admintag.SharedLocation{}}
+		},
+		vsys: func(v string) admintag.Location {
+			return admintag.Location{Vsys: &admintag.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}
+		},
+		deviceGroup: func(dg, _ string) admintag.Location {
+			return admintag.Location{DeviceGroup: &admintag.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+// newTagService adapts pango's admin tag service to crudService via the
+// shared nameFixAdapter; pango's raw-name Read/Update would otherwise be
+// rejected client-side (see nameFixService).
+func newTagService(d *Deps) nameFixAdapter[admintag.Location, admintag.Entry] {
+	return nameFixAdapter[admintag.Location, admintag.Entry]{
+		svc:    admintag.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *admintag.Entry) string { return e.Name },
+	}
+}
+
+// tagNameKey is tagSummary's "name" map key. goconst counts map
+// composite-literal keys: summaryBase and serviceGroupSummary already hold
+// two production "name" map keys, and a third literal here would trip
+// min-occurrences=3, reported at summaryBase's line (measured with
+// golangci-lint 2.12.2 and this repo's config). The const keeps the literal
+// count at two without touching the sibling summaries.
+const tagNameKey = "name"
+
+// tagSummary reduces an entry to the list view fields. Tags have no
+// description and no tag list of their own (pango objects/admintag Entry), so
+// this does not build on summaryBase: hand-rolling the map avoids emitting
+// bogus empty fields.
+func tagSummary(e *admintag.Entry) any {
+	return map[string]any{tagNameKey: e.Name, "color": strVal(e.Color), "comments": strVal(e.Comments)}
+}
+
+// RegisterTagTools registers the tag tools. Mutating tools are skipped
+// entirely in read-only mode.
+func RegisterTagTools(s *mcp.Server, d *Deps) {
+	svc := newTagService(d)
+	resolve := func(in LocationInput) (admintag.Location, error) { return resolveLocation(d, in, tagParts()) }
+	name := func(e *admintag.Entry) string { return e.Name }
+	loc := func(in TagInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_tag_list",
+		Description: "List tags (labels attachable to objects and rules, each with an optional color) at a location. Read-only.",
+		Annotations: readOnlyTool("List tags"),
+	}, listHandler[admintag.Location, admintag.Entry](d, "panos_tag_list", svc, resolve, name, tagSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_tag_get",
+		Description: "Get one tag by name with all fields. Read-only.",
+		Annotations: readOnlyTool("Get tag"),
+	}, getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get", svc, resolve))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_tag_create",
+		Description: "Create a tag in the candidate config. Only the name is required; color (color1 to color42, excluding color11 and color18) and comments are optional. Run panos_commit to apply.",
+		Annotations: createTool("Create tag"),
+	}, createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create", svc, resolve, loc, buildTagEntry))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_tag_update",
+		Description: "Update a tag: read-modify-write, only provided fields change; an omitted color or comments keeps the current value, so neither can be cleared in place. Candidate config only.",
+		Annotations: updateTool("Update tag"),
+	}, updateHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_update", svc, resolve, loc,
+		func(in TagInput) string { return in.Name }, overlayTag))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_tag_delete",
+		Description: "Delete a tag from the candidate config. Fails while objects or rules still reference it. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete tag"),
+	}, deleteHandler[admintag.Location, admintag.Entry](d, "panos_tag_delete", svc, resolve))
 }
