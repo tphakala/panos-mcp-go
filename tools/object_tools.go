@@ -1,11 +1,10 @@
 package tools
 
 import (
-	"context"
 	"errors"
 
 	"github.com/PaloAltoNetworks/pango/objects/address"
-	"github.com/PaloAltoNetworks/pango/util"
+	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -24,58 +23,24 @@ func addressParts() locParts[address.Location] {
 	}
 }
 
-// addressService adapts pango's address.Service to crudService. pango's
-// name-based Read and Update pass the raw object name to
-// Location.XpathWithComponents (objects/address/service.go read/Update), which
-// rejects any component not shaped like "entry[...]"
-// (objects/address/location.go XpathWithComponents), so both fail client-side
-// on any real name. The adapter pre-wraps the name with util.AsEntryXpath and
-// drives Update through the xpath-based SDK methods. Create, Delete, and List
-// wrap the name themselves in the SDK and pass through unchanged.
-//
-// Revisit on any pango upgrade: if the SDK starts wrapping names internally,
-// this adapter would double-wrap. TestAddressAPIErrorSurfaces pins that the get
-// reaches the API with an entry xpath, which flags a regression here.
-type addressService struct {
-	*address.Service
-	client util.PangoClient
+// newAddressService adapts pango's address service to crudService; the shared
+// nameFixAdapter routes around pango's raw-name Read/Update rejection.
+func newAddressService(d *Deps) nameFixAdapter[address.Location, address.Entry] {
+	return nameFixAdapter[address.Location, address.Entry]{
+		svc:    address.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *address.Entry) string { return e.Name },
+	}
 }
 
-func newAddressService(d *Deps) addressService {
-	return addressService{Service: address.NewService(d.Client), client: d.Client}
-}
-
-// Read fetches one entry by name using the given action ("get" or "show").
-func (s addressService) Read(ctx context.Context, loc address.Location, name, action string) (*address.Entry, error) {
-	if name == "" {
-		return nil, errors.New("name is required")
+// newAddressGroupService adapts pango's address group service to crudService via
+// the shared nameFixAdapter.
+func newAddressGroupService(d *Deps) nameFixAdapter[address_group.Location, address_group.Entry] {
+	return nameFixAdapter[address_group.Location, address_group.Entry]{
+		svc:    address_group.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *address_group.Entry) string { return e.Name },
 	}
-	// Call the embedded Service.Read, not s.Read: s.Read is this override, so
-	// s.Read here would recurse infinitely.
-	return s.Service.Read(ctx, loc, util.AsEntryXpath(name), action)
-}
-
-// Update edits the entry in place, mirroring the SDK's Update
-// (objects/address/service.go Update) with the xpath built from a properly
-// wrapped entry name. The update tool does not rename (overlayAddress never
-// touches Name), so name always equals entry.Name; a mismatch is rejected rather
-// than building an xpath for one object while passing a rename intent to the SDK.
-func (s addressService) Update(ctx context.Context, loc address.Location, entry *address.Entry, name string) (*address.Entry, error) {
-	if entry.Name == "" {
-		return nil, errors.New("name is required")
-	}
-	if name != "" && name != entry.Name {
-		return nil, errors.New("renaming an address object is not supported")
-	}
-	path, err := loc.XpathWithComponents(s.client.Versioning(), util.AsEntryXpath(entry.Name))
-	if err != nil {
-		return nil, err
-	}
-	xpath := util.AsXpath(path)
-	if err := s.UpdateWithXpath(ctx, xpath, entry, name); err != nil {
-		return nil, err
-	}
-	return s.ReadWithXpath(ctx, xpath, "get")
 }
 
 // AddressInput is the input for address create and update tools.
@@ -220,4 +185,140 @@ func RegisterAddressTools(s *mcp.Server, d *Deps) {
 		Description: "Delete an address object from the candidate config. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete address"),
 	}, deleteHandler[address.Location, address.Entry](d, "panos_address_delete", svc, resolve))
+}
+
+// addressGroupParts supplies address group locations for resolveLocation.
+func addressGroupParts() locParts[address_group.Location] {
+	return locParts[address_group.Location]{
+		shared: func(string) address_group.Location {
+			return address_group.Location{Shared: &address_group.SharedLocation{}}
+		},
+		vsys: func(v string) address_group.Location {
+			return address_group.Location{Vsys: &address_group.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}
+		},
+		deviceGroup: func(dg, _ string) address_group.Location {
+			return address_group.Location{DeviceGroup: &address_group.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+// AddressGroupInput is the input for address group create and update tools.
+type AddressGroupInput struct {
+	Name          string        `json:"name" jsonschema:"Address group name"`
+	Location      LocationInput `json:"location,omitempty"`
+	Static        []string      `json:"static,omitempty" jsonschema:"Static member names; replaces the full list when provided"`
+	DynamicFilter string        `json:"dynamic_filter,omitempty" jsonschema:"Dynamic match expression over tags, e.g. 'prod' and 'web'"`
+	Description   string        `json:"description,omitempty"`
+	Tags          []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
+}
+
+// buildAddressGroupEntry validates an AddressGroupInput and builds a create
+// entry. Exactly one of static, dynamic_filter must be set: a PAN-OS address
+// group is either a static member list or a dynamic tag-filter match, never
+// both. An empty static list counts as absent; a group needs members.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildAddressGroupEntry(in AddressGroupInput) (*address_group.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	hasStatic := len(in.Static) > 0
+	hasDynamic := in.DynamicFilter != ""
+	if hasStatic == hasDynamic {
+		return nil, errors.New("exactly one of static, dynamic_filter is required")
+	}
+	e := &address_group.Entry{Name: in.Name, Tag: in.Tags}
+	if hasStatic {
+		e.Static = in.Static
+	} else {
+		e.Dynamic = &address_group.Dynamic{Filter: ptr(in.DynamicFilter)}
+	}
+	if in.Description != "" {
+		e.Description = ptr(in.Description)
+	}
+	return e, nil
+}
+
+// overlayAddressGroup applies provided fields onto the current entry. At most one
+// of static, dynamic_filter may be provided; each provided side rewrites both
+// membership fields, so switching a group's type clears the other side and the
+// read-modify-write cannot emit a dual-typed (invalid) entry. A static list counts
+// as provided only when it has members; an empty static list is ignored, since a
+// static group cannot be emptied in place (switch to dynamic_filter or delete the
+// group). An omitted (empty) description leaves the existing one unchanged; a nil
+// tags slice leaves tags unchanged, while a non-nil empty slice clears them.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func overlayAddressGroup(e *address_group.Entry, in AddressGroupInput) error {
+	hasStatic := len(in.Static) > 0
+	hasDynamic := in.DynamicFilter != ""
+	if hasStatic && hasDynamic {
+		return errors.New("at most one of static, dynamic_filter may be set")
+	}
+	if hasStatic {
+		e.Static, e.Dynamic = in.Static, nil
+	}
+	if hasDynamic {
+		e.Static, e.Dynamic = nil, &address_group.Dynamic{Filter: ptr(in.DynamicFilter)}
+	}
+	if in.Description != "" {
+		e.Description = ptr(in.Description)
+	}
+	if in.Tags != nil {
+		e.Tag = in.Tags
+	}
+	return nil
+}
+
+// addressGroupSummary reduces an entry to the list view fields.
+func addressGroupSummary(e *address_group.Entry) any {
+	filter := ""
+	if e.Dynamic != nil {
+		filter = strVal(e.Dynamic.Filter)
+	}
+	return map[string]any{
+		"name": e.Name, "static": e.Static, "dynamic_filter": filter,
+		"description": strVal(e.Description), "tags": e.Tag,
+	}
+}
+
+// RegisterAddressGroupTools registers the address group tools. Mutating tools
+// are skipped entirely in read-only mode.
+func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
+	svc := newAddressGroupService(d)
+	resolve := func(in LocationInput) (address_group.Location, error) {
+		return resolveLocation(d, in, addressGroupParts())
+	}
+	name := func(e *address_group.Entry) string { return e.Name }
+	loc := func(in AddressGroupInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_address_group_list",
+		Description: "List address groups (static member list or dynamic tag filter) at a location. Read-only.",
+		Annotations: readOnlyTool("List address groups"),
+	}, listHandler[address_group.Location, address_group.Entry](d, "panos_address_group_list", svc, resolve, name, addressGroupSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_address_group_get",
+		Description: "Get one address group by name with all fields. Read-only.",
+		Annotations: readOnlyTool("Get address group"),
+	}, getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get", svc, resolve))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_address_group_create",
+		Description: "Create an address group in the candidate config. Exactly one of static, dynamic_filter. Run panos_commit to apply.",
+		Annotations: createTool("Create address group"),
+	}, createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create", svc, resolve, loc, buildAddressGroupEntry))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_address_group_update",
+		Description: "Update an address group: read-modify-write, only provided fields change. Tags replace fully (an empty list clears them); a non-empty static or dynamic_filter replaces membership and switches the group type. An empty static list is ignored: a static group cannot be emptied in place, so switch to dynamic_filter or delete the group. Candidate config only.",
+		Annotations: updateTool("Update address group"),
+	}, updateHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_update", svc, resolve, loc,
+		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_address_group_delete",
+		Description: "Delete an address group from the candidate config. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete address group"),
+	}, deleteHandler[address_group.Location, address_group.Entry](d, "panos_address_group_delete", svc, resolve))
 }
