@@ -54,6 +54,17 @@ const (
 
 	defaultVsys = "vsys1"
 
+	// Single-device PAN-OS configs hang off the literal device entry
+	// "localhost.localdomain" in the config xpath. pango's location types reject
+	// an empty NgfwDevice/PanoramaDevice (objects/address/location.go
+	// IsValid/XpathPrefix), so the vsys and device-group constructors must set
+	// NgfwDevice and PanoramaDevice respectively; the shared location has neither.
+	// The two are kept distinct because they populate different pango location
+	// fields (VsysLocation.NgfwDevice vs DeviceGroupLocation.PanoramaDevice), even
+	// though PAN-OS uses the same literal for both on a single device.
+	defaultNgfwDevice     = "localhost.localdomain"
+	defaultPanoramaDevice = "localhost.localdomain"
+
 	rulebasePre  = "pre-rulebase"
 	rulebasePost = "post-rulebase"
 )
