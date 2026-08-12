@@ -206,7 +206,7 @@ func addressGroupParts() locParts[address_group.Location] {
 type AddressGroupInput struct {
 	Name          string        `json:"name" jsonschema:"Address group name"`
 	Location      LocationInput `json:"location,omitempty"`
-	Static        []string      `json:"static,omitempty" jsonschema:"Static member names; replaces the full list when provided"`
+	Static        []string      `json:"static,omitempty" jsonschema:"Static member names; a non-empty list replaces the members. An empty list is ignored, since a static group cannot be emptied in place (switch to dynamic_filter or delete the group)"`
 	DynamicFilter string        `json:"dynamic_filter,omitempty" jsonschema:"Dynamic match expression over tags, e.g. 'prod' and 'web'"`
 	Description   string        `json:"description,omitempty"`
 	Tags          []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`

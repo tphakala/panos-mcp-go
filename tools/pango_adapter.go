@@ -2,7 +2,7 @@ package tools
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/PaloAltoNetworks/pango/util"
 	"github.com/PaloAltoNetworks/pango/version"
@@ -71,7 +71,7 @@ func (a nameFixAdapter[L, E]) Read(ctx context.Context, loc L, name, action stri
 func (a nameFixAdapter[L, E]) Update(ctx context.Context, loc L, entry *E, name string) (*E, error) {
 	entryName := a.name(entry)
 	if name != "" && name != entryName {
-		return nil, errors.New("renaming is not supported")
+		return nil, fmt.Errorf("renaming is not supported: the update name %q must match the entry name %q", name, entryName)
 	}
 	path, err := loc.XpathWithComponents(a.client.Versioning(), util.AsEntryXpath(entryName))
 	if err != nil {
