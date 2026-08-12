@@ -2,9 +2,11 @@ package tools
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/PaloAltoNetworks/pango/objects/address"
 	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
+	"github.com/PaloAltoNetworks/pango/objects/service"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -139,13 +141,22 @@ func overlayAddress(e *address.Entry, in AddressInput) error {
 	return nil
 }
 
+// summaryBase builds the fields every object summary shares: name, description
+// and tags. Each resource summary adds its own type-specific keys onto the
+// returned map. Centralising these keys also keeps the shared literals under
+// goconst's occurrence threshold as more resources are added.
+func summaryBase(name string, description *string, tags []string) map[string]any {
+	return map[string]any{"name": name, "description": strVal(description), "tags": tags}
+}
+
 // addressSummary reduces an entry to the list view fields.
 func addressSummary(e *address.Entry) any {
-	return map[string]any{
-		"name": e.Name, "ip_netmask": strVal(e.IpNetmask), "ip_range": strVal(e.IpRange),
-		"fqdn": strVal(e.Fqdn), "ip_wildcard": strVal(e.IpWildcard),
-		"description": strVal(e.Description), "tags": e.Tag,
-	}
+	m := summaryBase(e.Name, e.Description, e.Tag)
+	m["ip_netmask"] = strVal(e.IpNetmask)
+	m["ip_range"] = strVal(e.IpRange)
+	m["fqdn"] = strVal(e.Fqdn)
+	m["ip_wildcard"] = strVal(e.IpWildcard)
+	return m
 }
 
 // RegisterAddressTools registers the address object tools. Mutating tools are
@@ -276,10 +287,10 @@ func addressGroupSummary(e *address_group.Entry) any {
 	if e.Dynamic != nil {
 		filter = strVal(e.Dynamic.Filter)
 	}
-	return map[string]any{
-		"name": e.Name, "static": e.Static, "dynamic_filter": filter,
-		"description": strVal(e.Description), "tags": e.Tag,
-	}
+	m := summaryBase(e.Name, e.Description, e.Tag)
+	m["static"] = e.Static
+	m["dynamic_filter"] = filter
+	return m
 }
 
 // RegisterAddressGroupTools registers the address group tools. Mutating tools
@@ -321,4 +332,194 @@ func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 		Description: "Delete an address group from the candidate config. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete address group"),
 	}, deleteHandler[address_group.Location, address_group.Entry](d, "panos_address_group_delete", svc, resolve))
+}
+
+// serviceParts supplies service object locations for resolveLocation.
+func serviceParts() locParts[service.Location] {
+	return locParts[service.Location]{
+		shared: func(string) service.Location {
+			return service.Location{Shared: &service.SharedLocation{}}
+		},
+		vsys: func(v string) service.Location {
+			return service.Location{Vsys: &service.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}
+		},
+		deviceGroup: func(dg, _ string) service.Location {
+			return service.Location{DeviceGroup: &service.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+// newServiceService adapts pango's service object service to crudService via the
+// shared nameFixAdapter; pango's raw-name Read/Update would otherwise be rejected
+// client-side (see nameFixService).
+func newServiceService(d *Deps) nameFixAdapter[service.Location, service.Entry] {
+	return nameFixAdapter[service.Location, service.Entry]{
+		svc:    service.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *service.Entry) string { return e.Name },
+	}
+}
+
+// ServiceInput is the input for service create and update tools.
+type ServiceInput struct {
+	Name        string        `json:"name" jsonschema:"Service object name"`
+	Location    LocationInput `json:"location,omitempty"`
+	Protocol    string        `json:"protocol,omitempty" jsonschema:"tcp or udp (required on create; on update required together with port when changing ports)"`
+	Port        string        `json:"port,omitempty" jsonschema:"Destination port or range, e.g. 8080 or 8000-8080"`
+	SourcePort  string        `json:"source_port,omitempty" jsonschema:"Source port or range; only meaningful together with protocol and port"`
+	Description string        `json:"description,omitempty"`
+	Tags        []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
+}
+
+// buildServiceProtocol maps protocol, port, and source_port onto the pango
+// protocol struct. A service object is exactly one of tcp or udp, and PAN-OS
+// requires a destination port.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildServiceProtocol(in ServiceInput) (*service.Protocol, error) {
+	if in.Port == "" {
+		return nil, errors.New("port is required")
+	}
+	switch in.Protocol {
+	case "tcp":
+		p := &service.ProtocolTcp{Port: ptr(in.Port)}
+		if in.SourcePort != "" {
+			p.SourcePort = ptr(in.SourcePort)
+		}
+		return &service.Protocol{Tcp: p}, nil
+	case "udp":
+		p := &service.ProtocolUdp{Port: ptr(in.Port)}
+		if in.SourcePort != "" {
+			p.SourcePort = ptr(in.SourcePort)
+		}
+		return &service.Protocol{Udp: p}, nil
+	default:
+		return nil, fmt.Errorf("protocol must be \"tcp\" or \"udp\", got %q", in.Protocol)
+	}
+}
+
+// buildServiceEntry validates a ServiceInput and builds a create entry.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildServiceEntry(in ServiceInput) (*service.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	proto, err := buildServiceProtocol(in)
+	if err != nil {
+		return nil, err
+	}
+	e := &service.Entry{Name: in.Name, Tag: in.Tags, Protocol: proto}
+	if in.Description != "" {
+		e.Description = ptr(in.Description)
+	}
+	return e, nil
+}
+
+// overlayService applies provided fields onto the current entry. Touching the
+// protocol side (protocol, port, or source_port) requires protocol and port
+// together and rebuilds that side's port and source_port from the input, so an
+// omitted source_port clears a pre-existing one. A timeout override, which this
+// tool does not expose, is carried across a same-protocol change so a plain port
+// edit cannot silently destroy it; switching tcp to udp (or back) drops the old
+// side entirely, including its override, since the override belongs to the other
+// protocol. An omitted (empty) description leaves the existing description
+// unchanged; a nil tags slice leaves tags unchanged, while a non-nil empty slice
+// clears them.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func overlayService(e *service.Entry, in ServiceInput) error {
+	if in.Protocol != "" || in.Port != "" || in.SourcePort != "" {
+		if in.Protocol == "" || in.Port == "" {
+			return errors.New("changing the protocol or ports requires both protocol and port")
+		}
+		proto, err := buildServiceProtocol(in)
+		if err != nil {
+			return err
+		}
+		carryServiceOverride(proto, e.Protocol)
+		e.Protocol = proto
+	}
+	if in.Description != "" {
+		e.Description = ptr(in.Description)
+	}
+	if in.Tags != nil {
+		e.Tag = in.Tags
+	}
+	return nil
+}
+
+// carryServiceOverride copies a timeout override from the current protocol block
+// (src) onto the freshly built one (dst) when the protocol type is unchanged.
+// Override is not a tool input, so a read-modify-write that rebuilds the block
+// from input would otherwise silently drop it on a plain port change. A
+// protocol-type switch (tcp <-> udp) carries nothing: the override belongs to
+// the side being removed.
+func carryServiceOverride(dst, src *service.Protocol) {
+	if src == nil {
+		return
+	}
+	if dst.Tcp != nil && src.Tcp != nil {
+		dst.Tcp.Override = src.Tcp.Override
+	}
+	if dst.Udp != nil && src.Udp != nil {
+		dst.Udp.Override = src.Udp.Override
+	}
+}
+
+// serviceSummary reduces an entry to the list view fields.
+func serviceSummary(e *service.Entry) any {
+	proto, port, srcPort := "", "", ""
+	if e.Protocol != nil {
+		switch {
+		case e.Protocol.Tcp != nil:
+			proto, port, srcPort = "tcp", strVal(e.Protocol.Tcp.Port), strVal(e.Protocol.Tcp.SourcePort)
+		case e.Protocol.Udp != nil:
+			proto, port, srcPort = "udp", strVal(e.Protocol.Udp.Port), strVal(e.Protocol.Udp.SourcePort)
+		}
+	}
+	m := summaryBase(e.Name, e.Description, e.Tag)
+	m["protocol"] = proto
+	m["port"] = port
+	m["source_port"] = srcPort
+	return m
+}
+
+// RegisterServiceTools registers the service object tools. Mutating tools are
+// skipped entirely in read-only mode.
+func RegisterServiceTools(s *mcp.Server, d *Deps) {
+	svc := newServiceService(d)
+	resolve := func(in LocationInput) (service.Location, error) { return resolveLocation(d, in, serviceParts()) }
+	name := func(e *service.Entry) string { return e.Name }
+	loc := func(in ServiceInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_list",
+		Description: "List service objects (TCP/UDP port definitions) at a location. Read-only.",
+		Annotations: readOnlyTool("List services"),
+	}, listHandler[service.Location, service.Entry](d, "panos_service_list", svc, resolve, name, serviceSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_get",
+		Description: "Get one service object by name with all fields. Read-only.",
+		Annotations: readOnlyTool("Get service"),
+	}, getHandler[service.Location, service.Entry](d, "panos_service_get", svc, resolve))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_create",
+		Description: "Create a service object in the candidate config. protocol (tcp|udp) and port are required. Run panos_commit to apply.",
+		Annotations: createTool("Create service"),
+	}, createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create", svc, resolve, loc, buildServiceEntry))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_update",
+		Description: "Update a service object: read-modify-write, only provided fields change; changing ports requires protocol and port together and replaces the whole protocol block. Candidate config only.",
+		Annotations: updateTool("Update service"),
+	}, updateHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_update", svc, resolve, loc,
+		func(in ServiceInput) string { return in.Name }, overlayService))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_delete",
+		Description: "Delete a service object from the candidate config. Fails while rules reference it. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete service"),
+	}, deleteHandler[service.Location, service.Entry](d, "panos_service_delete", svc, resolve))
 }
