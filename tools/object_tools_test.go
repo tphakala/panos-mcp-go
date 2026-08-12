@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/PaloAltoNetworks/pango/objects/address"
+	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -429,13 +431,15 @@ func TestAddressPanoramaLocations(t *testing.T) {
 	})
 }
 
-// registeredToolNames registers the address tools on a fresh in-memory MCP
-// server/client pair and returns the set of tool names the server exposes.
+// registeredToolNames registers the address and address group tools on a fresh
+// in-memory MCP server/client pair and returns the set of tool names the server
+// exposes.
 func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	t.Helper()
 	ctx := t.Context()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterAddressTools(srv, d)
+	RegisterAddressGroupTools(srv, d)
 
 	clientT, serverT := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, serverT, nil)
@@ -493,6 +497,470 @@ func TestRegisterAddressToolsReadOnly(t *testing.T) {
 		}
 	}
 	for _, n := range writes {
+		if !rw[n] {
+			t.Errorf("writes enabled: %q must be registered", n)
+		}
+	}
+}
+
+// addressGroupListBody lists a static group and a dynamic group. Static members
+// and tags marshal as <static>/<tag> member lists; a dynamic group carries a
+// <dynamic><filter>. The list xpath ends at .../address-group/entry, so there is
+// no <address-group> wrapper element in the response.
+const addressGroupListBody = `<response status="success"><result>` +
+	`<entry name="grp-static"><static><member>web-1</member><member>db-1</member></static><tag><member>t1</member></tag><description>static grp</description></entry>` +
+	`<entry name="grp-dyn"><dynamic><filter>'prod' and 'web'</filter></dynamic></entry>` +
+	`</result></response>`
+
+// addressGroupCreatedBody answers the read-back get pango's Create issues after
+// the set; the read-back requires exactly one entry.
+const addressGroupCreatedBody = `<response status="success"><result><entry name="grp-1">` +
+	`<static><member>web-1</member></static><tag><member>prod</member></tag></entry></result></response>`
+
+// addressGroupCurrentBody is the entry as it exists before an update: one static
+// member and a description. Every update input below must differ from it, or
+// pango's UpdateWithXpath short-circuits on SpecMatches and issues no
+// multi-config request, making the edit assertions vacuous.
+const addressGroupCurrentBody = `<response status="success"><result><entry name="grp-1">` +
+	`<static><member>web-1</member></static><description>old desc</description></entry></result></response>`
+
+func addressGroupResolve(d *Deps) func(LocationInput) (address_group.Location, error) {
+	return func(in LocationInput) (address_group.Location, error) {
+		return resolveLocation(d, in, addressGroupParts())
+	}
+}
+
+func addressGroupName(e *address_group.Entry) string { return e.Name }
+
+// TestBuildAddressGroupEntry pins the create XOR: exactly one of static,
+// dynamic_filter is required, and the chosen side plus description and tags map
+// onto the entry.
+func TestBuildAddressGroupEntry(t *testing.T) {
+	t.Run("static only", func(t *testing.T) {
+		e, err := buildAddressGroupEntry(AddressGroupInput{Name: "g", Static: []string{"web-1", "db-1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Static) != 2 || e.Dynamic != nil {
+			t.Fatalf("static build wrong: static=%v dynamic=%v", e.Static, e.Dynamic)
+		}
+	})
+	t.Run("dynamic with description and tags", func(t *testing.T) {
+		e, err := buildAddressGroupEntry(AddressGroupInput{Name: "g", DynamicFilter: "'prod'", Description: "d", Tags: []string{"t"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Static != nil || e.Dynamic == nil || strVal(e.Dynamic.Filter) != "'prod'" {
+			t.Fatalf("dynamic build wrong: static=%v dynamic=%v", e.Static, e.Dynamic)
+		}
+		if strVal(e.Description) != "d" || len(e.Tag) != 1 {
+			t.Fatalf("dynamic build lost description or tags: desc=%v tags=%v", e.Description, e.Tag)
+		}
+	})
+	bad := map[string]AddressGroupInput{
+		"no name":      {Static: []string{"web-1"}},
+		"neither":      {Name: "g"},
+		"empty static": {Name: "g", Static: []string{}}, // an empty static list counts as absent
+		"both":         {Name: "g", Static: []string{"web-1"}, DynamicFilter: "'prod'"},
+	}
+	for name, in := range bad {
+		t.Run(name, func(t *testing.T) {
+			if _, err := buildAddressGroupEntry(in); err == nil {
+				t.Fatalf("%s: expected error", name)
+			}
+		})
+	}
+}
+
+// TestOverlayAddressGroupMembership pins that providing one membership side
+// (static or dynamic_filter) rewrites both fields, clearing the other, and that
+// providing both is rejected.
+func TestOverlayAddressGroupMembership(t *testing.T) {
+	t.Run("static replaces and clears dynamic", func(t *testing.T) {
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Dynamic: &address_group.Dynamic{Filter: ptr("'old'")}}
+		if err := overlayAddressGroup(e, AddressGroupInput{Static: []string{"app-1", "app-2"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Static) != 2 || e.Static[0] != "app-1" || e.Dynamic != nil {
+			t.Fatalf("static overlay wrong: static=%v dynamic=%v", e.Static, e.Dynamic)
+		}
+	})
+	t.Run("dynamic replaces and clears static", func(t *testing.T) {
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}}
+		if err := overlayAddressGroup(e, AddressGroupInput{DynamicFilter: "'prod'"}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Static != nil || e.Dynamic == nil || strVal(e.Dynamic.Filter) != "'prod'" {
+			t.Fatalf("dynamic overlay wrong: static=%v dynamic=%v", e.Static, e.Dynamic)
+		}
+	})
+	t.Run("both is an error", func(t *testing.T) {
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}}
+		if err := overlayAddressGroup(e, AddressGroupInput{Static: []string{"a"}, DynamicFilter: "'x'"}); err == nil {
+			t.Fatal("providing both static and dynamic_filter must error")
+		}
+	})
+	t.Run("empty static list is ignored", func(t *testing.T) {
+		// An empty static list is treated as absent (a static group cannot be
+		// emptied in place), so the existing members are left untouched.
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}}
+		if err := overlayAddressGroup(e, AddressGroupInput{Static: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Static) != 1 || e.Static[0] != "web-1" {
+			t.Fatalf("empty static list must be ignored, got: %v", e.Static)
+		}
+	})
+}
+
+// TestOverlayAddressGroupFields pins the non-membership overlay semantics: tags
+// replace when non-nil and clear when empty, an omitted description or nil tags
+// leave the existing values unchanged, and a provided description updates.
+func TestOverlayAddressGroupFields(t *testing.T) {
+	t.Run("tags replace when non-nil and clear when empty", func(t *testing.T) {
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Tag: []string{"a"}}
+		if err := overlayAddressGroup(e, AddressGroupInput{Tags: []string{"b", "c"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Tag) != 2 {
+			t.Fatalf("tags not replaced: %v", e.Tag)
+		}
+		if err := overlayAddressGroup(e, AddressGroupInput{Tags: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Tag) != 0 {
+			t.Fatalf("empty tags slice must clear tags: %v", e.Tag)
+		}
+	})
+	t.Run("omitted fields unchanged", func(t *testing.T) {
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Description: ptr("old"), Tag: []string{"a"}}
+		if err := overlayAddressGroup(e, AddressGroupInput{}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Description) != "old" || len(e.Tag) != 1 || len(e.Static) != 1 {
+			t.Fatalf("empty overlay changed entry: desc=%v tags=%v static=%v", e.Description, e.Tag, e.Static)
+		}
+	})
+	t.Run("description updates when provided", func(t *testing.T) {
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Description: ptr("old")}
+		if err := overlayAddressGroup(e, AddressGroupInput{Description: "new"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Description) != "new" {
+			t.Fatalf("description not updated: %v", e.Description)
+		}
+	})
+}
+
+func TestAddressGroupCreateBuildsEntry(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		// pango's Create reads the object back with a config get after the set.
+		fakeRoute{Match: configAction("get"), Body: addressGroupCreatedBody},
+	)
+	h := createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create",
+		newAddressGroupService(d), addressGroupResolve(d),
+		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry)
+
+	res, _, err := h(t.Context(), nil, AddressGroupInput{Name: "grp-1", Static: []string{"web-1"}, Description: "web tier", Tags: []string{"prod"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	var sawSet bool
+	for _, req := range f.Requests() {
+		if req.Get("type") == "config" && req.Get("action") == "set" {
+			sawSet = true
+			el := req.Get("element")
+			if !strings.Contains(el, `name="grp-1"`) || !strings.Contains(el, "<member>web-1</member>") ||
+				!strings.Contains(el, "<member>prod</member>") || !strings.Contains(el, "web tier") {
+				t.Fatalf("element missing fields: %s", el)
+			}
+			if xp := req.Get("xpath"); !strings.Contains(xp, "vsys1") || !strings.Contains(xp, "address-group") {
+				t.Fatalf("xpath missing default vsys or address-group endpoint: %s", xp)
+			}
+		}
+	}
+	if !sawSet {
+		t.Fatal("no config set request recorded")
+	}
+}
+
+func TestAddressGroupCreateValidation(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	h := createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create",
+		newAddressGroupService(d), addressGroupResolve(d),
+		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry)
+
+	for name, in := range map[string]AddressGroupInput{
+		"no name":        {Static: []string{"web-1"}},
+		"neither":        {Name: "g"},
+		"both":           {Name: "g", Static: []string{"web-1"}, DynamicFilter: "'prod'"},
+		"dg on firewall": {Name: "g", Static: []string{"web-1"}, Location: LocationInput{DeviceGroup: "dg1"}},
+	} {
+		res, _, err := h(t.Context(), nil, in)
+		if err != nil {
+			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s: expected IsError", name)
+		}
+	}
+	// Validation must reject before any API call: only the bootstrap system-info
+	// request may exist.
+	if got := len(f.Requests()); got != 1 {
+		t.Fatalf("validation must fail before any API call; recorded %d requests", got)
+	}
+}
+
+func TestAddressGroupAPIErrorSurfaces(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
+	h := getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get",
+		newAddressGroupService(d), addressGroupResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("API error must surface as IsError result")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+	// Pin that the shared adapter wraps the name into an entry xpath for the group
+	// instantiation too; a client-side raw-name rejection would set IsError
+	// vacuously, never consulting the canned route.
+	var sawGet bool
+	for _, req := range f.Requests() {
+		if req.Get("type") == "config" && req.Get("action") == "get" && strings.Contains(req.Get("xpath"), "entry[@name='nope']") {
+			sawGet = true
+		}
+	}
+	if !sawGet {
+		t.Fatal("get never reached the API: the adapter must wrap the name into an entry xpath")
+	}
+}
+
+// multiConfigElement returns the element of the single recorded multi-config
+// request, failing if none was issued. pango routes edits and deletes through
+// multi-config, so an update or delete assertion inspects the wire here. A
+// client-side raw-name rejection would record no multi-config request at all.
+func multiConfigElement(t *testing.T, f *fakeAPI) string {
+	t.Helper()
+	for _, req := range f.Requests() {
+		if req.Get("action") == "multi-config" {
+			return req.Get("element")
+		}
+	}
+	t.Fatal("no multi-config request recorded")
+	return ""
+}
+
+// newAddressGroupUpdateHandler builds the update handler used by the update
+// tests, keeping their setup to one line.
+func newAddressGroupUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, AddressGroupInput) (*mcp.CallToolResult, any, error) {
+	return updateHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_update",
+		newAddressGroupService(d), addressGroupResolve(d),
+		func(in AddressGroupInput) LocationInput { return in.Location },
+		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup)
+}
+
+func TestAddressGroupUpdate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	res, _, err := newAddressGroupUpdateHandler(d)(t.Context(), nil, AddressGroupInput{Name: "grp-1", Static: []string{"app-1", "app-2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// The edit must replace the member list, preserve the untouched description,
+	// and carry the entry xpath (default vsys).
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<member>app-1</member>") || !strings.Contains(el, "<member>app-2</member>") {
+		t.Fatalf("edit element missing new members: %s", el)
+	}
+	if strings.Contains(el, "<member>web-1</member>") {
+		t.Fatalf("edit element must not keep the replaced member: %s", el)
+	}
+	if !strings.Contains(el, "old desc") {
+		t.Fatalf("read-modify-write must preserve the untouched description: %s", el)
+	}
+	if !strings.Contains(el, "grp-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("edit element missing entry xpath: %s", el)
+	}
+}
+
+func TestAddressGroupUpdateSwitchToDynamic(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	res, _, err := newAddressGroupUpdateHandler(d)(t.Context(), nil, AddressGroupInput{Name: "grp-1", DynamicFilter: "'prod'"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	el := multiConfigElement(t, f)
+	// pango marshals the filter through encoding/xml, so single quotes are
+	// escaped; match the bare word rather than the quoted form.
+	if !strings.Contains(el, "<filter>") || !strings.Contains(el, "prod") {
+		t.Fatalf("edit element missing dynamic filter: %s", el)
+	}
+	if strings.Contains(el, "<member>web-1</member>") {
+		t.Fatalf("switching to dynamic must clear static members: %s", el)
+	}
+}
+
+func TestAddressGroupUpdateAPIError(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>edit rejected</line></msg></response>`
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: errBody},
+	)
+	res, _, err := newAddressGroupUpdateHandler(d)(t.Context(), nil, AddressGroupInput{Name: "grp-1", Static: []string{"app-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("a device-rejected edit must surface as IsError")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "edit rejected") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+}
+
+func TestAddressGroupDelete(t *testing.T) {
+	// pango Delete removes through a multi-config request.
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody})
+	h := deleteHandler[address_group.Location, address_group.Entry](d, "panos_address_group_delete",
+		newAddressGroupService(d), addressGroupResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "grp-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// Delete must reach the API with the entry xpath carrying the name and default
+	// vsys, proving addressGroupParts wires the location end-to-end.
+	if el := multiConfigElement(t, f); !strings.Contains(el, "grp-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("delete did not reach the API with the entry xpath: %s", el)
+	}
+}
+
+func TestAddressGroupList(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: addressGroupListBody})
+	h := listHandler[address_group.Location, address_group.Entry](d, "panos_address_group_list",
+		newAddressGroupService(d), addressGroupResolve(d), addressGroupName, addressGroupSummary)
+
+	res, _, err := h(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	body := textContent(t, res)
+	if !strings.Contains(body, `"total": 2`) || !strings.Contains(body, "grp-static") || !strings.Contains(body, "grp-dyn") {
+		t.Fatalf("missing entries: %s", body)
+	}
+	// The summary must expose both the static members and the dynamic filter.
+	if !strings.Contains(body, "web-1") {
+		t.Fatalf("summary missing static members: %s", body)
+	}
+	if !strings.Contains(body, "'prod' and 'web'") {
+		t.Fatalf("summary missing dynamic filter: %s", body)
+	}
+	// The summary must also surface description and tags.
+	if !strings.Contains(body, "static grp") || !strings.Contains(body, "t1") {
+		t.Fatalf("summary missing description or tags: %s", body)
+	}
+
+	res, _, err = h(t.Context(), nil, ListInput{Filter: "dyn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	if body = textContent(t, res); strings.Contains(body, "grp-static") || !strings.Contains(body, "grp-dyn") {
+		t.Fatalf("name filter failed: %s", body)
+	}
+}
+
+// TestAddressGroupPanoramaLocations exercises the Panorama location branches of
+// addressGroupParts: the shared default and an explicit device group, asserting
+// the request xpath so it pins the resolved location.
+func TestAddressGroupPanoramaLocations(t *testing.T) {
+	t.Run("shared list", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: addressGroupListBody})
+		h := listHandler[address_group.Location, address_group.Entry](d, "panos_address_group_list",
+			newAddressGroupService(d), addressGroupResolve(d), addressGroupName, addressGroupSummary)
+		res, _, err := h(t.Context(), nil, ListInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if body := textContent(t, res); !strings.Contains(body, "grp-static") {
+			t.Fatalf("shared list missing entries: %s", body)
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "/config/shared") || strings.Contains(joined, "vsys") {
+			t.Fatalf("shared list must target the shared xpath and not a vsys, got: %s", joined)
+		}
+	})
+
+	t.Run("device group get", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody})
+		h := getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get",
+			newAddressGroupService(d), addressGroupResolve(d))
+		res, _, err := h(t.Context(), nil, NameInput{Name: "grp-1", Location: LocationInput{DeviceGroup: "dg1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "dg1") {
+			t.Fatalf("device_group get did not target the device group xpath, got: %s", joined)
+		}
+	})
+}
+
+func TestRegisterAddressGroupToolsReadOnly(t *testing.T) {
+	reads := []string{"panos_address_group_list", "panos_address_group_get"}
+	writes := []string{"panos_address_group_create", "panos_address_group_update", "panos_address_group_delete"}
+
+	dRO, _ := newTestDeps(t, "PA-VM")
+	dRO.ReadOnly = true
+	ro := registeredToolNames(t, dRO)
+	for _, n := range reads {
+		if !ro[n] {
+			t.Errorf("read-only: %q must be registered", n)
+		}
+	}
+	for _, n := range writes {
+		if ro[n] {
+			t.Errorf("read-only: %q must NOT be registered", n)
+		}
+	}
+
+	dRW, _ := newTestDeps(t, "PA-VM")
+	dRW.ReadOnly = false
+	rw := registeredToolNames(t, dRW)
+	for _, n := range append(reads, writes...) {
 		if !rw[n] {
 			t.Errorf("writes enabled: %q must be registered", n)
 		}
