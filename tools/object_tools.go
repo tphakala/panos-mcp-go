@@ -7,6 +7,7 @@ import (
 	"github.com/PaloAltoNetworks/pango/objects/address"
 	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
 	"github.com/PaloAltoNetworks/pango/objects/service"
+	service_group "github.com/PaloAltoNetworks/pango/objects/service/group"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -522,4 +523,119 @@ func RegisterServiceTools(s *mcp.Server, d *Deps) {
 		Description: "Delete a service object from the candidate config. Fails while rules reference it. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete service"),
 	}, deleteHandler[service.Location, service.Entry](d, "panos_service_delete", svc, resolve))
+}
+
+// serviceGroupParts supplies service group locations for resolveLocation.
+func serviceGroupParts() locParts[service_group.Location] {
+	return locParts[service_group.Location]{
+		shared: func(string) service_group.Location {
+			return service_group.Location{Shared: &service_group.SharedLocation{}}
+		},
+		vsys: func(v string) service_group.Location {
+			return service_group.Location{Vsys: &service_group.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}
+		},
+		deviceGroup: func(dg, _ string) service_group.Location {
+			return service_group.Location{DeviceGroup: &service_group.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+// newServiceGroupService adapts pango's service group service to crudService
+// via the shared nameFixAdapter; pango's raw-name Read/Update would otherwise
+// be rejected client-side (see nameFixService).
+func newServiceGroupService(d *Deps) nameFixAdapter[service_group.Location, service_group.Entry] {
+	return nameFixAdapter[service_group.Location, service_group.Entry]{
+		svc:    service_group.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *service_group.Entry) string { return e.Name },
+	}
+}
+
+// ServiceGroupInput is the input for service group create and update tools.
+// PAN-OS service groups have no description field (pango
+// objects/service/group Entry), so none is exposed.
+type ServiceGroupInput struct {
+	Name     string        `json:"name" jsonschema:"Service group name"`
+	Location LocationInput `json:"location,omitempty"`
+	Members  []string      `json:"members,omitempty" jsonschema:"Member service or service group names; at least one is required on create, and a non-empty list replaces the full membership on update"`
+	Tags     []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
+}
+
+// buildServiceGroupEntry validates a ServiceGroupInput and builds a create
+// entry; a name and at least one member are required.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildServiceGroupEntry(in ServiceGroupInput) (*service_group.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	if len(in.Members) == 0 {
+		return nil, errors.New("at least one member is required")
+	}
+	return &service_group.Entry{Name: in.Name, Members: in.Members, Tag: in.Tags}, nil
+}
+
+// overlayServiceGroup applies provided fields onto the current entry. A
+// non-empty members list replaces the membership; an empty one is ignored,
+// because a group cannot be emptied in place (delete it instead). A nil tags
+// slice leaves tags unchanged, while a non-nil empty slice clears them.
+//
+//nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
+func overlayServiceGroup(e *service_group.Entry, in ServiceGroupInput) error {
+	if len(in.Members) > 0 {
+		e.Members = in.Members
+	}
+	if in.Tags != nil {
+		e.Tag = in.Tags
+	}
+	return nil
+}
+
+// serviceGroupSummary reduces an entry to the list view fields. Service groups
+// have no description field (pango objects/service/group Entry), so this does
+// not build on summaryBase: hand-rolling the map avoids emitting a bogus empty
+// description.
+func serviceGroupSummary(e *service_group.Entry) any {
+	return map[string]any{"name": e.Name, "members": e.Members, "tags": e.Tag}
+}
+
+// RegisterServiceGroupTools registers the service group tools. Mutating tools
+// are skipped entirely in read-only mode.
+func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
+	svc := newServiceGroupService(d)
+	resolve := func(in LocationInput) (service_group.Location, error) {
+		return resolveLocation(d, in, serviceGroupParts())
+	}
+	name := func(e *service_group.Entry) string { return e.Name }
+	loc := func(in ServiceGroupInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_group_list",
+		Description: "List service groups (named sets of services and service groups) at a location. Read-only.",
+		Annotations: readOnlyTool("List service groups"),
+	}, listHandler[service_group.Location, service_group.Entry](d, "panos_service_group_list", svc, resolve, name, serviceGroupSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_group_get",
+		Description: "Get one service group by name with all fields. Read-only.",
+		Annotations: readOnlyTool("Get service group"),
+	}, getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get", svc, resolve))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_group_create",
+		Description: "Create a service group in the candidate config. At least one member is required. Run panos_commit to apply.",
+		Annotations: createTool("Create service group"),
+	}, createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create", svc, resolve, loc, buildServiceGroupEntry))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_group_update",
+		Description: "Update a service group: read-modify-write, only provided fields change. A non-empty members list replaces the full membership (a group cannot be emptied in place; delete it instead); tags replace fully (an empty list clears them). Candidate config only.",
+		Annotations: updateTool("Update service group"),
+	}, updateHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_update", svc, resolve, loc,
+		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_service_group_delete",
+		Description: "Delete a service group from the candidate config. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete service group"),
+	}, deleteHandler[service_group.Location, service_group.Entry](d, "panos_service_group_delete", svc, resolve))
 }
