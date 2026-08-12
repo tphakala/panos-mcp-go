@@ -8,6 +8,7 @@ import (
 	"github.com/PaloAltoNetworks/pango/objects/address"
 	address_group "github.com/PaloAltoNetworks/pango/objects/address/group"
 	"github.com/PaloAltoNetworks/pango/objects/service"
+	service_group "github.com/PaloAltoNetworks/pango/objects/service/group"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -449,9 +450,9 @@ func TestAddressPanoramaLocations(t *testing.T) {
 	})
 }
 
-// registeredToolNames registers the address, address group and service tools on
-// a fresh in-memory MCP server/client pair and returns the set of tool names the
-// server exposes.
+// registeredToolNames registers the address, address group, service and service
+// group tools on a fresh in-memory MCP server/client pair and returns the set of
+// tool names the server exposes.
 func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	t.Helper()
 	ctx := t.Context()
@@ -459,6 +460,7 @@ func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	RegisterAddressTools(srv, d)
 	RegisterAddressGroupTools(srv, d)
 	RegisterServiceTools(srv, d)
+	RegisterServiceGroupTools(srv, d)
 
 	clientT, serverT := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, serverT, nil)
@@ -1546,6 +1548,421 @@ func TestServiceGetUpdateViaRegisteredTools(t *testing.T) {
 func TestRegisterServiceToolsReadOnly(t *testing.T) {
 	reads := []string{"panos_service_list", "panos_service_get"}
 	writes := []string{"panos_service_create", "panos_service_update", "panos_service_delete"}
+
+	dRO, _ := newTestDeps(t, "PA-VM")
+	dRO.ReadOnly = true
+	ro := registeredToolNames(t, dRO)
+	for _, n := range reads {
+		if !ro[n] {
+			t.Errorf("read-only: %q must be registered", n)
+		}
+	}
+	for _, n := range writes {
+		if ro[n] {
+			t.Errorf("read-only: %q must NOT be registered", n)
+		}
+	}
+
+	dRW, _ := newTestDeps(t, "PA-VM")
+	dRW.ReadOnly = false
+	rw := registeredToolNames(t, dRW)
+	for _, n := range append(reads, writes...) {
+		if !rw[n] {
+			t.Errorf("writes enabled: %q must be registered", n)
+		}
+	}
+}
+
+// TestBuildServiceGroupEntry pins that a create entry carries the name, members
+// and tags.
+func TestBuildServiceGroupEntry(t *testing.T) {
+	e, err := buildServiceGroupEntry(ServiceGroupInput{Name: "g", Members: []string{"a", "b"}, Tags: []string{"t"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "g" || len(e.Members) != 2 || e.Members[0] != "a" || len(e.Tag) != 1 {
+		t.Fatalf("entry built wrong: %+v", e)
+	}
+}
+
+// TestBuildServiceGroupEntryRejects pins that a create entry requires a name
+// and at least one member.
+func TestBuildServiceGroupEntryRejects(t *testing.T) {
+	bad := map[string]ServiceGroupInput{
+		"no name":    {Members: []string{"a"}},
+		"no members": {Name: "g"},
+	}
+	for name, in := range bad {
+		t.Run(name, func(t *testing.T) {
+			if _, err := buildServiceGroupEntry(in); err == nil {
+				t.Fatalf("%s: expected error", name)
+			}
+		})
+	}
+}
+
+// TestOverlayServiceGroupFields pins the overlay semantics: a non-empty members
+// list replaces the membership, an empty one leaves it unchanged (a group
+// cannot be emptied in place), a nil tags slice leaves tags unchanged, and a
+// non-nil empty tags slice clears them.
+func TestOverlayServiceGroupFields(t *testing.T) {
+	t.Run("members replace when non-empty", func(t *testing.T) {
+		e := &service_group.Entry{Name: "g", Members: []string{"a"}}
+		if err := overlayServiceGroup(e, ServiceGroupInput{Members: []string{"b", "c"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Members) != 2 || e.Members[0] != "b" {
+			t.Fatalf("members not replaced: %v", e.Members)
+		}
+	})
+	t.Run("empty overlay leaves entry unchanged", func(t *testing.T) {
+		e := &service_group.Entry{Name: "g", Members: []string{"a"}, Tag: []string{"t"}}
+		if err := overlayServiceGroup(e, ServiceGroupInput{}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Members) != 1 || len(e.Tag) != 1 {
+			t.Fatalf("empty overlay changed entry: members=%v tags=%v", e.Members, e.Tag)
+		}
+	})
+	t.Run("tags replace when non-nil and clear when empty", func(t *testing.T) {
+		e := &service_group.Entry{Name: "g", Members: []string{"a"}, Tag: []string{"t"}}
+		if err := overlayServiceGroup(e, ServiceGroupInput{Tags: []string{"x", "y"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Tag) != 2 {
+			t.Fatalf("tags not replaced: %v", e.Tag)
+		}
+		if err := overlayServiceGroup(e, ServiceGroupInput{Tags: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Tag) != 0 {
+			t.Fatalf("empty tags slice must clear tags: %v", e.Tag)
+		}
+	})
+}
+
+// serviceGroupListBody lists a group with members and a tag, and a bare group.
+// Members marshal as <members><member>. The list xpath ends at
+// .../service-group/entry, so there is no wrapper element in the response.
+const serviceGroupListBody = `<response status="success"><result>` +
+	`<entry name="grp-web"><members><member>web-8080</member><member>web-8443</member></members><tag><member>prod</member></tag></entry>` +
+	`<entry name="grp-dns"><members><member>dns-u</member></members></entry>` +
+	`</result></response>`
+
+// serviceGroupCreatedBody answers the read-back get pango's Create issues after
+// the set; the read-back requires exactly one entry.
+const serviceGroupCreatedBody = `<response status="success"><result><entry name="grp-web">` +
+	`<members><member>web-8080</member></members><tag><member>prod</member></tag></entry></result></response>`
+
+// serviceGroupCurrentBody is the entry as it exists before an update: one
+// member and one tag. Every update input below must differ from it, or pango's
+// UpdateWithXpath short-circuits on SpecMatches and issues no multi-config
+// request, making the edit assertions vacuous.
+const serviceGroupCurrentBody = `<response status="success"><result><entry name="grp-1">` +
+	`<members><member>web-8080</member></members><tag><member>prod</member></tag></entry></result></response>`
+
+func serviceGroupResolve(d *Deps) func(LocationInput) (service_group.Location, error) {
+	return func(in LocationInput) (service_group.Location, error) {
+		return resolveLocation(d, in, serviceGroupParts())
+	}
+}
+
+func serviceGroupName(e *service_group.Entry) string { return e.Name }
+
+func TestServiceGroupCreateBuildsEntry(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		// pango's Create reads the object back with a config get after the set.
+		fakeRoute{Match: configAction("get"), Body: serviceGroupCreatedBody},
+	)
+	h := createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create",
+		newServiceGroupService(d), serviceGroupResolve(d),
+		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry)
+
+	res, _, err := h(t.Context(), nil, ServiceGroupInput{Name: "grp-web", Members: []string{"web-8080"}, Tags: []string{"prod"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	var sawSet bool
+	for _, req := range f.Requests() {
+		if req.Get("type") == "config" && req.Get("action") == "set" {
+			sawSet = true
+			el := req.Get("element")
+			if !strings.Contains(el, `name="grp-web"`) || !strings.Contains(el, "<members>") ||
+				!strings.Contains(el, "<member>web-8080</member>") || !strings.Contains(el, "<member>prod</member>") {
+				t.Fatalf("element missing fields: %s", el)
+			}
+			if xp := req.Get("xpath"); !strings.Contains(xp, "vsys1") || !strings.Contains(xp, "service-group") {
+				t.Fatalf("xpath missing default vsys or service-group endpoint: %s", xp)
+			}
+		}
+	}
+	if !sawSet {
+		t.Fatal("no config set request recorded")
+	}
+}
+
+func TestServiceGroupCreateValidation(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	h := createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create",
+		newServiceGroupService(d), serviceGroupResolve(d),
+		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry)
+
+	for name, in := range map[string]ServiceGroupInput{
+		"no name":        {Members: []string{"web-8080"}},
+		"no members":     {Name: "g"},
+		"dg on firewall": {Name: "g", Members: []string{"web-8080"}, Location: LocationInput{DeviceGroup: "dg1"}},
+	} {
+		res, _, err := h(t.Context(), nil, in)
+		if err != nil {
+			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s: expected IsError", name)
+		}
+	}
+	// Validation must reject before any API call: only the bootstrap system-info
+	// request may exist.
+	if got := len(f.Requests()); got != 1 {
+		t.Fatalf("validation must fail before any API call; recorded %d requests", got)
+	}
+}
+
+func TestServiceGroupAPIErrorSurfaces(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
+	h := getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get",
+		newServiceGroupService(d), serviceGroupResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("API error must surface as IsError result")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+	// Pin that the shared adapter wraps the name into an entry xpath exactly
+	// once for the service group instantiation too; a raw-name rejection or a
+	// double-wrap would both be caught here.
+	assertSingleWrappedGet(t, f, "entry[@name='nope']")
+}
+
+// newServiceGroupUpdateHandler builds the update handler used by the update
+// tests, keeping their setup to one line.
+func newServiceGroupUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ServiceGroupInput) (*mcp.CallToolResult, any, error) {
+	return updateHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_update",
+		newServiceGroupService(d), serviceGroupResolve(d),
+		func(in ServiceGroupInput) LocationInput { return in.Location },
+		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup)
+}
+
+func TestServiceGroupUpdate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	// Replace the single member; the input differs from the current entry, so
+	// SpecMatches cannot short-circuit.
+	res, _, err := newServiceGroupUpdateHandler(d)(t.Context(), nil, ServiceGroupInput{Name: "grp-1", Members: []string{"db-5432"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<member>db-5432</member>") {
+		t.Fatalf("edit element missing new member: %s", el)
+	}
+	if strings.Contains(el, "web-8080") {
+		t.Fatalf("members must replace, not merge: %s", el)
+	}
+	if !strings.Contains(el, "prod") {
+		t.Fatalf("read-modify-write must preserve the untouched tags: %s", el)
+	}
+	if !strings.Contains(el, "grp-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("edit element missing entry xpath: %s", el)
+	}
+}
+
+func TestServiceGroupUpdateAPIError(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>edit rejected</line></msg></response>`
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: errBody},
+	)
+	res, _, err := newServiceGroupUpdateHandler(d)(t.Context(), nil, ServiceGroupInput{Name: "grp-1", Members: []string{"db-5432"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("a device-rejected edit must surface as IsError")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "edit rejected") {
+		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
+	}
+}
+
+func TestServiceGroupDelete(t *testing.T) {
+	// pango Delete removes through a multi-config request.
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody})
+	h := deleteHandler[service_group.Location, service_group.Entry](d, "panos_service_group_delete",
+		newServiceGroupService(d), serviceGroupResolve(d))
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "grp-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// Delete must reach the API with the entry xpath carrying the name and
+	// default vsys, proving serviceGroupParts wires the location end-to-end.
+	if el := multiConfigElement(t, f); !strings.Contains(el, "grp-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("delete did not reach the API with the entry xpath: %s", el)
+	}
+}
+
+func TestServiceGroupList(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: serviceGroupListBody})
+	h := listHandler[service_group.Location, service_group.Entry](d, "panos_service_group_list",
+		newServiceGroupService(d), serviceGroupResolve(d), serviceGroupName, serviceGroupSummary)
+
+	res, _, err := h(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	body := textContent(t, res)
+	// Both entries appear, and the summary surfaces members and tags.
+	assertContainsAll(t, body,
+		`"total": 2`, "grp-web", "grp-dns",
+		`"members"`, "web-8080", "web-8443", "dns-u", "prod")
+	// Service groups have no description; the summary must not emit a bogus
+	// empty description field.
+	if strings.Contains(body, `"description"`) {
+		t.Fatalf("service group summary must not contain a description field: %s", body)
+	}
+
+	res, _, err = h(t.Context(), nil, ListInput{Filter: "dns"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); strings.Contains(body, "grp-web") || !strings.Contains(body, "grp-dns") {
+		t.Fatalf("name filter failed: %s", body)
+	}
+}
+
+// TestServiceGroupPanoramaLocations exercises the Panorama location branches of
+// serviceGroupParts: the shared default and an explicit device group, asserting
+// the request xpath so it pins the resolved location.
+func TestServiceGroupPanoramaLocations(t *testing.T) {
+	t.Run("shared list", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: serviceGroupListBody})
+		h := listHandler[service_group.Location, service_group.Entry](d, "panos_service_group_list",
+			newServiceGroupService(d), serviceGroupResolve(d), serviceGroupName, serviceGroupSummary)
+		res, _, err := h(t.Context(), nil, ListInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if body := textContent(t, res); !strings.Contains(body, "grp-web") {
+			t.Fatalf("shared list missing entries: %s", body)
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "/config/shared") || strings.Contains(joined, "vsys") {
+			t.Fatalf("shared list must target the shared xpath and not a vsys, got: %s", joined)
+		}
+	})
+
+	t.Run("device group get", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: serviceGroupCurrentBody})
+		h := getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get",
+			newServiceGroupService(d), serviceGroupResolve(d))
+		res, _, err := h(t.Context(), nil, NameInput{Name: "grp-1", Location: LocationInput{DeviceGroup: "dg1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "dg1") {
+			t.Fatalf("device_group get did not target the device group xpath, got: %s", joined)
+		}
+	})
+}
+
+// TestServiceGroupGetUpdateViaRegisteredTools drives panos_service_group_get
+// and panos_service_group_update through a registered MCP server over the
+// in-memory transport. It is the proof of the adapter wiring: the raw pango
+// service also satisfies crudService, so wiring service_group.NewService
+// directly would COMPILE and only fail here, where the calls must actually
+// reach the fake API. A raw-name wiring is rejected client-side and records no
+// request.
+func TestServiceGroupGetUpdateViaRegisteredTools(t *testing.T) {
+	ctx := t.Context()
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: serviceGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterServiceGroupTools(srv, d)
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := cli.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_group_get", Arguments: map[string]any{"name": "grp-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getRes.IsError {
+		t.Fatalf("registered get failed: %s", textContent(t, getRes))
+	}
+	// The registered get must reach the fake API wrapped exactly once and
+	// target the service-group endpoint; a raw-service wiring (which also
+	// satisfies crudService) would compile but record no such request.
+	assertSingleWrappedGet(t, f, "entry[@name='grp-1']")
+	if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "service-group") {
+		t.Fatalf("registered get did not target the service-group endpoint: %s", joined)
+	}
+
+	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_group_update", Arguments: map[string]any{"name": "grp-1", "members": []string{"db-5432"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updRes.IsError {
+		t.Fatalf("registered update failed: %s", textContent(t, updRes))
+	}
+	if el := multiConfigElement(t, f); !strings.Contains(el, "db-5432") || !strings.Contains(el, "grp-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("registered update did not reach the API with the new member: %s", el)
+	}
+}
+
+func TestRegisterServiceGroupToolsReadOnly(t *testing.T) {
+	reads := []string{"panos_service_group_list", "panos_service_group_get"}
+	writes := []string{"panos_service_group_create", "panos_service_group_update", "panos_service_group_delete"}
 
 	dRO, _ := newTestDeps(t, "PA-VM")
 	dRO.ReadOnly = true
