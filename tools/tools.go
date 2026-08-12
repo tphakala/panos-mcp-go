@@ -59,6 +59,9 @@ const (
 	// an empty NgfwDevice/PanoramaDevice (objects/address/location.go
 	// IsValid/XpathPrefix), so the vsys and device-group constructors must set
 	// NgfwDevice and PanoramaDevice respectively; the shared location has neither.
+	// The two are kept distinct because they populate different pango location
+	// fields (VsysLocation.NgfwDevice vs DeviceGroupLocation.PanoramaDevice), even
+	// though PAN-OS uses the same literal for both on a single device.
 	defaultNgfwDevice     = "localhost.localdomain"
 	defaultPanoramaDevice = "localhost.localdomain"
 

@@ -54,7 +54,13 @@ func TestAddressList(t *testing.T) {
 		t.Fatalf("missing entries: %s", body)
 	}
 
-	res, _, _ = h(t.Context(), nil, ListInput{Filter: "web"})
+	res, _, err = h(t.Context(), nil, ListInput{Filter: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %s", textContent(t, res))
+	}
 	if body = textContent(t, res); strings.Contains(body, "db-1") || !strings.Contains(body, "web-1") {
 		t.Fatalf("filter failed: %s", body)
 	}
@@ -140,12 +146,13 @@ func TestAddressAPIErrorSurfaces(t *testing.T) {
 	if body := textContent(t, res); !strings.Contains(body, "invalid object") {
 		t.Fatalf("error text must carry the PAN-OS message, got: %s", body)
 	}
-	// The request must actually reach the API with an entry xpath carrying the
-	// name; a client-side xpath rejection would also produce IsError but
-	// vacuously, never consulting the canned route.
+	// The request must reach the API with the wrapped entry xpath, not a raw name;
+	// asserting the entry[@name='...'] shape (not just the "nope" substring) pins
+	// that the adapter wrapped the name. A client-side xpath rejection would also
+	// produce IsError but vacuously, never consulting the canned route.
 	var sawGet bool
 	for _, req := range f.Requests() {
-		if req.Get("type") == "config" && req.Get("action") == "get" && strings.Contains(req.Get("xpath"), "nope") {
+		if req.Get("type") == "config" && req.Get("action") == "get" && strings.Contains(req.Get("xpath"), "entry[@name='nope']") {
 			sawGet = true
 		}
 	}
@@ -190,6 +197,17 @@ func TestAddressUpdate(t *testing.T) {
 	}
 	if !sawEdit {
 		t.Fatal("update never issued a multi-config edit; adapter must wrap the name into an entry xpath")
+	}
+}
+
+func TestAddressUpdateRejectsRename(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM")
+	svc := newAddressService(d)
+	// The guard fires before the location is used, so a zero Location is fine.
+	if _, err := svc.Update(t.Context(), address.Location{}, &address.Entry{Name: "web-1"}, "web-2"); err == nil {
+		t.Fatal("Update must reject a name that differs from entry.Name (rename)")
+	} else if !strings.Contains(err.Error(), "renaming") {
+		t.Fatalf("expected a rename-not-supported error, got: %v", err)
 	}
 }
 

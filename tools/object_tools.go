@@ -57,11 +57,15 @@ func (s addressService) Read(ctx context.Context, loc address.Location, name, ac
 
 // Update edits the entry in place, mirroring the SDK's Update
 // (objects/address/service.go Update) with the xpath built from a properly
-// wrapped entry name. The update tool never renames (overlayAddress never
-// touches Name), so the SDK rename path is unreachable here.
+// wrapped entry name. The update tool does not rename (overlayAddress never
+// touches Name), so name always equals entry.Name; a mismatch is rejected rather
+// than building an xpath for one object while passing a rename intent to the SDK.
 func (s addressService) Update(ctx context.Context, loc address.Location, entry *address.Entry, name string) (*address.Entry, error) {
 	if entry.Name == "" {
 		return nil, errors.New("name is required")
+	}
+	if name != "" && name != entry.Name {
+		return nil, errors.New("renaming an address object is not supported")
 	}
 	path, err := loc.XpathWithComponents(s.client.Versioning(), util.AsEntryXpath(entry.Name))
 	if err != nil {
