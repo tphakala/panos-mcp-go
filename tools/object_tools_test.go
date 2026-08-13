@@ -105,6 +105,9 @@ func TestAddressCreateBuildsEntry(t *testing.T) {
 	if !sawSet {
 		t.Fatal("no config set request recorded")
 	}
+	// pango's Create reads the object back after the set; pin that read-back
+	// actually reached the API.
+	assertReadBackGet(t, f)
 }
 
 func TestAddressCreateValidation(t *testing.T) {
@@ -113,18 +116,27 @@ func TestAddressCreateValidation(t *testing.T) {
 		newAddressService(d), addressResolve(d),
 		func(in AddressInput) LocationInput { return in.Location }, buildAddressEntry)
 
-	for name, in := range map[string]AddressInput{
-		"no name":        {IPNetmask: "10.0.0.1"},
-		"no value":       {Name: "x"},
-		"two values":     {Name: "x", IPNetmask: "10.0.0.1", FQDN: "a.example.com"},
-		"dg on firewall": {Name: "x", IPNetmask: "10.0.0.1", Location: LocationInput{DeviceGroup: "dg1"}},
-	} {
-		res, _, err := h(t.Context(), nil, in)
+	// Assert each rejection's distinct message, not merely IsError, so the name,
+	// value-count and location guards cannot pass on one another's error.
+	bad := []struct {
+		name, wantErr string
+		in            AddressInput
+	}{
+		{"no name", "name is required", AddressInput{IPNetmask: "10.0.0.1"}},
+		{"no value", "exactly one of ip_netmask, ip_range, fqdn", AddressInput{Name: "x"}},
+		{"two values", "exactly one of ip_netmask, ip_range, fqdn", AddressInput{Name: "x", IPNetmask: "10.0.0.1", FQDN: "a.example.com"}},
+		{"dg on firewall", "device_group requires a Panorama connection", AddressInput{Name: "x", IPNetmask: "10.0.0.1", Location: LocationInput{DeviceGroup: "dg1"}}},
+	}
+	for _, c := range bad {
+		res, _, err := h(t.Context(), nil, c.in)
 		if err != nil {
-			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+			t.Fatalf("%s: handler must not return Go error: %v", c.name, err)
 		}
 		if !res.IsError {
-			t.Fatalf("%s: expected IsError", name)
+			t.Fatalf("%s: expected IsError", c.name)
+		}
+		if body := textContent(t, res); !strings.Contains(body, c.wantErr) {
+			t.Fatalf("%s: error %q must mention %q", c.name, body, c.wantErr)
 		}
 	}
 	// Validation must reject before any API call: only the bootstrap system-info
@@ -193,6 +205,35 @@ func TestAddressUpdate(t *testing.T) {
 	}
 	if !sawEdit {
 		t.Fatal("update never issued a multi-config edit; adapter must wrap the name into an entry xpath")
+	}
+}
+
+// TestAddressUpdateNoopSpecMatches pins pango's UpdateWithXpath SpecMatches
+// short-circuit: an overlay that changes nothing leaves the entry byte-identical
+// to the one read back, so pango issues no edit. Only a get route is registered,
+// so a broken short-circuit that did fire an edit would also trip the fake's
+// fail-loud on the unmatched multi-config request.
+func TestAddressUpdateNoopSpecMatches(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: addressCurrentBody})
+	h := updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update",
+		newAddressService(d), addressResolve(d),
+		func(in AddressInput) LocationInput { return in.Location },
+		func(in AddressInput) string { return in.Name }, overlayAddress)
+
+	// Only the name is set, and it matches the entry read back, so the overlay
+	// leaves the spec unchanged.
+	res, _, err := h(t.Context(), nil, AddressInput{Name: "web-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// An identical overlay must issue no config write at all.
+	for _, req := range f.Requests() {
+		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
+			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
+		}
 	}
 }
 
@@ -324,15 +365,24 @@ func TestBuildAddressEntry(t *testing.T) {
 		})
 	}
 
-	bad := map[string]AddressInput{
-		"no name":    {IPNetmask: "10.0.0.1/32"},
-		"no value":   {Name: "a"},
-		"two values": {Name: "a", IPNetmask: "10.0.0.1/32", IPRange: "10.0.0.1-10.0.0.9"},
+	bad := []struct {
+		name, wantErr string
+		in            AddressInput
+	}{
+		{"no name", "name is required", AddressInput{IPNetmask: "10.0.0.1/32"}},
+		{"no value", "exactly one of ip_netmask, ip_range, fqdn", AddressInput{Name: "a"}},
+		{"two values", "exactly one of ip_netmask, ip_range, fqdn", AddressInput{Name: "a", IPNetmask: "10.0.0.1/32", IPRange: "10.0.0.1-10.0.0.9"}},
 	}
-	for name, in := range bad {
-		t.Run(name, func(t *testing.T) {
-			if _, err := buildAddressEntry(in); err == nil {
-				t.Fatalf("%s: expected error", name)
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := buildAddressEntry(c.in)
+			if err == nil {
+				t.Fatalf("%s: expected error", c.name)
+			}
+			// Assert the offending field is named so distinct guards cannot
+			// pass on one another's error (same-error collapse).
+			if !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("%s: error %q must mention %q", c.name, err, c.wantErr)
 			}
 		})
 	}
@@ -378,6 +428,17 @@ func getConfigXpaths(f *fakeAPI) []string {
 		}
 	}
 	return xs
+}
+
+// assertReadBackGet fails unless some recorded request is a config get, proving
+// pango's Create issued the read-back that follows the set. Without it a create
+// test asserting only the set would still pass if the SDK stopped reading the
+// object back (or the get route were dropped).
+func assertReadBackGet(t *testing.T, f *fakeAPI) {
+	t.Helper()
+	if len(getConfigXpaths(f)) == 0 {
+		t.Fatal("pango Create must read the object back with a config get")
+	}
 }
 
 // assertSingleWrappedGet fails unless some recorded config get carries the
@@ -471,14 +532,22 @@ func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
 
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
 
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {
@@ -582,16 +651,26 @@ func TestBuildAddressGroupEntry(t *testing.T) {
 			t.Fatalf("dynamic build lost description or tags: desc=%v tags=%v", e.Description, e.Tag)
 		}
 	})
-	bad := map[string]AddressGroupInput{
-		"no name":      {Static: []string{"web-1"}},
-		"neither":      {Name: "g"},
-		"empty static": {Name: "g", Static: []string{}}, // an empty static list counts as absent
-		"both":         {Name: "g", Static: []string{"web-1"}, DynamicFilter: "'prod'"},
+	bad := []struct {
+		name, wantErr string
+		in            AddressGroupInput
+	}{
+		{"no name", "name is required", AddressGroupInput{Static: []string{"web-1"}}},
+		{"neither", "exactly one of static, dynamic_filter", AddressGroupInput{Name: "g"}},
+		// An empty static list counts as absent on create, so the XOR rejects it.
+		{"empty static", "exactly one of static, dynamic_filter", AddressGroupInput{Name: "g", Static: []string{}}},
+		{"both", "exactly one of static, dynamic_filter", AddressGroupInput{Name: "g", Static: []string{"web-1"}, DynamicFilter: "'prod'"}},
 	}
-	for name, in := range bad {
-		t.Run(name, func(t *testing.T) {
-			if _, err := buildAddressGroupEntry(in); err == nil {
-				t.Fatalf("%s: expected error", name)
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := buildAddressGroupEntry(c.in)
+			if err == nil {
+				t.Fatalf("%s: expected error", c.name)
+			}
+			// Assert the offending field is named so distinct guards cannot
+			// pass on one another's error (same-error collapse).
+			if !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("%s: error %q must mention %q", c.name, err, c.wantErr)
 			}
 		})
 	}
@@ -625,15 +704,21 @@ func TestOverlayAddressGroupMembership(t *testing.T) {
 			t.Fatal("providing both static and dynamic_filter must error")
 		}
 	})
-	t.Run("empty static list is ignored", func(t *testing.T) {
-		// An empty static list is treated as absent (a static group cannot be
-		// emptied in place), so the existing members are left untouched.
+	t.Run("empty static list is rejected", func(t *testing.T) {
+		// A static group cannot be emptied in place, so an explicitly empty
+		// static list is a client-side error rather than a silent no-op that
+		// would report success while leaving the members untouched.
 		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}}
-		if err := overlayAddressGroup(e, AddressGroupInput{Static: []string{}}); err != nil {
-			t.Fatal(err)
+		err := overlayAddressGroup(e, AddressGroupInput{Static: []string{}})
+		if err == nil {
+			t.Fatal("an explicitly empty static list must be rejected")
 		}
+		if !strings.Contains(err.Error(), "cannot be emptied in place") {
+			t.Fatalf("error must explain the empty-static rejection, got: %v", err)
+		}
+		// A rejected overlay must not have mutated the entry.
 		if len(e.Static) != 1 || e.Static[0] != "web-1" {
-			t.Fatalf("empty static list must be ignored, got: %v", e.Static)
+			t.Fatalf("a rejected overlay must leave the members untouched, got: %v", e.Static)
 		}
 	})
 }
@@ -711,6 +796,9 @@ func TestAddressGroupCreateBuildsEntry(t *testing.T) {
 	if !sawSet {
 		t.Fatal("no config set request recorded")
 	}
+	// pango's Create reads the object back after the set; pin that read-back
+	// actually reached the API.
+	assertReadBackGet(t, f)
 }
 
 func TestAddressGroupCreateValidation(t *testing.T) {
@@ -1046,15 +1134,24 @@ func TestBuildServiceEntry(t *testing.T) {
 // TestBuildServiceEntryRejects pins that a create entry requires a name, a port,
 // and a known protocol.
 func TestBuildServiceEntryRejects(t *testing.T) {
-	bad := map[string]ServiceInput{
-		"no name":      {Protocol: "tcp", Port: "80"},
-		"no port":      {Name: "s", Protocol: "tcp"},
-		"bad protocol": {Name: "s", Protocol: "icmp", Port: "1"},
+	bad := []struct {
+		name, wantErr string
+		in            ServiceInput
+	}{
+		{"no name", "name is required", ServiceInput{Protocol: "tcp", Port: "80"}},
+		{"no port", "port is required", ServiceInput{Name: "s", Protocol: "tcp"}},
+		{"bad protocol", `protocol must be "tcp" or "udp"`, ServiceInput{Name: "s", Protocol: "icmp", Port: "1"}},
 	}
-	for name, in := range bad {
-		t.Run(name, func(t *testing.T) {
-			if _, err := buildServiceEntry(in); err == nil {
-				t.Fatalf("%s: expected error", name)
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := buildServiceEntry(c.in)
+			if err == nil {
+				t.Fatalf("%s: expected error", c.name)
+			}
+			// Assert the offending field is named so distinct guards cannot
+			// pass on one another's error (same-error collapse).
+			if !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("%s: error %q must mention %q", c.name, err, c.wantErr)
 			}
 		})
 	}
@@ -1238,6 +1335,9 @@ func TestServiceCreateBuildsEntry(t *testing.T) {
 	if !sawSet {
 		t.Fatal("no config set request recorded")
 	}
+	// pango's Create reads the object back after the set; pin that read-back
+	// actually reached the API.
+	assertReadBackGet(t, f)
 }
 
 func TestServiceCreateValidation(t *testing.T) {
@@ -1246,18 +1346,27 @@ func TestServiceCreateValidation(t *testing.T) {
 		newServiceService(d), serviceResolve(d),
 		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry)
 
-	for name, in := range map[string]ServiceInput{
-		"no name":        {Protocol: "tcp", Port: "80"},
-		"no port":        {Name: "x", Protocol: "tcp"},
-		"bad protocol":   {Name: "x", Protocol: "icmp", Port: "1"},
-		"dg on firewall": {Name: "x", Protocol: "tcp", Port: "80", Location: LocationInput{DeviceGroup: "dg1"}},
-	} {
-		res, _, err := h(t.Context(), nil, in)
+	// Assert each rejection's distinct message, not merely IsError, so the name,
+	// port, protocol and location guards cannot pass on one another's error.
+	bad := []struct {
+		name, wantErr string
+		in            ServiceInput
+	}{
+		{"no name", "name is required", ServiceInput{Protocol: "tcp", Port: "80"}},
+		{"no port", "port is required", ServiceInput{Name: "x", Protocol: "tcp"}},
+		{"bad protocol", `protocol must be "tcp" or "udp"`, ServiceInput{Name: "x", Protocol: "icmp", Port: "1"}},
+		{"dg on firewall", "device_group requires a Panorama connection", ServiceInput{Name: "x", Protocol: "tcp", Port: "80", Location: LocationInput{DeviceGroup: "dg1"}}},
+	}
+	for _, c := range bad {
+		res, _, err := h(t.Context(), nil, c.in)
 		if err != nil {
-			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+			t.Fatalf("%s: handler must not return Go error: %v", c.name, err)
 		}
 		if !res.IsError {
-			t.Fatalf("%s: expected IsError", name)
+			t.Fatalf("%s: expected IsError", c.name)
+		}
+		if body := textContent(t, res); !strings.Contains(body, c.wantErr) {
+			t.Fatalf("%s: error %q must mention %q", c.name, body, c.wantErr)
 		}
 	}
 	// Validation must reject before any API call: only the bootstrap system-info
@@ -1514,13 +1623,21 @@ func TestServiceGetUpdateViaRegisteredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_get", Arguments: map[string]any{"name": "svc-1"}})
 	if err != nil {
@@ -1592,23 +1709,34 @@ func TestBuildServiceGroupEntry(t *testing.T) {
 // TestBuildServiceGroupEntryRejects pins that a create entry requires a name
 // and at least one member.
 func TestBuildServiceGroupEntryRejects(t *testing.T) {
-	bad := map[string]ServiceGroupInput{
-		"no name":    {Members: []string{"a"}},
-		"no members": {Name: "g"},
+	bad := []struct {
+		name, wantErr string
+		in            ServiceGroupInput
+	}{
+		{"no name", "name is required", ServiceGroupInput{Members: []string{"a"}}},
+		{"no members", "at least one member is required", ServiceGroupInput{Name: "g"}},
 	}
-	for name, in := range bad {
-		t.Run(name, func(t *testing.T) {
-			if _, err := buildServiceGroupEntry(in); err == nil {
-				t.Fatalf("%s: expected error", name)
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := buildServiceGroupEntry(c.in)
+			if err == nil {
+				t.Fatalf("%s: expected error", c.name)
+			}
+			// Assert the offending field is named so distinct guards cannot
+			// pass on one another's error (same-error collapse).
+			if !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("%s: error %q must mention %q", c.name, err, c.wantErr)
 			}
 		})
 	}
 }
 
 // TestOverlayServiceGroupFields pins the overlay semantics: a non-empty members
-// list replaces the membership, an empty one leaves it unchanged (a group
+// list replaces the membership, an explicitly empty one is rejected (a group
 // cannot be emptied in place), a nil tags slice leaves tags unchanged, and a
 // non-nil empty tags slice clears them.
+//
+//nolint:gocognit // exhaustive independent subtests for the overlay membership and tags semantics; each t.Run is one scenario.
 func TestOverlayServiceGroupFields(t *testing.T) {
 	t.Run("members replace when non-empty", func(t *testing.T) {
 		e := &service_group.Entry{Name: "g", Members: []string{"a"}}
@@ -1617,6 +1745,22 @@ func TestOverlayServiceGroupFields(t *testing.T) {
 		}
 		if len(e.Members) != 2 || e.Members[0] != "b" {
 			t.Fatalf("members not replaced: %v", e.Members)
+		}
+	})
+	t.Run("explicitly empty members list is rejected", func(t *testing.T) {
+		// A service group cannot be emptied in place, so an explicit [] is a
+		// client-side error, not a silent no-op that reports success.
+		e := &service_group.Entry{Name: "g", Members: []string{"a"}}
+		err := overlayServiceGroup(e, ServiceGroupInput{Members: []string{}})
+		if err == nil {
+			t.Fatal("an explicitly empty members list must be rejected")
+		}
+		if !strings.Contains(err.Error(), "cannot be emptied in place") {
+			t.Fatalf("error must explain the empty-members rejection, got: %v", err)
+		}
+		// A rejected overlay must not have mutated the entry.
+		if len(e.Members) != 1 || e.Members[0] != "a" {
+			t.Fatalf("a rejected overlay must leave the members untouched, got: %v", e.Members)
 		}
 	})
 	t.Run("empty overlay leaves entry unchanged", func(t *testing.T) {
@@ -1707,6 +1851,9 @@ func TestServiceGroupCreateBuildsEntry(t *testing.T) {
 	if !sawSet {
 		t.Fatal("no config set request recorded")
 	}
+	// pango's Create reads the object back after the set; pin that read-back
+	// actually reached the API.
+	assertReadBackGet(t, f)
 }
 
 func TestServiceGroupCreateValidation(t *testing.T) {
@@ -1715,17 +1862,26 @@ func TestServiceGroupCreateValidation(t *testing.T) {
 		newServiceGroupService(d), serviceGroupResolve(d),
 		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry)
 
-	for name, in := range map[string]ServiceGroupInput{
-		"no name":        {Members: []string{"web-8080"}},
-		"no members":     {Name: "g"},
-		"dg on firewall": {Name: "g", Members: []string{"web-8080"}, Location: LocationInput{DeviceGroup: "dg1"}},
-	} {
-		res, _, err := h(t.Context(), nil, in)
+	// Assert each rejection's distinct message, not merely IsError, so the name,
+	// members and location guards cannot pass on one another's error.
+	bad := []struct {
+		name, wantErr string
+		in            ServiceGroupInput
+	}{
+		{"no name", "name is required", ServiceGroupInput{Members: []string{"web-8080"}}},
+		{"no members", "at least one member is required", ServiceGroupInput{Name: "g"}},
+		{"dg on firewall", "device_group requires a Panorama connection", ServiceGroupInput{Name: "g", Members: []string{"web-8080"}, Location: LocationInput{DeviceGroup: "dg1"}}},
+	}
+	for _, c := range bad {
+		res, _, err := h(t.Context(), nil, c.in)
 		if err != nil {
-			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+			t.Fatalf("%s: handler must not return Go error: %v", c.name, err)
 		}
 		if !res.IsError {
-			t.Fatalf("%s: expected IsError", name)
+			t.Fatalf("%s: expected IsError", c.name)
+		}
+		if body := textContent(t, res); !strings.Contains(body, c.wantErr) {
+			t.Fatalf("%s: error %q must mention %q", c.name, body, c.wantErr)
 		}
 	}
 	// Validation must reject before any API call: only the bootstrap system-info
@@ -1929,13 +2085,21 @@ func TestServiceGroupGetUpdateViaRegisteredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_group_get", Arguments: map[string]any{"name": "grp-1"}})
 	if err != nil {
@@ -2348,13 +2512,21 @@ func TestTagGetUpdateViaRegisteredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_tag_get", Arguments: map[string]any{"name": "t-1"}})
 	if err != nil {

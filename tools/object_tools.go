@@ -58,6 +58,26 @@ type AddressInput struct {
 	Tags        []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
 }
 
+// countValueTypes returns how many of the mutually-exclusive address value
+// fields (ip_netmask, ip_range, fqdn) the input sets. A PAN-OS address object
+// has exactly one value type, so create requires exactly one and update at most
+// one; both callers share this count. Takes a pointer to avoid copying the
+// large AddressInput (the by-value builder signatures carry it for the generic
+// handler contract; this private helper is not bound by that).
+func countValueTypes(in *AddressInput) int {
+	n := 0
+	if in.IPNetmask != "" {
+		n++
+	}
+	if in.IPRange != "" {
+		n++
+	}
+	if in.FQDN != "" {
+		n++
+	}
+	return n
+}
+
 // buildAddressEntry validates an AddressInput and builds a create entry. Exactly
 // one of ip_netmask, ip_range, fqdn must be set: a PAN-OS address object has
 // exactly one value type.
@@ -72,22 +92,18 @@ func buildAddressEntry(in AddressInput) (*address.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
 	}
+	if countValueTypes(&in) != 1 {
+		return nil, errors.New("exactly one of ip_netmask, ip_range, fqdn is required")
+	}
 	e := &address.Entry{Name: in.Name, Tag: in.Tags}
-	set := 0
 	if in.IPNetmask != "" {
-		set++
 		e.IpNetmask = ptr(in.IPNetmask)
 	}
 	if in.IPRange != "" {
-		set++
 		e.IpRange = ptr(in.IPRange)
 	}
 	if in.FQDN != "" {
-		set++
 		e.Fqdn = ptr(in.FQDN)
-	}
-	if set != 1 {
-		return nil, errors.New("exactly one of ip_netmask, ip_range, fqdn is required")
 	}
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
@@ -108,17 +124,7 @@ func buildAddressEntry(in AddressInput) (*address.Entry, error) {
 //
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayAddress(e *address.Entry, in AddressInput) error {
-	set := 0
-	if in.IPNetmask != "" {
-		set++
-	}
-	if in.IPRange != "" {
-		set++
-	}
-	if in.FQDN != "" {
-		set++
-	}
-	if set > 1 {
+	if countValueTypes(&in) > 1 {
 		return errors.New("at most one of ip_netmask, ip_range, fqdn may be set")
 	}
 	// Each branch rewrites all four value fields: it sets the chosen type and nils
@@ -165,7 +171,8 @@ func addressSummary(e *address.Entry) any {
 // skipped entirely in read-only mode.
 func RegisterAddressTools(s *mcp.Server, d *Deps) {
 	svc := newAddressService(d)
-	resolve := func(in LocationInput) (address.Location, error) { return resolveLocation(d, in, addressParts()) }
+	parts := addressParts()
+	resolve := func(in LocationInput) (address.Location, error) { return resolveLocation(d, in, parts) }
 	name := func(e *address.Entry) string { return e.Name }
 	loc := func(in AddressInput) LocationInput { return in.Location }
 
@@ -219,7 +226,7 @@ func addressGroupParts() locParts[address_group.Location] {
 type AddressGroupInput struct {
 	Name          string        `json:"name" jsonschema:"Address group name"`
 	Location      LocationInput `json:"location,omitempty"`
-	Static        []string      `json:"static,omitempty" jsonschema:"Static member names; a non-empty list replaces the members. An empty list is ignored, since a static group cannot be emptied in place (switch to dynamic_filter or delete the group)"`
+	Static        []string      `json:"static,omitempty" jsonschema:"Static member names; a non-empty list replaces the members. An explicitly empty list is rejected on update, since a static group cannot be emptied in place (switch to dynamic_filter or delete the group)"`
 	DynamicFilter string        `json:"dynamic_filter,omitempty" jsonschema:"Dynamic match expression over tags, e.g. 'prod' and 'web'"`
 	Description   string        `json:"description,omitempty"`
 	Tags          []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
@@ -255,14 +262,17 @@ func buildAddressGroupEntry(in AddressGroupInput) (*address_group.Entry, error) 
 // overlayAddressGroup applies provided fields onto the current entry. At most one
 // of static, dynamic_filter may be provided; each provided side rewrites both
 // membership fields, so switching a group's type clears the other side and the
-// read-modify-write cannot emit a dual-typed (invalid) entry. A static list counts
-// as provided only when it has members; an empty static list is ignored, since a
+// read-modify-write cannot emit a dual-typed (invalid) entry. A non-empty static
+// list replaces membership; an explicitly empty static list is rejected, since a
 // static group cannot be emptied in place (switch to dynamic_filter or delete the
 // group). An omitted (empty) description leaves the existing one unchanged; a nil
 // tags slice leaves tags unchanged, while a non-nil empty slice clears them.
 //
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayAddressGroup(e *address_group.Entry, in AddressGroupInput) error {
+	if in.Static != nil && len(in.Static) == 0 {
+		return errors.New("static must have at least one member; a static group cannot be emptied in place (switch to dynamic_filter or delete the group)")
+	}
 	hasStatic := len(in.Static) > 0
 	hasDynamic := in.DynamicFilter != ""
 	if hasStatic && hasDynamic {
@@ -299,8 +309,9 @@ func addressGroupSummary(e *address_group.Entry) any {
 // are skipped entirely in read-only mode.
 func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 	svc := newAddressGroupService(d)
+	parts := addressGroupParts()
 	resolve := func(in LocationInput) (address_group.Location, error) {
-		return resolveLocation(d, in, addressGroupParts())
+		return resolveLocation(d, in, parts)
 	}
 	name := func(e *address_group.Entry) string { return e.Name }
 	loc := func(in AddressGroupInput) LocationInput { return in.Location }
@@ -325,7 +336,7 @@ func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 	}, createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create", svc, resolve, loc, buildAddressGroupEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_group_update",
-		Description: "Update an address group: read-modify-write, only provided fields change. Tags replace fully (an empty list clears them); a non-empty static or dynamic_filter replaces membership and switches the group type. An empty static list is ignored: a static group cannot be emptied in place, so switch to dynamic_filter or delete the group. Candidate config only.",
+		Description: "Update an address group: read-modify-write, only provided fields change. Tags replace fully (an empty list clears them); a non-empty static or dynamic_filter replaces membership and switches the group type. An explicitly empty static list is rejected: a static group cannot be emptied in place, so switch to dynamic_filter or delete the group. Candidate config only.",
 		Annotations: updateTool("Update address group"),
 	}, updateHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_update", svc, resolve, loc,
 		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup))
@@ -491,7 +502,8 @@ func serviceSummary(e *service.Entry) any {
 // skipped entirely in read-only mode.
 func RegisterServiceTools(s *mcp.Server, d *Deps) {
 	svc := newServiceService(d)
-	resolve := func(in LocationInput) (service.Location, error) { return resolveLocation(d, in, serviceParts()) }
+	parts := serviceParts()
+	resolve := func(in LocationInput) (service.Location, error) { return resolveLocation(d, in, parts) }
 	name := func(e *service.Entry) string { return e.Name }
 	loc := func(in ServiceInput) LocationInput { return in.Location }
 
@@ -558,7 +570,7 @@ func newServiceGroupService(d *Deps) nameFixAdapter[service_group.Location, serv
 type ServiceGroupInput struct {
 	Name     string        `json:"name" jsonschema:"Service group name"`
 	Location LocationInput `json:"location,omitempty"`
-	Members  []string      `json:"members,omitempty" jsonschema:"Member service or service group names; at least one is required on create, and a non-empty list replaces the full membership on update"`
+	Members  []string      `json:"members,omitempty" jsonschema:"Member service or service group names; at least one is required on create, and a non-empty list replaces the full membership on update (an explicitly empty list is rejected)"`
 	Tags     []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
 }
 
@@ -577,12 +589,15 @@ func buildServiceGroupEntry(in ServiceGroupInput) (*service_group.Entry, error) 
 }
 
 // overlayServiceGroup applies provided fields onto the current entry. A
-// non-empty members list replaces the membership; an empty one is ignored,
-// because a group cannot be emptied in place (delete it instead). A nil tags
-// slice leaves tags unchanged, while a non-nil empty slice clears them.
+// non-empty members list replaces the membership; an explicitly empty one is
+// rejected, because a group cannot be emptied in place (delete it instead). A
+// nil tags slice leaves tags unchanged, while a non-nil empty slice clears them.
 //
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayServiceGroup(e *service_group.Entry, in ServiceGroupInput) error {
+	if in.Members != nil && len(in.Members) == 0 {
+		return errors.New("members must have at least one entry; a group cannot be emptied in place (delete the group instead)")
+	}
 	if len(in.Members) > 0 {
 		e.Members = in.Members
 	}
@@ -604,8 +619,9 @@ func serviceGroupSummary(e *service_group.Entry) any {
 // are skipped entirely in read-only mode.
 func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 	svc := newServiceGroupService(d)
+	parts := serviceGroupParts()
 	resolve := func(in LocationInput) (service_group.Location, error) {
-		return resolveLocation(d, in, serviceGroupParts())
+		return resolveLocation(d, in, parts)
 	}
 	name := func(e *service_group.Entry) string { return e.Name }
 	loc := func(in ServiceGroupInput) LocationInput { return in.Location }
@@ -630,7 +646,7 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 	}, createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create", svc, resolve, loc, buildServiceGroupEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_group_update",
-		Description: "Update a service group: read-modify-write, only provided fields change. A non-empty members list replaces the full membership (a group cannot be emptied in place; delete it instead); tags replace fully (an empty list clears them). Candidate config only.",
+		Description: "Update a service group: read-modify-write, only provided fields change. A non-empty members list replaces the full membership; an explicitly empty members list is rejected (a group cannot be emptied in place; delete it instead); tags replace fully (an empty list clears them). Candidate config only.",
 		Annotations: updateTool("Update service group"),
 	}, updateHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_update", svc, resolve, loc,
 		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup))
@@ -736,7 +752,8 @@ func tagSummary(e *admintag.Entry) any {
 // entirely in read-only mode.
 func RegisterTagTools(s *mcp.Server, d *Deps) {
 	svc := newTagService(d)
-	resolve := func(in LocationInput) (admintag.Location, error) { return resolveLocation(d, in, tagParts()) }
+	parts := tagParts()
+	resolve := func(in LocationInput) (admintag.Location, error) { return resolveLocation(d, in, parts) }
 	name := func(e *admintag.Entry) string { return e.Name }
 	loc := func(in TagInput) LocationInput { return in.Location }
 
