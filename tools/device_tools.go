@@ -248,7 +248,7 @@ func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneLi
 		}
 		total := len(names)
 		lo, hi := clampList(in.Limit, in.Offset, total)
-		res, v := jsonResult(map[string]any{"total": total, "zones": names[lo:hi]})
+		res, v := jsonResult(map[string]any{"total": total, "offset": lo, "count": hi - lo, "zones": names[lo:hi]})
 		return res, v, nil
 	}
 }
@@ -376,10 +376,13 @@ func RegisterDeviceTools(s *mcp.Server, d *Deps) {
 		Description: "Commit the candidate config to the running config. Waits up to the configured window, then returns the job ID for panos_job_status. On Panorama this commits to Panorama itself; push to firewalls afterwards with panos_push.",
 		Annotations: updateTool("Commit"),
 	}, commitHandler(d))
+	// validate does not modify config, so it carries ReadOnlyHint; it is still
+	// registered only in write mode and holds the write lock because it starts a
+	// device job that contends for the config lock (see validateHandler).
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_validate",
 		Description: "Validate the candidate config without committing. Returns the validation job result.",
-		Annotations: createTool("Validate config"),
+		Annotations: readOnlyTool("Validate config"),
 	}, validateHandler(d))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_revert",
