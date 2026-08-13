@@ -609,13 +609,21 @@ func TestSecurityRuleGetUpdateViaRegisteredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_security_rule_get", Arguments: map[string]any{"name": "allow-web"}})
 	if err != nil {
@@ -1459,13 +1467,21 @@ func TestNatRuleGetUpdateViaRegisteredTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cs.Close() })
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_nat_rule_get", Arguments: map[string]any{"name": "out-snat"}})
 	if err != nil {
