@@ -517,7 +517,6 @@ func TestAddressPanoramaLocations(t *testing.T) {
 // server/client pair and returns the set of tool names the server exposes.
 func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	t.Helper()
-	ctx := t.Context()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterAddressTools(srv, d)
 	RegisterAddressGroupTools(srv, d)
@@ -526,38 +525,7 @@ func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	RegisterTagTools(srv, d)
 	RegisterSecurityRuleTools(srv, d)
 	RegisterNatRuleTools(srv, d)
-
-	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := srv.Connect(ctx, serverT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := ss.Close(); err != nil {
-			t.Errorf("server session close: %v", err)
-		}
-	})
-
-	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
-	cs, err := cli.Connect(ctx, clientT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("client session close: %v", err)
-		}
-	})
-
-	res, err := cs.ListTools(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make(map[string]bool, len(res.Tools))
-	for _, tl := range res.Tools {
-		names[tl.Name] = true
-	}
-	return names
+	return serverToolNames(t, srv)
 }
 
 // TestRegisterAddressToolsReadOnly pins the write-safety gate: the mutating tools

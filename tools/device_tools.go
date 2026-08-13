@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/PaloAltoNetworks/pango/commit"
+	"github.com/PaloAltoNetworks/pango/network/zone"
+	"github.com/PaloAltoNetworks/pango/panorama/devicegroup"
+	"github.com/PaloAltoNetworks/pango/panorama/template"
 	"github.com/PaloAltoNetworks/pango/util"
 	"github.com/PaloAltoNetworks/pango/xmlapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -159,14 +164,15 @@ func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, stru
 }
 
 // validateHandler validates the candidate config without committing. Validate
-// runs a device job but does not mutate the candidate config, so for locking it
-// is treated as a read: it deliberately does not take the write lock and is not
-// one of the serialized mutations (commit, revert). See the writeMu doc in
-// tools.go. Whether it should still serialize behind writes to avoid
-// device-side config-lock contention is a registration-time design question
-// (Task 12), left unlocked per the approved design.
+// starts a device-side job that takes the same config locks a commit does, so
+// it serializes behind the other mutations via LockWrites even though it does
+// not itself change the candidate config: a validate racing a commit, revert
+// or push would contend for the device-side config lock, and its result would
+// describe a moving target. The tool is registered only in write mode, so no
+// read path pays for the lock (issue #30 item 3, settled in Task 12).
 func validateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		defer d.LockWrites()()
 		// ValidateConfig only enqueues the job; its sleep param is unused by
 		// pango (client.go:782 @ efa4357). The real wait happens in waitJob.
 		id, err := d.Client.ValidateConfig(ctx, jobPollInterval)
@@ -191,5 +197,203 @@ func revertHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct{}
 		}
 		res, v := successResult(d.Logger, "panos_revert", "candidate config reverted to running config (device-wide, all pending changes discarded)")
 		return res, v, nil
+	}
+}
+
+// ZoneListInput is the input for panos_zone_list. Zone locations differ from
+// the object tools' LocationInput: a firewall scopes zones by vsys and
+// Panorama scopes them by template, so this input replaces LocationInput.
+type ZoneListInput struct {
+	Vsys     string `json:"vsys,omitempty" jsonschema:"Firewall vsys (default vsys1); firewall only, ignored on Panorama"`
+	Template string `json:"template,omitempty" jsonschema:"Template name; required on Panorama (see panos_template_list)"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Max results (default 50, max 200)"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"Skip this many results"`
+	Filter   string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
+}
+
+// zoneListHandler lists zones: vsys scope on a firewall, template scope on
+// Panorama. Read-only; zone writes are out of scope.
+func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneListInput) (*mcp.CallToolResult, any, error) {
+	svc := zone.NewService(d.Client)
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in ZoneListInput) (*mcp.CallToolResult, any, error) {
+		var loc zone.Location
+		if d.IsPanorama {
+			if in.Template == "" {
+				res, v := errorResult("panos_zone_list: template is required on Panorama; list templates with panos_template_list")
+				return res, v, nil
+			}
+			loc = zone.Location{Template: &zone.TemplateLocation{
+				PanoramaDevice: defaultPanoramaDevice, NgfwDevice: defaultNgfwDevice,
+				Template: in.Template, Vsys: defaultVsys,
+			}}
+		} else {
+			vsys := in.Vsys
+			if vsys == "" {
+				vsys = defaultVsys
+			}
+			loc = zone.Location{Vsys: &zone.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: vsys}}
+		}
+		entries, err := svc.List(ctx, loc, "get", "", "")
+		if err != nil {
+			d.Logger.Error("failed: panos_zone_list", "error", err)
+			res, v := errorResult("failed: panos_zone_list: %v", err)
+			return res, v, nil
+		}
+		names := make([]string, 0, len(entries))
+		needle := strings.ToLower(in.Filter)
+		for _, e := range entries {
+			if in.Filter == "" || strings.Contains(strings.ToLower(e.Name), needle) {
+				names = append(names, e.Name)
+			}
+		}
+		total := len(names)
+		lo, hi := clampList(in.Limit, in.Offset, total)
+		res, v := jsonResult(map[string]any{"total": total, "offset": lo, "count": hi - lo, "zones": names[lo:hi]})
+		return res, v, nil
+	}
+}
+
+// PushInput is the input for panos_push.
+type PushInput struct {
+	DeviceGroup      string `json:"device_group" jsonschema:"Device group to push to (see panos_device_group_list)"`
+	Description      string `json:"description,omitempty" jsonschema:"Push description shown in the device commit history"`
+	IncludeTemplates bool   `json:"include_templates,omitempty" jsonschema:"Also push associated template config"`
+}
+
+// pushHandler runs a Panorama commit-all to one device group. It does NOT
+// commit to Panorama first; panos_commit must have run beforehand.
+func pushHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, PushInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in PushInput) (*mcp.CallToolResult, any, error) {
+		if !d.IsPanorama {
+			res, v := errorResult("panos_push requires a Panorama connection")
+			return res, v, nil
+		}
+		if in.DeviceGroup == "" {
+			res, v := errorResult("panos_push: device_group is required")
+			return res, v, nil
+		}
+		defer d.LockWrites()()
+		cmd := &xmlapi.Commit{Command: commit.PanoramaCommitAll{
+			Type: commit.TypeDeviceGroup, Name: in.DeviceGroup,
+			Description: in.Description, IncludeTemplate: in.IncludeTemplates,
+		}}
+		id, _, _, err := d.Client.StartJob(ctx, cmd) //nolint:bodyclose // pango already closed the body (client.go:1230)
+		if err != nil {
+			d.Logger.Error("failed: panos_push", "error", err)
+			res, v := errorResult("failed: panos_push: %v", err)
+			return res, v, nil
+		}
+		d.Logger.Info("panos_push job started", "job", id, "device_group", in.DeviceGroup)
+		res, v := waitJob(ctx, d, "panos_push", id)
+		return res, v, nil
+	}
+}
+
+// panoramaFixedResolve adapts a fixed Panorama-level location to listHandler's
+// resolve signature. Device groups and templates live at exactly one place in
+// the config, so any location scoping in the input is a caller error and is
+// rejected rather than silently ignored.
+func panoramaFixedResolve[L any](tool string, loc L) func(LocationInput) (L, error) {
+	return func(in LocationInput) (L, error) {
+		if in != (LocationInput{}) {
+			var zero L
+			return zero, fmt.Errorf("%s lists Panorama-level config; location does not apply", tool)
+		}
+		return loc, nil
+	}
+}
+
+// deviceGroupSummary reduces a device group entry to the list view fields.
+func deviceGroupSummary(e *devicegroup.Entry) any {
+	return map[string]any{tagNameKey: e.Name, descriptionKey: strVal(e.Description), "templates": e.Templates}
+}
+
+// deviceGroupListHandler lists Panorama device groups via the shared
+// listHandler at the fixed Panorama location.
+func deviceGroupListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
+	return listHandler[devicegroup.Location, devicegroup.Entry](
+		d, "panos_device_group_list", devicegroup.NewService(d.Client),
+		panoramaFixedResolve("panos_device_group_list",
+			devicegroup.Location{Panorama: &devicegroup.PanoramaLocation{PanoramaDevice: defaultPanoramaDevice}}),
+		func(e *devicegroup.Entry) string { return e.Name }, deviceGroupSummary)
+}
+
+// templateSummary reduces a template entry to the list view fields.
+func templateSummary(e *template.Entry) any {
+	return map[string]any{tagNameKey: e.Name, descriptionKey: strVal(e.Description)}
+}
+
+// templateListHandler lists Panorama templates (zone discovery for
+// panos_zone_list) via the shared listHandler at the fixed Panorama location.
+func templateListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
+	return listHandler[template.Location, template.Entry](
+		d, "panos_template_list", template.NewService(d.Client),
+		panoramaFixedResolve("panos_template_list",
+			template.Location{Panorama: &template.PanoramaLocation{PanoramaDevice: defaultPanoramaDevice}}),
+		func(e *template.Entry) string { return e.Name }, templateSummary)
+}
+
+// RegisterDeviceTools registers device ops tools, gating Panorama-only
+// tools on the connected device type and write tools on read-only mode.
+func RegisterDeviceTools(s *mcp.Server, d *Deps) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_system_info",
+		Description: "Show device system info (model, serial, versions). Also the connection test. Read-only.",
+		Annotations: readOnlyTool("System info"),
+	}, systemInfoHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_job_status",
+		Description: "Poll a device job (commit, push, validate) by ID. Read-only.",
+		Annotations: readOnlyTool("Job status"),
+	}, jobStatusHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_config_diff",
+		Description: "Show pending candidate changes versus the running config. Check before panos_commit; other admins' changes commit too. Read-only.",
+		Annotations: readOnlyTool("Config diff"),
+	}, configDiffHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_zone_list",
+		Description: "List security zone names for use in rules. On Panorama requires template (see panos_template_list). Read-only.",
+		Annotations: readOnlyTool("List zones"),
+	}, zoneListHandler(d))
+	if d.IsPanorama {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "panos_device_group_list",
+			Description: "List Panorama device groups. Read-only.",
+			Annotations: readOnlyTool("List device groups"),
+		}, deviceGroupListHandler(d))
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "panos_template_list",
+			Description: "List Panorama templates (zone and network config scopes). Read-only.",
+			Annotations: readOnlyTool("List templates"),
+		}, templateListHandler(d))
+	}
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_commit",
+		Description: "Commit the candidate config to the running config. Waits up to the configured window, then returns the job ID for panos_job_status. On Panorama this commits to Panorama itself; push to firewalls afterwards with panos_push.",
+		Annotations: updateTool("Commit"),
+	}, commitHandler(d))
+	// validate does not modify config, so it carries ReadOnlyHint; it is still
+	// registered only in write mode and holds the write lock because it starts a
+	// device job that contends for the config lock (see validateHandler).
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_validate",
+		Description: "Validate the candidate config without committing. Returns the validation job result.",
+		Annotations: readOnlyTool("Validate config"),
+	}, validateHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_revert",
+		Description: "Revert the candidate config to the running config. DESTRUCTIVE: discards ALL pending changes device-wide, including other admins' work. Check panos_config_diff first.",
+		Annotations: deleteTool("Revert candidate"),
+	}, revertHandler(d))
+	if d.IsPanorama {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "panos_push",
+			Description: "Push committed config to a device group's firewalls (commit-all). Does NOT commit first: run panos_commit before this.",
+			Annotations: updateTool("Push to device group"),
+		}, pushHandler(d))
 	}
 }

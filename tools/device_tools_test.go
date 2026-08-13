@@ -52,6 +52,22 @@ func revertRoute() fakeRoute {
 	}
 }
 
+// jobEnqueuedBody acknowledges a job enqueue and carries job id 42, shared by
+// the validate and push routes.
+const jobEnqueuedBody = `<response status="success" code="19"><result>` +
+	`<msg><line>job enqueued</line></msg><job>42</job></result></response>`
+
+func pushRoute() fakeRoute {
+	return fakeRoute{
+		Match: func(v url.Values) bool { return v.Get("type") == "commit" && v.Get("action") == "all" },
+		Body:  jobEnqueuedBody,
+	}
+}
+
+func validateRoute() fakeRoute {
+	return fakeRoute{Match: opContains("<validate>"), Body: jobEnqueuedBody}
+}
+
 // assertRequestSent fails the test unless some recorded request matches.
 func assertRequestSent(t *testing.T, f *fakeAPI, match func(url.Values) bool, msg string) {
 	t.Helper()
@@ -411,5 +427,244 @@ func TestCommitHoldsWriteLock(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM", commitRoute(), jobRoute(jobFinBody))
 	assertHoldsWriteLock(t, d, f, func() (*mcp.CallToolResult, any, error) {
 		return commitHandler(d)(t.Context(), nil, CommitInput{Description: "locked change"})
+	})
+}
+
+func TestValidateHoldsWriteLock(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM", validateRoute(), jobRoute(jobFinBody))
+	assertHoldsWriteLock(t, d, f, func() (*mcp.CallToolResult, any, error) {
+		return validateHandler(d)(t.Context(), nil, struct{}{})
+	})
+}
+
+// zoneListBody lists two zones by name; the list xpath ends at .../zone/entry,
+// so the entries bind directly under <result> with no <zone> wrapper.
+const zoneListBody = `<response status="success"><result>` +
+	`<entry name="trust"></entry><entry name="untrust"></entry></result></response>`
+
+//nolint:gocognit // four independent zone-scoping scenarios (firewall default/custom vsys, Panorama requires/uses template), each assertion-heavy.
+func TestZoneListFirewallAndPanorama(t *testing.T) {
+	t.Run("firewall vsys scope", func(t *testing.T) {
+		d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: zoneListBody})
+		res, _, err := zoneListHandler(d)(t.Context(), nil, ZoneListInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("firewall zone list failed: %s", textContent(t, res))
+		}
+		// "untrust" is the discriminating name; "trust" is also a substring of it.
+		if !strings.Contains(textContent(t, res), "untrust") {
+			t.Fatalf("missing zone: %s", textContent(t, res))
+		}
+		// The default vsys must scope the list xpath.
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "vsys1") {
+			t.Fatalf("firewall zone list must target the vsys xpath, got: %s", joined)
+		}
+	})
+
+	t.Run("firewall custom vsys", func(t *testing.T) {
+		d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: zoneListBody})
+		res, _, err := zoneListHandler(d)(t.Context(), nil, ZoneListInput{Vsys: "vsys2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("firewall zone list failed: %s", textContent(t, res))
+		}
+		// The requested vsys, not the default, must scope the xpath.
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "vsys2") {
+			t.Fatalf("zone list must honor in.Vsys in the xpath, got: %s", joined)
+		}
+	})
+
+	t.Run("panorama requires template", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: zoneListBody})
+		res, _, err := zoneListHandler(d)(t.Context(), nil, ZoneListInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Fatal("Panorama zone list without a template must be an error")
+		}
+		if !strings.Contains(textContent(t, res), "panos_template_list") {
+			t.Fatalf("error must point at panos_template_list: %s", textContent(t, res))
+		}
+		// The template guard must reject before any config get reaches the device.
+		if xs := getConfigXpaths(f); len(xs) != 0 {
+			t.Fatalf("no config get may be sent without a template, got: %v", xs)
+		}
+	})
+
+	t.Run("panorama template scope", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: zoneListBody})
+		res, _, err := zoneListHandler(d)(t.Context(), nil, ZoneListInput{Template: "edge-template"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("Panorama zone list with template failed: %s", textContent(t, res))
+		}
+		if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "edge-template") {
+			t.Fatalf("zone list must target the template xpath, got: %s", joined)
+		}
+	})
+}
+
+func TestPushRequiresPanorama(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	res, _, err := pushHandler(d)(t.Context(), nil, PushInput{DeviceGroup: "dg1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("push on a firewall must be an error")
+	}
+	if !strings.Contains(textContent(t, res), "requires a Panorama connection") {
+		t.Fatalf("wrong rejection: %s", textContent(t, res))
+	}
+	for _, req := range f.Requests() {
+		if req.Get("type") == "commit" {
+			t.Fatal("no commit-all may be sent on a firewall")
+		}
+	}
+}
+
+func TestPushRequiresDeviceGroup(t *testing.T) {
+	d, f := newTestDeps(t, "Panorama")
+	res, _, err := pushHandler(d)(t.Context(), nil, PushInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("push without a device group must be an error")
+	}
+	if !strings.Contains(textContent(t, res), "device_group is required") {
+		t.Fatalf("wrong rejection: %s", textContent(t, res))
+	}
+	for _, req := range f.Requests() {
+		if req.Get("type") == "commit" {
+			t.Fatal("no commit-all may be sent without a device group")
+		}
+	}
+}
+
+func TestPushCommitAll(t *testing.T) {
+	d, f := newTestDeps(t, "Panorama", pushRoute(), jobRoute(jobFinBody))
+	res, _, err := pushHandler(d)(t.Context(), nil, PushInput{DeviceGroup: "dg1", Description: "push it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("push failed: %s", textContent(t, res))
+	}
+	if !strings.Contains(textContent(t, res), "FIN") {
+		t.Fatalf("missing job status: %s", textContent(t, res))
+	}
+	assertRequestSent(t, f, func(v url.Values) bool {
+		return v.Get("type") == "commit" && v.Get("action") == "all" && strings.Contains(v.Get("cmd"), "dg1")
+	}, "commit-all request for the device group not recorded")
+}
+
+func TestPushHoldsWriteLock(t *testing.T) {
+	d, f := newTestDeps(t, "Panorama", pushRoute(), jobRoute(jobFinBody))
+	assertHoldsWriteLock(t, d, f, func() (*mcp.CallToolResult, any, error) {
+		return pushHandler(d)(t.Context(), nil, PushInput{DeviceGroup: "dg1"})
+	})
+}
+
+// deviceGroupListBody carries a device group with a description and a
+// reference-templates member; pango unmarshals <reference-templates><member>
+// into devicegroup.Entry.Templates.
+const deviceGroupListBody = `<response status="success"><result>` +
+	`<entry name="dg1"><description>border</description>` +
+	`<reference-templates><member>edge-template</member></reference-templates></entry>` +
+	`</result></response>`
+
+func TestDeviceGroupList(t *testing.T) {
+	d, _ := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: deviceGroupListBody})
+	res, _, err := deviceGroupListHandler(d)(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("device group list failed: %s", textContent(t, res))
+	}
+	body := textContent(t, res)
+	if !strings.Contains(body, "dg1") || !strings.Contains(body, "border") || !strings.Contains(body, "edge-template") {
+		t.Fatalf("summary missing name, description or templates: %s", body)
+	}
+
+	// A Panorama-level list rejects any location scoping in the input rather than
+	// silently ignoring it.
+	res, _, err = deviceGroupListHandler(d)(t.Context(), nil, ListInput{Location: LocationInput{Vsys: "vsys1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("device group list must reject a location input")
+	}
+	if !strings.Contains(textContent(t, res), "location does not apply") {
+		t.Fatalf("wrong rejection: %s", textContent(t, res))
+	}
+}
+
+// templateListBody carries one template with a description.
+const templateListBody = `<response status="success"><result>` +
+	`<entry name="edge-template"><description>edge sites</description></entry>` +
+	`</result></response>`
+
+func TestTemplateList(t *testing.T) {
+	d, _ := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: templateListBody})
+	res, _, err := templateListHandler(d)(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("template list failed: %s", textContent(t, res))
+	}
+	body := textContent(t, res)
+	if !strings.Contains(body, "edge-template") || !strings.Contains(body, "edge sites") {
+		t.Fatalf("summary missing name or description: %s", body)
+	}
+}
+
+func TestRegisterDeviceToolsGates(t *testing.T) {
+	t.Run("firewall write mode", func(t *testing.T) {
+		d, _ := newTestDeps(t, "PA-VM")
+		s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+		RegisterDeviceTools(s, d)
+		names := serverToolNames(t, s)
+		for _, n := range []string{
+			"panos_system_info", "panos_job_status", "panos_config_diff", "panos_zone_list",
+			"panos_commit", "panos_validate", "panos_revert",
+		} {
+			if !names[n] {
+				t.Errorf("firewall write: %q must be registered", n)
+			}
+		}
+		for _, n := range []string{"panos_device_group_list", "panos_template_list", "panos_push"} {
+			if names[n] {
+				t.Errorf("firewall write: %q must NOT be registered", n)
+			}
+		}
+	})
+
+	t.Run("panorama read-only mode", func(t *testing.T) {
+		d, _ := newTestDeps(t, "Panorama")
+		d.ReadOnly = true
+		s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+		RegisterDeviceTools(s, d)
+		names := serverToolNames(t, s)
+		for _, n := range []string{"panos_device_group_list", "panos_template_list", "panos_zone_list"} {
+			if !names[n] {
+				t.Errorf("panorama read-only: %q must be registered", n)
+			}
+		}
+		for _, n := range []string{"panos_commit", "panos_validate", "panos_revert", "panos_push"} {
+			if names[n] {
+				t.Errorf("panorama read-only: %q must NOT be registered", n)
+			}
+		}
 	})
 }
