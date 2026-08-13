@@ -675,7 +675,7 @@ func TestBuildNatRuleEntry(t *testing.T) {
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.1"},
 		Service: "http-svc", NatType: "ipv4", ToInterface: "ethernet1/2",
 		SNATAddresses: []string{"snat-pool"},
-		DNATAddress:   "10.0.0.80", DNATPort: 8080,
+		DNATAddress:   "10.0.0.80", DNATPort: ptr(int64(8080)),
 		Description: "d", Tags: []string{"t"}, Disabled: ptr(true),
 	})
 	if err != nil {
@@ -727,9 +727,10 @@ func TestBuildNatRuleEntryRejects(t *testing.T) {
 	}{
 		{"no name", "name", NatRuleInput{}},
 		{"snat interface plus addresses", "not both", NatRuleInput{Name: "n", SNATInterface: "ethernet1/1", SNATAddresses: []string{"pool"}}},
-		{"dnat port without address", "requires dnat_address", NatRuleInput{Name: "n", DNATPort: 8080}},
-		{"dnat port out of range", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: 70000}},
-		{"dnat port negative", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: -1}},
+		{"dnat port without address", "requires dnat_address", NatRuleInput{Name: "n", DNATPort: ptr(int64(8080))}},
+		{"dnat port out of range", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: ptr(int64(70000))}},
+		{"dnat port negative", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: ptr(int64(-1))}},
+		{"dnat port zero", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: ptr(int64(0))}},
 		{"bad nat_type", "nat_type", NatRuleInput{Name: "n", NatType: "ipv5"}},
 	} {
 		_, err := buildNatRuleEntry(c.in)
@@ -783,7 +784,7 @@ func TestOverlayNatRuleFields(t *testing.T) {
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.0/24"},
 		Service: "http-svc", NatType: "nat64", ToInterface: "ethernet1/3",
 		SNATAddresses: []string{"snat-pool"},
-		DNATAddress:   "10.0.0.90", DNATPort: 9090,
+		DNATAddress:   "10.0.0.90", DNATPort: ptr(int64(9090)),
 		Description: "new", Tags: []string{}, Disabled: ptr(true),
 	})
 	if err != nil {
@@ -825,6 +826,50 @@ func TestOverlayNatRuleFields(t *testing.T) {
 	e = base()
 	if err := overlayNatRule(e, NatRuleInput{Name: "n1", SNATInterface: "ethernet1/1", SNATAddresses: []string{"p"}}); err == nil {
 		t.Fatal("snat_interface plus snat_addresses must be rejected on update too")
+	}
+}
+
+// TestOverlayNatRulePreservesDNATPort pins the issue #26 fix at the overlay
+// level: an update changing only dnat_address must MERGE into the existing
+// destination-translation, keeping the translated port (and any dns-rewrite)
+// rather than rebuilding the subtree and silently widening the port-forward to
+// a full-IP DNAT. A provided dnat_port still replaces the existing one.
+func TestOverlayNatRulePreservesDNATPort(t *testing.T) {
+	base := func() *nat.Entry {
+		return &nat.Entry{
+			Name: "n1",
+			DestinationTranslation: &nat.DestinationTranslation{
+				TranslatedAddress: ptr("10.0.0.80"),
+				TranslatedPort:    ptr(int64(8080)),
+				DnsRewrite:        &nat.DestinationTranslationDnsRewrite{Direction: ptr("reverse")},
+			},
+		}
+	}
+
+	// dnat_address alone: address changes, the existing port and dns-rewrite
+	// survive the merge.
+	e := base()
+	if err := overlayNatRule(e, NatRuleInput{Name: "n1", DNATAddress: "10.0.0.99"}); err != nil {
+		t.Fatal(err)
+	}
+	dt := e.DestinationTranslation
+	if dt == nil || strVal(dt.TranslatedAddress) != "10.0.0.99" {
+		t.Fatalf("dnat_address must be overwritten: %+v", dt)
+	}
+	if dt.TranslatedPort == nil || *dt.TranslatedPort != 8080 {
+		t.Fatalf("omitted dnat_port must keep the existing translated port 8080: %+v", dt)
+	}
+	if dt.DnsRewrite == nil || strVal(dt.DnsRewrite.Direction) != "reverse" {
+		t.Fatalf("merge must preserve an existing dns-rewrite: %+v", dt)
+	}
+
+	// A provided dnat_port replaces the existing one.
+	e = base()
+	if err := overlayNatRule(e, NatRuleInput{Name: "n1", DNATAddress: "10.0.0.99", DNATPort: ptr(int64(9090))}); err != nil {
+		t.Fatal(err)
+	}
+	if dt := e.DestinationTranslation; dt.TranslatedPort == nil || *dt.TranslatedPort != 9090 {
+		t.Fatalf("provided dnat_port must replace the existing port: %+v", dt)
 	}
 }
 
@@ -934,7 +979,7 @@ func TestNatRuleCreateTranslations(t *testing.T) {
 
 	t.Run("dnat address and port", func(t *testing.T) {
 		do, f := create(t, "in-dnat")
-		res := do(NatRuleInput{Name: "in-dnat", From: []string{"untrust"}, To: []string{"untrust"}, DNATAddress: "10.0.0.80", DNATPort: 8080})
+		res := do(NatRuleInput{Name: "in-dnat", From: []string{"untrust"}, To: []string{"untrust"}, DNATAddress: "10.0.0.80", DNATPort: ptr(int64(8080))})
 		if res.IsError {
 			t.Fatalf("dnat create failed: %s", textContent(t, res))
 		}
@@ -1138,6 +1183,37 @@ func TestNatRuleUpdate(t *testing.T) {
 	if !strings.Contains(el, "<interface>ethernet1/1</interface>") ||
 		!strings.Contains(el, "<translated-address>10.0.0.80</translated-address>") {
 		t.Fatalf("edit element must preserve the existing translations: %s", el)
+	}
+}
+
+// TestNatRuleUpdatePreservesDNATPort is the end-to-end proof of the issue #26
+// fix: updating only dnat_address must emit an edit carrying BOTH the new
+// translated-address and the rule's existing translated-port, not a
+// port-stripped full-IP DNAT. The canned entry forwards port 8080 to 10.0.0.80.
+func TestNatRuleUpdatePreservesDNATPort(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: natRuleGetBody("out-snat")},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	h := updateHandler[nat.Location, nat.Entry, NatRuleInput](d, "panos_nat_rule_update",
+		newNatRuleService(d), natResolve(d),
+		func(in NatRuleInput) LocationInput { return in.Location },
+		func(in NatRuleInput) string { return in.Name }, overlayNatRule)
+
+	// Change only the translated address; the port must ride along unchanged.
+	res, _, err := h(t.Context(), nil, NatRuleInput{Name: "out-snat", DNATAddress: "10.0.0.99"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<translated-address>10.0.0.99</translated-address>") {
+		t.Fatalf("edit must carry the new dnat address: %s", el)
+	}
+	if !strings.Contains(el, "<translated-port>8080</translated-port>") {
+		t.Fatalf("edit must preserve the existing translated port 8080, not widen to full-IP DNAT: %s", el)
 	}
 }
 

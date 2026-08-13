@@ -446,7 +446,8 @@ func newNatRuleService(d *Deps) nameFixAdapter[nat.Location, nat.Entry] {
 // egress interface address or an address pool (both dynamic-ip-and-port),
 // and static destination NAT. Other translation forms (dynamic-ip, static-ip,
 // dynamic destination translation, DNS rewrite) stay SDK-only until a task
-// needs them, and clearing an existing translation is not expressible here.
+// needs them, and clearing an existing translation, or just its translated
+// port, is not expressible here.
 type NatRuleInput struct {
 	Name          string        `json:"name" jsonschema:"Rule name"`
 	Location      LocationInput `json:"location,omitempty"`
@@ -458,7 +459,7 @@ type NatRuleInput struct {
 	SNATInterface string        `json:"snat_interface,omitempty" jsonschema:"Source NAT to this egress interface address (dynamic IP and port); mutually exclusive with snat_addresses"`
 	SNATAddresses []string      `json:"snat_addresses,omitempty" jsonschema:"Source NAT to this translated address pool (dynamic IP and port); mutually exclusive with snat_interface"`
 	DNATAddress   string        `json:"dnat_address,omitempty" jsonschema:"Destination NAT translated address"`
-	DNATPort      int64         `json:"dnat_port,omitempty" jsonschema:"Destination NAT translated port (requires dnat_address)"`
+	DNATPort      *int64        `json:"dnat_port,omitempty" jsonschema:"Destination NAT translated port, 1-65535 (requires dnat_address); on update an omitted port keeps the rule's existing translated port"`
 	NatType       string        `json:"nat_type,omitempty" jsonschema:"ipv4, nat64 or nptv6 (device default: ipv4)"`
 	ToInterface   string        `json:"to_interface,omitempty" jsonschema:"Egress interface constraint for the destination zone"`
 	Description   string        `json:"description,omitempty"`
@@ -477,12 +478,19 @@ var validNatTypes = map[string]bool{"ipv4": true, "nat64": true, "nptv6": true}
 const natTypeList = "ipv4, nat64, nptv6"
 
 // applyNatTranslations validates the flat translation fields and applies them
-// onto the entry. A provided SNAT or DNAT input replaces that entire
-// translation subtree; unset inputs leave the existing subtree untouched.
-// WARNING: because a provided dnat_address replaces the whole
-// destination-translation, updating the address while omitting dnat_port drops
-// an existing translated port, widening a port-forward into a full-IP DNAT.
-// See issue tracking whether update should merge (preserve the port) instead.
+// onto the entry. A provided SNAT input REPLACES the whole source-translation
+// subtree; a provided DNAT input MERGES into any existing destination-
+// translation, and unset inputs leave the existing subtree untouched. The
+// asymmetry is deliberate. For DNAT the translated address is overwritten and
+// the translated port is overwritten only when dnat_port is provided, so an
+// existing port (or dns-rewrite) the caller did not mention is preserved:
+// replacing the whole subtree on an address-only update would silently drop the
+// port, widening a port-forward into a full-IP DNAT. Clearing a port is not
+// expressible here; delete and recreate the rule. On create the entry carries
+// no destination-translation, so the merge starts fresh and dnat_address alone
+// yields address-only DNAT. For SNAT the provided form IS the entire new
+// translation (snat_interface and snat_addresses are mutually exclusive), so a
+// merge would be incoherent and whole-subtree replace is correct.
 // snat_interface and snat_addresses are mutually exclusive: dynamic-ip-and-port
 // source NAT translates via EITHER the interface address OR a translated
 // address pool. pango models both as independent optional fields and does not
@@ -513,16 +521,24 @@ func applyNatTranslations(e *nat.Entry, in NatRuleInput) error {
 			},
 		}
 	}
-	if in.DNATPort != 0 && in.DNATAddress == "" {
+	if in.DNATPort != nil && in.DNATAddress == "" {
 		return errors.New("dnat_port requires dnat_address")
 	}
-	if in.DNATPort != 0 && (in.DNATPort < 1 || in.DNATPort > 65535) {
-		return fmt.Errorf("dnat_port must be between 1 and 65535, got %d", in.DNATPort)
+	if in.DNATPort != nil && (*in.DNATPort < 1 || *in.DNATPort > 65535) {
+		return fmt.Errorf("dnat_port must be between 1 and 65535, got %d", *in.DNATPort)
 	}
 	if in.DNATAddress != "" {
-		dt := &nat.DestinationTranslation{TranslatedAddress: ptr(in.DNATAddress)}
-		if in.DNATPort != 0 {
-			dt.TranslatedPort = ptr(in.DNATPort)
+		// Merge into any existing destination-translation instead of rebuilding
+		// it: overwrite the address, overwrite the port only when provided, and
+		// leave an unmentioned port (or dns-rewrite) in place. On create the
+		// entry has no subtree, so this starts fresh. See the doc comment above.
+		dt := e.DestinationTranslation
+		if dt == nil {
+			dt = &nat.DestinationTranslation{}
+		}
+		dt.TranslatedAddress = ptr(in.DNATAddress)
+		if in.DNATPort != nil {
+			dt.TranslatedPort = ptr(*in.DNATPort)
 		}
 		e.DestinationTranslation = dt
 	}
@@ -578,9 +594,10 @@ func buildNatRuleEntry(in NatRuleInput) (*nat.Entry, error) {
 // The four match lists replace only when non-empty (a rule cannot have zero
 // zones/addresses; a reset is expressed as ["any"], and both an omitted and
 // an explicitly empty list leave the field unchanged). tags replace when
-// non-nil, so an empty list clears them. Translation inputs replace their
-// whole subtree via applyNatTranslations; position/relative_to are ignored
-// here, the move tool owns placement.
+// non-nil, so an empty list clears them. SNAT inputs replace their whole
+// subtree and DNAT inputs merge into it, via applyNatTranslations (so an
+// address-only DNAT update keeps the existing translated port);
+// position/relative_to are ignored here, the move tool owns placement.
 //
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayNatRule(e *nat.Entry, in NatRuleInput) error {
@@ -680,7 +697,7 @@ func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
 	}, natRuleCreateHandler(d, raw))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_nat_rule_update",
-		Description: "Update a NAT rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field), and a provided snat_/dnat_ field replaces that WHOLE translation (clearing a translation is not supported here). CAUTION: changing dnat_address while omitting dnat_port drops the existing translated port, widening a port-forward to a full-IP DNAT, so re-send dnat_port when you change dnat_address. position is ignored; use panos_nat_rule_move. Candidate config only.",
+		Description: "Update a NAT rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided snat_ field replaces the WHOLE source translation; a provided dnat_address MERGES into the existing destination translation, so omitting dnat_port keeps the rule's existing translated port (clearing a translation, or just its port, is not supported here: delete and recreate). position is ignored; use panos_nat_rule_move. Candidate config only.",
 		Annotations: updateTool("Update NAT rule"),
 	}, updateHandler[nat.Location, nat.Entry, NatRuleInput](d, "panos_nat_rule_update", svc, resolve, loc,
 		func(in NatRuleInput) string { return in.Name }, overlayNatRule))
