@@ -374,14 +374,21 @@ func assertHoldsWriteLock(t *testing.T, d *Deps, f *fakeAPI, invoke func() (*mcp
 		defer close(done)
 		res, _, err = invoke()
 	}()
-	time.Sleep(50 * time.Millisecond)
-	select {
-	case <-done:
-		t.Fatal("handler completed while the write lock was held")
-	default:
-	}
-	if n := len(f.Requests()); n != base {
-		t.Fatalf("handler sent %d request(s) while the write lock was held", n-base)
+	// While the lock is held the handler must neither finish nor reach the
+	// device. Poll a bounded window instead of sleeping once, so a
+	// lock-skipping handler is caught whenever its goroutine is scheduled,
+	// even on a loaded runner. A correct handler stays blocked for every tick,
+	// so this can never fail for the right implementation (no false RED).
+	for range 20 {
+		select {
+		case <-done:
+			t.Fatal("handler completed while the write lock was held")
+		default:
+		}
+		if n := len(f.Requests()); n != base {
+			t.Fatalf("handler sent %d request(s) while the write lock was held", n-base)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	unlock()
 	<-done
