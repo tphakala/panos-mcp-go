@@ -154,7 +154,7 @@ func overlayAddress(e *address.Entry, in AddressInput) error {
 // returned map. Centralising these keys also keeps the shared literals under
 // goconst's occurrence threshold as more resources are added.
 func summaryBase(name string, description *string, tags []string) map[string]any {
-	return map[string]any{"name": name, "description": strVal(description), "tags": tags}
+	return map[string]any{"name": name, descriptionKey: strVal(description), "tags": tags}
 }
 
 // addressSummary reduces an entry to the list view fields.
@@ -732,12 +732,22 @@ func newTagService(d *Deps) nameFixAdapter[admintag.Location, admintag.Entry] {
 	}
 }
 
-// tagNameKey is tagSummary's "name" map key. goconst counts map
-// composite-literal keys: summaryBase and serviceGroupSummary already hold
-// two production "name" map keys, and a third literal here would trip
-// min-occurrences=3, reported at summaryBase's line (measured with
-// golangci-lint 2.12.2 and this repo's config). The const keeps the literal
-// count at two without touching the sibling summaries.
+// descriptionKey is the "description" map key shared by the summary helpers.
+// goconst counts map composite-literal keys, and three production summaries
+// (summaryBase here plus deviceGroupSummary and templateSummary in
+// device_tools.go) emit it, which trips min-occurrences=3 (measured with
+// golangci-lint 2.12.2 and this repo's config). The const collapses those to a
+// single literal.
+const descriptionKey = "description"
+
+// tagNameKey is the "name" map key shared by tagSummary and the device
+// summaries (deviceGroupSummary, templateSummary in device_tools.go). goconst
+// counts map composite-literal keys: summaryBase and serviceGroupSummary
+// already hold two production "name" literals, so any further literal would
+// trip min-occurrences=3 against this existing const (measured with
+// golangci-lint 2.12.2 and this repo's config). Routing the other summaries
+// through the const keeps the literal count at two without touching those two
+// siblings.
 const tagNameKey = "name"
 
 // tagSummary reduces an entry to the list view fields. Tags have no

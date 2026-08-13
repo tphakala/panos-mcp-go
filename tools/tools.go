@@ -426,3 +426,15 @@ func updateHandler[L, E, In any](
 		return res, v, nil
 	}
 }
+
+// RegisterAll registers every tool for the connected device type.
+func RegisterAll(s *mcp.Server, d *Deps) {
+	RegisterAddressTools(s, d)
+	RegisterAddressGroupTools(s, d)
+	RegisterServiceTools(s, d)
+	RegisterServiceGroupTools(s, d)
+	RegisterTagTools(s, d)
+	RegisterSecurityRuleTools(s, d)
+	RegisterNatRuleTools(s, d)
+	RegisterDeviceTools(s, d)
+}

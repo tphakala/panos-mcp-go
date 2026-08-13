@@ -11,6 +11,34 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// TestRegisterAllToolCounts pins the total tool surface RegisterAll exposes per
+// device type and write mode. The counts fold together every Register* gate:
+// the object and policy read/write split, the Panorama-only device group and
+// template lists, and the Panorama-only push. A miswired gate (a dropped
+// d.ReadOnly or d.IsPanorama guard, or a missing Register* call in RegisterAll)
+// shifts one of these totals.
+func TestRegisterAllToolCounts(t *testing.T) {
+	cases := []struct {
+		model    string
+		readOnly bool
+		want     int
+	}{
+		{"PA-VM", false, 44},
+		{"Panorama", false, 47},
+		{"PA-VM", true, 18},
+		{"Panorama", true, 20},
+	}
+	for _, c := range cases {
+		d, _ := newTestDeps(t, c.model)
+		d.ReadOnly = c.readOnly
+		s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+		RegisterAll(s, d)
+		if got := len(serverToolNames(t, s)); got != c.want {
+			t.Errorf("%s readOnly=%v: got %d tools, want %d", c.model, c.readOnly, got, c.want)
+		}
+	}
+}
+
 func TestClampList(t *testing.T) {
 	cases := []struct{ limit, offset, n, lo, hi int }{
 		{0, 0, 10, 0, 10},   // default limit covers all

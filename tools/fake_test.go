@@ -254,3 +254,41 @@ func textContent(t *testing.T, res *mcp.CallToolResult) string {
 	}
 	return tc.Text
 }
+
+// serverToolNames connects an in-memory client session to srv and returns the
+// set of tool names srv exposes. Shared by all registration tests.
+func serverToolNames(t *testing.T, srv *mcp.Server) map[string]bool {
+	t.Helper()
+	ctx := t.Context()
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
+
+	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := cli.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
+
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make(map[string]bool, len(res.Tools))
+	for _, tl := range res.Tools {
+		names[tl.Name] = true
+	}
+	return names
+}
