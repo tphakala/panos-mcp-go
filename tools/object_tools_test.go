@@ -190,22 +190,7 @@ func TestAddressUpdate(t *testing.T) {
 	// The edit must reach the API as a multi-config carrying the new value and the
 	// entry xpath (default vsys). A client-side xpath rejection (the raw-name bug
 	// the adapter fixes for Update) would never record a multi-config request.
-	var sawEdit bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "multi-config" {
-			sawEdit = true
-			el := req.Get("element")
-			if !strings.Contains(el, "10.9.9.9/32") {
-				t.Fatalf("edit element missing new value: %s", el)
-			}
-			if !strings.Contains(el, "vsys1") || !strings.Contains(el, "web-1") {
-				t.Fatalf("edit element missing entry xpath: %s", el)
-			}
-		}
-	}
-	if !sawEdit {
-		t.Fatal("update never issued a multi-config edit; adapter must wrap the name into an entry xpath")
-	}
+	assertContainsAll(t, multiConfigElement(t, f), "10.9.9.9/32", "vsys1", "web-1")
 }
 
 // TestAddressUpdateNoopSpecMatches pins pango's UpdateWithXpath SpecMatches
@@ -288,15 +273,8 @@ func TestAddressDelete(t *testing.T) {
 	}
 	// Delete must reach the API with the entry xpath carrying the name and the
 	// default vsys, proving addressParts wires the location end-to-end.
-	var sawDelete bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "multi-config" && strings.Contains(req.Get("element"), "web-1") &&
-			strings.Contains(req.Get("element"), "vsys1") {
-			sawDelete = true
-		}
-	}
-	if !sawDelete {
-		t.Fatal("delete never reached the API with the entry xpath")
+	if el := multiConfigElement(t, f); !strings.Contains(el, "web-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("delete did not reach the API with the entry xpath: %s", el)
 	}
 }
 
@@ -775,18 +753,27 @@ func TestAddressGroupCreateValidation(t *testing.T) {
 		newAddressGroupService(d), addressGroupResolve(d),
 		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry)
 
-	for name, in := range map[string]AddressGroupInput{
-		"no name":        {Static: []string{"web-1"}},
-		"neither":        {Name: "g"},
-		"both":           {Name: "g", Static: []string{"web-1"}, DynamicFilter: "'prod'"},
-		"dg on firewall": {Name: "g", Static: []string{"web-1"}, Location: LocationInput{DeviceGroup: "dg1"}},
-	} {
-		res, _, err := h(t.Context(), nil, in)
+	// Assert each rejection's distinct message, not merely IsError, so the name,
+	// XOR and location guards cannot pass on one another's error.
+	bad := []struct {
+		name, wantErr string
+		in            AddressGroupInput
+	}{
+		{"no name", "name is required", AddressGroupInput{Static: []string{"web-1"}}},
+		{"neither", "exactly one of static, dynamic_filter", AddressGroupInput{Name: "g"}},
+		{"both", "exactly one of static, dynamic_filter", AddressGroupInput{Name: "g", Static: []string{"web-1"}, DynamicFilter: "'prod'"}},
+		{"dg on firewall", "device_group requires a Panorama connection", AddressGroupInput{Name: "g", Static: []string{"web-1"}, Location: LocationInput{DeviceGroup: "dg1"}}},
+	}
+	for _, c := range bad {
+		res, _, err := h(t.Context(), nil, c.in)
 		if err != nil {
-			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+			t.Fatalf("%s: handler must not return Go error: %v", c.name, err)
 		}
 		if !res.IsError {
-			t.Fatalf("%s: expected IsError", name)
+			t.Fatalf("%s: expected IsError", c.name)
+		}
+		if body := textContent(t, res); !strings.Contains(body, c.wantErr) {
+			t.Fatalf("%s: error %q must mention %q", c.name, body, c.wantErr)
 		}
 	}
 	// Validation must reject before any API call: only the bootstrap system-info
@@ -891,6 +878,31 @@ func TestAddressGroupUpdateSwitchToDynamic(t *testing.T) {
 	}
 	if strings.Contains(el, "<member>web-1</member>") {
 		t.Fatalf("switching to dynamic must clear static members: %s", el)
+	}
+}
+
+// TestAddressGroupUpdateNoopSpecMatches mirrors TestAddressUpdateNoopSpecMatches
+// for the address group resource: an overlay that changes nothing leaves the
+// entry byte-identical to the one read back, so pango's UpdateWithXpath
+// short-circuits on SpecMatches and issues no edit. Only a get route is
+// registered, so an edit that did fire would trip the fake's fail-loud on the
+// unmatched multi-config.
+func TestAddressGroupUpdateNoopSpecMatches(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody})
+	// Only the name is set, and it matches the entry read back, so the overlay
+	// leaves the spec unchanged.
+	res, _, err := newAddressGroupUpdateHandler(d)(t.Context(), nil, AddressGroupInput{Name: "grp-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// An identical overlay must issue no config write at all.
+	for _, req := range f.Requests() {
+		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
+			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
+		}
 	}
 }
 
@@ -1010,6 +1022,70 @@ func TestAddressGroupPanoramaLocations(t *testing.T) {
 			t.Fatalf("device_group get did not target the device group xpath, got: %s", joined)
 		}
 	})
+}
+
+// TestAddressGroupGetUpdateViaRegisteredTools drives panos_address_group_get
+// and panos_address_group_update through a registered MCP server over the
+// in-memory transport. It is the proof of the adapter wiring: the raw pango
+// service also satisfies crudService, so wiring address_group.NewService
+// directly would COMPILE and only fail here, where the calls must actually
+// reach the fake API. A raw-name wiring is rejected client-side and records no
+// request.
+func TestAddressGroupGetUpdateViaRegisteredTools(t *testing.T) {
+	ctx := t.Context()
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterAddressGroupTools(srv, d)
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
+	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := cli.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
+
+	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_address_group_get", Arguments: map[string]any{"name": "grp-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getRes.IsError {
+		t.Fatalf("registered get failed: %s", textContent(t, getRes))
+	}
+	// The registered get must reach the fake API wrapped exactly once and target
+	// the address-group endpoint; a raw-service wiring (which also satisfies
+	// crudService) would compile but record no such request.
+	assertSingleWrappedGet(t, f, "entry[@name='grp-1']")
+	if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "address-group") {
+		t.Fatalf("registered get did not target the address-group endpoint: %s", joined)
+	}
+
+	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_address_group_update", Arguments: map[string]any{"name": "grp-1", "static": []string{"app-1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updRes.IsError {
+		t.Fatalf("registered update failed: %s", textContent(t, updRes))
+	}
+	if el := multiConfigElement(t, f); !strings.Contains(el, "app-1") || !strings.Contains(el, "grp-1") || !strings.Contains(el, "vsys1") {
+		t.Fatalf("registered update did not reach the API with the new member: %s", el)
+	}
 }
 
 func TestRegisterAddressGroupToolsReadOnly(t *testing.T) {
@@ -1435,6 +1511,30 @@ func TestServiceUpdateRequiresProtocolAndPort(t *testing.T) {
 	for _, req := range f.Requests() {
 		if req.Get("action") == "multi-config" {
 			t.Fatal("rejected update must not issue a multi-config edit")
+		}
+	}
+}
+
+// TestServiceUpdateNoopSpecMatches mirrors TestAddressUpdateNoopSpecMatches for
+// the service resource: an overlay that changes nothing leaves the entry
+// byte-identical to the one read back, so pango's UpdateWithXpath short-circuits
+// on SpecMatches and issues no edit. Only a get route is registered, so an edit
+// that did fire would trip the fake's fail-loud on the unmatched multi-config.
+func TestServiceUpdateNoopSpecMatches(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: serviceCurrentBody})
+	// Only the name is set, and it matches the entry read back, so the overlay
+	// leaves the spec unchanged.
+	res, _, err := newServiceUpdateHandler(d)(t.Context(), nil, ServiceInput{Name: "svc-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// An identical overlay must issue no config write at all.
+	for _, req := range f.Requests() {
+		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
+			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
 		}
 	}
 }
@@ -1919,6 +2019,31 @@ func TestServiceGroupUpdate(t *testing.T) {
 	}
 }
 
+// TestServiceGroupUpdateNoopSpecMatches mirrors TestAddressUpdateNoopSpecMatches
+// for the service group resource: an overlay that changes nothing leaves the
+// entry byte-identical to the one read back, so pango's UpdateWithXpath
+// short-circuits on SpecMatches and issues no edit. Only a get route is
+// registered, so an edit that did fire would trip the fake's fail-loud on the
+// unmatched multi-config.
+func TestServiceGroupUpdateNoopSpecMatches(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: serviceGroupCurrentBody})
+	// Only the name is set, and it matches the entry read back, so the overlay
+	// leaves the spec unchanged.
+	res, _, err := newServiceGroupUpdateHandler(d)(t.Context(), nil, ServiceGroupInput{Name: "grp-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// An identical overlay must issue no config write at all.
+	for _, req := range f.Requests() {
+		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
+			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
+		}
+	}
+}
+
 func TestServiceGroupUpdateAPIError(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>edit rejected</line></msg></response>`
 	d, _ := newTestDeps(t, "PA-VM",
@@ -2149,8 +2274,14 @@ func TestBuildTagEntry(t *testing.T) {
 
 // TestBuildTagEntryRejects pins that a create entry requires a name.
 func TestBuildTagEntryRejects(t *testing.T) {
-	if _, err := buildTagEntry(TagInput{Color: "color13"}); err == nil {
+	_, err := buildTagEntry(TagInput{Color: "color13"})
+	if err == nil {
 		t.Fatal("expected error for missing name")
+	}
+	// Assert the message, not merely that an error occurred, so the name guard
+	// cannot pass on a future unrelated rejection.
+	if !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("error must name the missing field, got: %v", err)
 	}
 }
 
@@ -2258,6 +2389,9 @@ func TestTagCreateBuildsEntry(t *testing.T) {
 	if !sawSet {
 		t.Fatal("no config set request recorded")
 	}
+	// pango's Create reads the object back after the set; pin that read-back
+	// actually reached the API.
+	assertReadBackGet(t, f)
 }
 
 func TestTagCreateValidation(t *testing.T) {
@@ -2266,16 +2400,25 @@ func TestTagCreateValidation(t *testing.T) {
 		newTagService(d), tagResolve(d),
 		func(in TagInput) LocationInput { return in.Location }, buildTagEntry)
 
-	for name, in := range map[string]TagInput{
-		"no name":        {Color: "color13"},
-		"dg on firewall": {Name: "t", Location: LocationInput{DeviceGroup: "dg1"}},
-	} {
-		res, _, err := h(t.Context(), nil, in)
+	// Assert each rejection's distinct message, not merely IsError, so the name
+	// and location guards cannot pass on one another's error.
+	bad := []struct {
+		name, wantErr string
+		in            TagInput
+	}{
+		{"no name", "name is required", TagInput{Color: "color13"}},
+		{"dg on firewall", "device_group requires a Panorama connection", TagInput{Name: "t", Location: LocationInput{DeviceGroup: "dg1"}}},
+	}
+	for _, c := range bad {
+		res, _, err := h(t.Context(), nil, c.in)
 		if err != nil {
-			t.Fatalf("%s: handler must not return Go error: %v", name, err)
+			t.Fatalf("%s: handler must not return Go error: %v", c.name, err)
 		}
 		if !res.IsError {
-			t.Fatalf("%s: expected IsError", name)
+			t.Fatalf("%s: expected IsError", c.name)
+		}
+		if body := textContent(t, res); !strings.Contains(body, c.wantErr) {
+			t.Fatalf("%s: error %q must mention %q", c.name, body, c.wantErr)
 		}
 	}
 	// Validation must reject before any API call: only the bootstrap system-info
@@ -2342,6 +2485,30 @@ func TestTagUpdate(t *testing.T) {
 	}
 	if !strings.Contains(el, "t-1") || !strings.Contains(el, "vsys1") {
 		t.Fatalf("edit element missing entry xpath: %s", el)
+	}
+}
+
+// TestTagUpdateNoopSpecMatches mirrors TestAddressUpdateNoopSpecMatches for the
+// tag resource: an overlay that changes nothing leaves the entry byte-identical
+// to the one read back, so pango's UpdateWithXpath short-circuits on SpecMatches
+// and issues no edit. Only a get route is registered, so an edit that did fire
+// would trip the fake's fail-loud on the unmatched multi-config.
+func TestTagUpdateNoopSpecMatches(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: tagCurrentBody})
+	// Only the name is set, and it matches the entry read back, so the overlay
+	// leaves the spec unchanged.
+	res, _, err := newTagUpdateHandler(d)(t.Context(), nil, TagInput{Name: "t-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	// An identical overlay must issue no config write at all.
+	for _, req := range f.Requests() {
+		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
+			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
+		}
 	}
 }
 

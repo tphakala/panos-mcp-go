@@ -220,6 +220,16 @@ type ZoneListInput struct {
 	Filter   string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
 }
 
+// PanoramaListInput is ListInput without a location: device groups and
+// templates each live at exactly one Panorama-level location, so exposing a
+// location parameter would advertise an argument panoramaFixedResolve always
+// rejects.
+type PanoramaListInput struct {
+	Limit  int    `json:"limit,omitempty" jsonschema:"Max results (default 50, max 200)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Skip this many results"`
+	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
+}
+
 // zoneListHandler lists zones: vsys scope on a firewall, template scope on
 // Panorama. Read-only; zone writes are out of scope.
 func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneListInput) (*mcp.CallToolResult, any, error) {
@@ -315,32 +325,48 @@ func panoramaFixedResolve[L any](tool string, loc L) func(LocationInput) (L, err
 
 // deviceGroupSummary reduces a device group entry to the list view fields.
 func deviceGroupSummary(e *devicegroup.Entry) any {
-	return map[string]any{tagNameKey: e.Name, descriptionKey: strVal(e.Description), "templates": e.Templates}
+	m := nameDescription(e.Name, e.Description)
+	m["templates"] = e.Templates
+	return m
 }
 
 // deviceGroupListHandler lists Panorama device groups via the shared
-// listHandler at the fixed Panorama location.
-func deviceGroupListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
-	return listHandler[devicegroup.Location, devicegroup.Entry](
+// listHandler at the fixed Panorama location. The public handler takes
+// PanoramaListInput (no location) so the tool schema does not advertise a
+// location parameter panoramaFixedResolve always rejects; the inner listHandler
+// still resolves through panoramaFixedResolve, which supplies the fixed
+// Panorama location.
+func deviceGroupListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, PanoramaListInput) (*mcp.CallToolResult, any, error) {
+	inner := listHandler[devicegroup.Location, devicegroup.Entry](
 		d, "panos_device_group_list", devicegroup.NewService(d.Client),
 		panoramaFixedResolve("panos_device_group_list",
 			devicegroup.Location{Panorama: &devicegroup.PanoramaLocation{PanoramaDevice: defaultPanoramaDevice}}),
 		func(e *devicegroup.Entry) string { return e.Name }, deviceGroupSummary)
+	return func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaListInput) (*mcp.CallToolResult, any, error) {
+		return inner(ctx, req, ListInput{Limit: in.Limit, Offset: in.Offset, Filter: in.Filter})
+	}
 }
 
 // templateSummary reduces a template entry to the list view fields.
 func templateSummary(e *template.Entry) any {
-	return map[string]any{tagNameKey: e.Name, descriptionKey: strVal(e.Description)}
+	return nameDescription(e.Name, e.Description)
 }
 
 // templateListHandler lists Panorama templates (zone discovery for
 // panos_zone_list) via the shared listHandler at the fixed Panorama location.
-func templateListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
-	return listHandler[template.Location, template.Entry](
+// The public handler takes PanoramaListInput (no location) so the tool schema
+// does not advertise a location parameter panoramaFixedResolve always rejects;
+// the inner listHandler still resolves through panoramaFixedResolve, which
+// supplies the fixed Panorama location.
+func templateListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, PanoramaListInput) (*mcp.CallToolResult, any, error) {
+	inner := listHandler[template.Location, template.Entry](
 		d, "panos_template_list", template.NewService(d.Client),
 		panoramaFixedResolve("panos_template_list",
 			template.Location{Panorama: &template.PanoramaLocation{PanoramaDevice: defaultPanoramaDevice}}),
 		func(e *template.Entry) string { return e.Name }, templateSummary)
+	return func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaListInput) (*mcp.CallToolResult, any, error) {
+		return inner(ctx, req, ListInput{Limit: in.Limit, Offset: in.Offset, Filter: in.Filter})
+	}
 }
 
 // RegisterDeviceTools registers device ops tools, gating Panorama-only

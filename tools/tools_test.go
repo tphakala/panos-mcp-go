@@ -360,6 +360,8 @@ func errResolve(LocationInput) (fakeLoc, error) { return fakeLoc{}, fmt.Errorf("
 // TestHandlerErrorPaths pins that resolve failures, service failures, and an
 // overlay failure all become error results (IsError set) rather than a Go error
 // out of the handler, so the MCP layer reports them to the model as tool errors.
+//
+//nolint:gocyclo // a flat sequence of independent handler error-path checks (resolve, service, overlay across list/get/delete/create/update); each adds a branch but the test stays a linear list of assertions.
 func TestHandlerErrorPaths(t *testing.T) {
 	d := handlerDeps()
 	loc := func(in NameInput) LocationInput { return in.Location }
@@ -368,6 +370,37 @@ func TestHandlerErrorPaths(t *testing.T) {
 	lh := listHandler[fakeLoc, fakeEntry](d, "l", &fakeSvc{}, errResolve, entryName, entrySummary)
 	if res, _, err := lh(t.Context(), nil, ListInput{}); err != nil || !res.IsError {
 		t.Fatalf("list resolve error: err=%v isErr=%v", err, res.IsError)
+	}
+
+	// getHandler, deleteHandler and updateHandler each resolve the location before
+	// touching the service, so a resolve failure must become an error result
+	// carrying the resolve message (not a downstream service message) and must
+	// not reach the service. The get case sets readErr so a bypassed resolve would
+	// surface the service message instead of "bad location"; the delete and update
+	// cases assert the service recorded no call.
+	getSvc := &fakeSvc{readErr: fmt.Errorf("read must not run")}
+	gh := getHandler[fakeLoc, fakeEntry](d, "g", getSvc, errResolve)
+	if res, _, err := gh(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError || !strings.Contains(textContent(t, res), "bad location") {
+		t.Fatalf("get resolve error: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
+	}
+
+	delSvc := &fakeSvc{}
+	dl := deleteHandler[fakeLoc, fakeEntry](d, "d", delSvc, errResolve)
+	if res, _, err := dl(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError || !strings.Contains(textContent(t, res), "bad location") {
+		t.Fatalf("delete resolve error: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
+	}
+	if len(delSvc.deleted) != 0 {
+		t.Fatalf("delete must not reach the service when resolve fails: %v", delSvc.deleted)
+	}
+
+	updSvc := &fakeSvc{entries: []*fakeEntry{{Name: "a"}}}
+	up := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", updSvc, errResolve, loc, name,
+		func(*fakeEntry, NameInput) error { return nil })
+	if res, _, err := up(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError || !strings.Contains(textContent(t, res), "bad location") {
+		t.Fatalf("update resolve error: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
+	}
+	if len(updSvc.updated) != 0 {
+		t.Fatalf("update must not reach the service when resolve fails: %v", updSvc.updated)
 	}
 
 	del := deleteHandler[fakeLoc, fakeEntry](d, "d", &fakeSvc{deleteErr: fmt.Errorf("x")}, okResolve)

@@ -149,12 +149,21 @@ func overlayAddress(e *address.Entry, in AddressInput) error {
 	return nil
 }
 
+// nameDescription is the name+description base the summary helpers share.
+// summaryBase adds tags on top; the tag and device summaries (which have no
+// tags key) return it directly or overlay their own extra keys.
+func nameDescription(name string, description *string) map[string]any {
+	return map[string]any{tagNameKey: name, descriptionKey: strVal(description)}
+}
+
 // summaryBase builds the fields every object summary shares: name, description
 // and tags. Each resource summary adds its own type-specific keys onto the
 // returned map. Centralising these keys also keeps the shared literals under
 // goconst's occurrence threshold as more resources are added.
 func summaryBase(name string, description *string, tags []string) map[string]any {
-	return map[string]any{"name": name, descriptionKey: strVal(description), "tags": tags}
+	m := nameDescription(name, description)
+	m["tags"] = tags
+	return m
 }
 
 // addressSummary reduces an entry to the list view fields.
@@ -173,7 +182,7 @@ func RegisterAddressTools(s *mcp.Server, d *Deps) {
 	svc := newAddressService(d)
 	parts := addressParts()
 	resolve := func(in LocationInput) (address.Location, error) { return resolveLocation(d, in, parts) }
-	name := func(e *address.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in AddressInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -196,7 +205,7 @@ func RegisterAddressTools(s *mcp.Server, d *Deps) {
 	}, createHandler[address.Location, address.Entry, AddressInput](d, "panos_address_create", svc, resolve, loc, buildAddressEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_update",
-		Description: "Update an address object: read-modify-write, only provided fields change; provided arrays replace fully. Candidate config only.",
+		Description: "Update an address object: read-modify-write, only provided fields change; provided arrays replace fully. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update address"),
 	}, updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update", svc, resolve, loc,
 		func(in AddressInput) string { return in.Name }, overlayAddress))
@@ -313,7 +322,7 @@ func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 	resolve := func(in LocationInput) (address_group.Location, error) {
 		return resolveLocation(d, in, parts)
 	}
-	name := func(e *address_group.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in AddressGroupInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -336,7 +345,7 @@ func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 	}, createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create", svc, resolve, loc, buildAddressGroupEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_group_update",
-		Description: "Update an address group: read-modify-write, only provided fields change. Tags replace fully (an empty list clears them); a non-empty static or dynamic_filter replaces membership and switches the group type. An explicitly empty static list is rejected: a static group cannot be emptied in place, so switch to dynamic_filter or delete the group. Candidate config only.",
+		Description: "Update an address group: read-modify-write, only provided fields change. Tags replace fully (an empty list clears them); a non-empty static or dynamic_filter replaces membership and switches the group type. An explicitly empty static list is rejected: a static group cannot be emptied in place, so switch to dynamic_filter or delete the group. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update address group"),
 	}, updateHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_update", svc, resolve, loc,
 		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup))
@@ -504,7 +513,7 @@ func RegisterServiceTools(s *mcp.Server, d *Deps) {
 	svc := newServiceService(d)
 	parts := serviceParts()
 	resolve := func(in LocationInput) (service.Location, error) { return resolveLocation(d, in, parts) }
-	name := func(e *service.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in ServiceInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -527,7 +536,7 @@ func RegisterServiceTools(s *mcp.Server, d *Deps) {
 	}, createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create", svc, resolve, loc, buildServiceEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_update",
-		Description: "Update a service object: read-modify-write, only provided fields change; changing ports requires protocol and port together and replaces the whole protocol block. Candidate config only.",
+		Description: "Update a service object: read-modify-write, only provided fields change; changing ports requires protocol and port together and replaces the whole protocol block. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update service"),
 	}, updateHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_update", svc, resolve, loc,
 		func(in ServiceInput) string { return in.Name }, overlayService))
@@ -623,7 +632,7 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 	resolve := func(in LocationInput) (service_group.Location, error) {
 		return resolveLocation(d, in, parts)
 	}
-	name := func(e *service_group.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in ServiceGroupInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -646,7 +655,7 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 	}, createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create", svc, resolve, loc, buildServiceGroupEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_group_update",
-		Description: "Update a service group: read-modify-write, only provided fields change. A non-empty members list replaces the full membership; an explicitly empty members list is rejected (a group cannot be emptied in place; delete it instead); tags replace fully (an empty list clears them). Candidate config only.",
+		Description: "Update a service group: read-modify-write, only provided fields change. A non-empty members list replaces the full membership; an explicitly empty members list is rejected (a group cannot be emptied in place; delete it instead); tags replace fully (an empty list clears them). Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update service group"),
 	}, updateHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_update", svc, resolve, loc,
 		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup))
@@ -732,22 +741,20 @@ func newTagService(d *Deps) nameFixAdapter[admintag.Location, admintag.Entry] {
 	}
 }
 
-// descriptionKey is the "description" map key shared by the summary helpers.
-// goconst counts map composite-literal keys, and three production summaries
-// (summaryBase here plus deviceGroupSummary and templateSummary in
-// device_tools.go) emit it, which trips min-occurrences=3 (measured with
-// golangci-lint 2.12.2 and this repo's config). The const collapses those to a
-// single literal.
+// descriptionKey is the "description" map key. It is emitted only by
+// nameDescription, the base the object summaries (via summaryBase) and the
+// device summaries (deviceGroupSummary, templateSummary in device_tools.go)
+// build on. Centralising the literal in a const keeps it under goconst's
+// min-occurrences threshold as summaries are added (measured with golangci-lint
+// 2.12.2 and this repo's config).
 const descriptionKey = "description"
 
-// tagNameKey is the "name" map key shared by tagSummary and the device
-// summaries (deviceGroupSummary, templateSummary in device_tools.go). goconst
-// counts map composite-literal keys: summaryBase and serviceGroupSummary
-// already hold two production "name" literals, so any further literal would
-// trip min-occurrences=3 against this existing const (measured with
-// golangci-lint 2.12.2 and this repo's config). Routing the other summaries
-// through the const keeps the literal count at two without touching those two
-// siblings.
+// tagNameKey is the "name" map key shared by nameDescription (the base the
+// object summaries via summaryBase and the device summaries build on) and the
+// hand-rolled tagSummary. serviceGroupSummary still spells a bare "name"
+// literal; routing the other summaries through this const keeps the duplicate
+// "name" literals under goconst's min-occurrences threshold (measured with
+// golangci-lint 2.12.2 and this repo's config).
 const tagNameKey = "name"
 
 // tagSummary reduces an entry to the list view fields. Tags have no
@@ -764,7 +771,7 @@ func RegisterTagTools(s *mcp.Server, d *Deps) {
 	svc := newTagService(d)
 	parts := tagParts()
 	resolve := func(in LocationInput) (admintag.Location, error) { return resolveLocation(d, in, parts) }
-	name := func(e *admintag.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in TagInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -787,7 +794,7 @@ func RegisterTagTools(s *mcp.Server, d *Deps) {
 	}, createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create", svc, resolve, loc, buildTagEntry))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tag_update",
-		Description: "Update a tag: read-modify-write, only provided fields change; an omitted color or comments keeps the current value, so neither can be cleared in place. Candidate config only.",
+		Description: "Update a tag: read-modify-write, only provided fields change; an omitted color or comments keeps the current value, so neither can be cleared in place. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update tag"),
 	}, updateHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_update", svc, resolve, loc,
 		func(in TagInput) string { return in.Name }, overlayTag))
