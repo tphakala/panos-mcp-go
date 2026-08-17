@@ -20,7 +20,7 @@ The API user's Admin Role profile needs specific XML API permissions. Grant thes
 
 A Configuration-only role cannot start the server: the warm-up is an operational request, so startup fails with
 
-```
+```text
 retrieving system info: API Error: Type [op] not authorized for user role.
 ```
 
