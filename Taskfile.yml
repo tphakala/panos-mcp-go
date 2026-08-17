@@ -32,6 +32,12 @@ tasks:
   go:build:
     desc: Build the binary
     aliases: [build]
+    vars:
+      # Stamped into main.version via -ldflags. Falls back to "dev" outside a git
+      # checkout (a source tarball, for example). CI runs task ci -> go:build, so
+      # CI and release binaries carry the real git describe output (issue #6).
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
     sources:
       - '**/*.go'
       - go.mod
@@ -39,7 +45,7 @@ tasks:
     generates:
       - '{{.BINARY_NAME}}'
     cmds:
-      - go build -o {{.BINARY_NAME}} .
+      - go build -ldflags "-X main.version={{.VERSION}}" -o {{.BINARY_NAME}} .
 
   go:run:
     desc: Run the server in stdio mode (requires env vars)
