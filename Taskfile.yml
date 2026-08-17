@@ -149,5 +149,12 @@ tasks:
     cmds:
       - rm -f {{.BINARY_NAME}}
 
-  # image:build lands with the Dockerfile in the packaging task. A task that
-  # cannot succeed is worse than a missing one.
+  image:build:
+    desc: Build the container image
+    vars:
+      # Same version source as go:build, passed to the Dockerfile as a build arg
+      # because .dockerignore excludes .git from the build context.
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo docker
+    cmds:
+      - docker build --build-arg VERSION={{.VERSION}} -t panos-mcp-go:{{.VERSION}} .

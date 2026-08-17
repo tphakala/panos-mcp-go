@@ -1,0 +1,29 @@
+# Keep the build context small and, more importantly, keep local secrets and
+# tooling state out of it. COPY . . would otherwise pull in a developer's .env,
+# private keys, or certificates. .git is excluded, which is why the Dockerfile
+# takes the version as a build arg instead of running `git describe`.
+.git
+.github
+.serena
+.codegraph
+.task
+docs
+Dockerfile
+.dockerignore
+
+# Local build and test artifacts.
+panos-mcp-go
+*.exe
+dist
+*.test
+*.out
+coverage.html
+
+# Local secrets (gitignored, but present on developer machines).
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
