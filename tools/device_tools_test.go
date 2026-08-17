@@ -267,16 +267,16 @@ const changeJournalBody = `<response status="success"><result><journal>` +
 	`</journal></result></response>`
 
 func TestConfigDiff(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: changeJournalBody})
+	// opExact routing rejects any command but the exact one, so a drift back to the
+	// old <config><diff> path hits the fake's unmatched-request error, the way a
+	// real device rejected it with "invalid client cli" (issue #42).
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(configListChangesCmd), Body: changeJournalBody})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
-	// Pin the exact op command BEFORE inspecting the result, so a regression back
-	// to the rejected <config><diff> path fails on this precise assertion rather
-	// than on the fake's generic unmatched-request error (issue #42).
+	// Also pin the command explicitly, before inspecting the result, for a precise
+	// failure message and to document the wire contract independent of routing.
 	assertRequestSent(t, f, func(v url.Values) bool {
 		return v.Get("type") == "op" && v.Get("cmd") == configListChangesCmd
 	}, "config diff must emit the show-config-list-changes op verbatim")
-	assertNoRequestSent(t, f, opContains("<config><diff>"),
-		"config diff must not send the rejected <config><diff> command")
 	if res.IsError {
 		t.Fatalf("diff failed: %s", textContent(t, res))
 	}
@@ -297,7 +297,7 @@ func TestConfigDiff(t *testing.T) {
 
 func TestConfigDiffEmpty(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: opContains("<list><changes"), Body: `<response status="success"><result></result></response>`})
+		fakeRoute{Match: opExact(configListChangesCmd), Body: `<response status="success"><result></result></response>`})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if res.IsError {
 		t.Fatalf("empty diff failed: %s", textContent(t, res))
@@ -309,7 +309,7 @@ func TestConfigDiffEmpty(t *testing.T) {
 
 func TestConfigDiffError(t *testing.T) {
 	errBody := `<response status="error"><msg><line>Unauthorized request</line></msg></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: errBody})
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(configListChangesCmd), Body: errBody})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if !res.IsError {
 		t.Fatal("op error must surface as IsError")
@@ -325,7 +325,7 @@ func TestConfigDiffError(t *testing.T) {
 // pending" here could green-light a destructive commit or revert (issue #42).
 func TestConfigDiffUnrecognizedShape(t *testing.T) {
 	body := `<response status="success"><result><unexpected>+ address web-1</unexpected></result></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: body})
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(configListChangesCmd), Body: body})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if res.IsError {
 		t.Fatalf("unrecognized shape should surface, not error: %s", textContent(t, res))
@@ -348,7 +348,7 @@ func TestConfigDiffEntryWithoutOwner(t *testing.T) {
 		`<entry><xpath>/config/a</xpath><action> SET</action></entry>` +
 		`<entry><xpath>/config/b</xpath><owner>apiuser</owner></entry>` +
 		`</journal></result></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: body})
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(configListChangesCmd), Body: body})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if res.IsError {
 		t.Fatalf("diff failed: %s", textContent(t, res))

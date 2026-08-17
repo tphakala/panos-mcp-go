@@ -69,6 +69,18 @@ func opContains(sub string) func(url.Values) bool {
 	}
 }
 
+// opExact matches a type=op request whose cmd equals want exactly. Prefer it
+// over opContains when a test must pin the precise command on the wire: a
+// drifted or unmodelled command then falls through to the fake's
+// unmatched-request error, the same way a real device rejects an unknown
+// command. That leniency is what hid issue #42, where opContains("<diff")
+// matched a command PAN-OS actually rejects as "invalid client cli".
+func opExact(want string) func(url.Values) bool {
+	return func(v url.Values) bool {
+		return v.Get("type") == "op" && v.Get("cmd") == want
+	}
+}
+
 // configAction matches type=config requests with the given action.
 func configAction(action string) func(url.Values) bool {
 	return func(v url.Values) bool {
@@ -166,6 +178,24 @@ func TestMatchers(t *testing.T) {
 	}
 	if opContains("<commit>")(url.Values{"type": {"op"}, "cmd": {"<show><config>"}}) {
 		t.Error("opContains must not match a cmd lacking the substring")
+	}
+
+	// opExact routes only on the precise command, so any drift (a trailing space,
+	// or an entirely different command) falls through to the fake's
+	// unmatched-request error instead of matching: the strictness that would have
+	// surfaced issue #42.
+	exactOp := "<show><config><list><changes></changes></list></config></show>"
+	if !opExact(exactOp)(url.Values{"type": {"op"}, "cmd": {exactOp}}) {
+		t.Error("opExact must match a type=op cmd equal to want")
+	}
+	if opExact(exactOp)(url.Values{"type": {"op"}, "cmd": {exactOp + " "}}) {
+		t.Error("opExact must require equality, not a prefix or trailing space")
+	}
+	if opExact("<validate></validate>")(url.Values{"type": {"op"}, "cmd": {exactOp}}) {
+		t.Error("opExact must not match a different command")
+	}
+	if opExact(exactOp)(url.Values{"type": {"config"}, "cmd": {exactOp}}) {
+		t.Error("opExact must require type=op, not just the cmd")
 	}
 
 	cfgReq := url.Values{"type": {"config"}, "action": {"set"}}
