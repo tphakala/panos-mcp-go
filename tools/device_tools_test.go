@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http/httptest"
 	"net/url"
 	"slices"
@@ -766,57 +767,48 @@ func TestRegisterDeviceToolsGates(t *testing.T) {
 
 // TestPanoramaListSchemasOmitLocation pins that the two Panorama list tools take
 // PanoramaListInput, not ListInput: their advertised input schema must expose
-// filter but never a location parameter, since panoramaFixedResolve always
-// rejects a non-empty location.
+// exactly the PanoramaListInput property set (filter, limit, offset) and no
+// location parameter, since panoramaFixedResolve always rejects a non-empty
+// location. Asserting the exact key set (not a substring) makes a revert to
+// ListInput fail, because ListInput adds a "location" property.
 func TestPanoramaListSchemasOmitLocation(t *testing.T) {
 	ctx := t.Context()
 	d, _ := newTestDeps(t, "Panorama")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	RegisterDeviceTools(srv, d)
 
-	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := srv.Connect(ctx, serverT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := ss.Close(); err != nil {
-			t.Errorf("server session close: %v", err)
-		}
-	})
-	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
-	cs, err := cli.Connect(ctx, clientT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("client session close: %v", err)
-		}
-	})
+	cs := connectInMemory(t, srv)
 
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	schemas := make(map[string]string, len(res.Tools))
+	// Index each tool's marshaled input schema by name so the two Panorama list
+	// tools can be inspected directly.
+	schemas := make(map[string][]byte, len(res.Tools))
 	for _, tl := range res.Tools {
 		b, err := json.Marshal(tl.InputSchema)
 		if err != nil {
 			t.Fatalf("marshal %s input schema: %v", tl.Name, err)
 		}
-		schemas[tl.Name] = string(b)
+		schemas[tl.Name] = b
 	}
+	// PanoramaListInput advertises exactly these property keys.
+	want := []string{"filter", "limit", "offset"}
 	for _, n := range []string{"panos_device_group_list", "panos_template_list"} {
-		sc, ok := schemas[n]
+		b, ok := schemas[n]
 		if !ok {
 			t.Fatalf("%s not registered on a Panorama server", n)
 		}
-		if !strings.Contains(sc, "filter") {
-			t.Fatalf("%s schema must expose the filter parameter: %s", n, sc)
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
 		}
-		if strings.Contains(sc, "location") {
-			t.Fatalf("%s schema must not advertise a location parameter: %s", n, sc)
+		if err := json.Unmarshal(b, &schema); err != nil {
+			t.Fatalf("unmarshal %s input schema: %v", n, err)
+		}
+		got := slices.Sorted(maps.Keys(schema.Properties))
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s schema properties = %v, want exactly %v", n, got, want)
 		}
 	}
 }

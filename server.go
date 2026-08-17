@@ -31,8 +31,13 @@ const (
 	readTimeout       = 30 * time.Second
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 120 * time.Second
-	shutdownTimeout   = 15 * time.Second
 )
+
+// shutdownTimeout bounds the graceful-shutdown drain before in-flight
+// connections are force-closed. It is a var, not a const, only so
+// TestServeHTTPShutdownDeadlineForcesClose can shorten it to exercise the
+// deadline path; production never mutates it.
+var shutdownTimeout = 15 * time.Second
 
 // buildPangoClient constructs the pango client from config. TLS verification
 // stays on unless PANOS_SKIP_VERIFY is set; PANOS_CA_CERT loads a private CA.
