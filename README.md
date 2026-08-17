@@ -51,7 +51,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 47 tools on Panorama and 44 on a firewall (the three Panorama-only tools below are absent on a firewall). In read-only mode (the default) only the read-only tools are registered: 20 on Panorama, 18 on a firewall. These counts are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 47 tools on Panorama and 44 on a firewall (the three Panorama-only tools below are absent on a firewall). In read-only mode (the default) only the read-only tools are registered: 20 on Panorama, 18 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -155,10 +155,10 @@ task go:test   # run tests with the race detector
 task image:build   # builds panos-mcp-go:<version> via docker
 ```
 
-Or build and run directly. The image sets `MCP_HTTP_HOST=0.0.0.0` so a published port is reachable, which means the `http` transport requires `MCP_HTTP_TOKEN`:
+Or build and run directly. `task image:build` tags the image `panos-mcp-go:<version>` from `git describe`, while the manual commands below build and run `panos-mcp-go:latest`. The image sets `MCP_HTTP_HOST=0.0.0.0` so a published port is reachable, which means the `http` transport requires `MCP_HTTP_TOKEN`:
 
 ```bash
-docker build --build-arg VERSION="$(git describe --tags --always)" -t panos-mcp-go .
+docker build --build-arg VERSION="$(git describe --tags --always --dirty)" -t panos-mcp-go .
 
 docker run --rm \
   -e PANOS_HOST=firewall.example.com \
