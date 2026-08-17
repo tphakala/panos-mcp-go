@@ -142,7 +142,12 @@ func jobStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, JobIn
 	}
 }
 
-// configDiffHandler shows candidate changes versus the running config.
+// configDiffHandler lists pending candidate changes versus the running
+// config, as the changed config xpaths. The op command is "show config list
+// changes": PAN-OS has no single op command for a full before/after diff, and
+// the previously used <show><config><diff/></show> does not exist in the op
+// grammar at all — a real device rejects it with "invalid client cli"
+// (issue #42, verified on 11.2.x).
 func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		// Hold the read lock so the diff observes a stable candidate config and
@@ -151,7 +156,7 @@ func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, stru
 		defer d.RLockReads()()
 		type diffReq struct {
 			XMLName xml.Name `xml:"show"`
-			Cmd     string   `xml:"config>diff"`
+			Cmd     string   `xml:"config>list>changes"`
 		}
 		var resp struct {
 			Result string `xml:"result"`
@@ -384,7 +389,7 @@ func RegisterDeviceTools(s *mcp.Server, d *Deps) {
 	}, jobStatusHandler(d))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_config_diff",
-		Description: "Show pending candidate changes versus the running config. Check before panos_commit; other admins' changes commit too. Read-only.",
+		Description: "List pending candidate changes versus the running config (changed config paths). Check before panos_commit; other admins' changes commit too. Read-only.",
 		Annotations: readOnlyTool("Config diff"),
 	}, configDiffHandler(d))
 	mcp.AddTool(s, &mcp.Tool{

@@ -69,6 +69,17 @@ func opContains(sub string) func(url.Values) bool {
 	}
 }
 
+// opExact matches type=op requests whose cmd is exactly cmd. Use it for
+// commands whose grammar a test must pin down: a substring match would accept
+// a malformed command that a real device rejects with "invalid client cli"
+// (issue #42), while an exact match sends anything else to the fake's
+// unmatched-request error, modelling the real rejection.
+func opExact(cmd string) func(url.Values) bool {
+	return func(v url.Values) bool {
+		return v.Get("type") == "op" && v.Get("cmd") == cmd
+	}
+}
+
 // configAction matches type=config requests with the given action.
 func configAction(action string) func(url.Values) bool {
 	return func(v url.Values) bool {

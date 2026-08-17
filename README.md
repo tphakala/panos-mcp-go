@@ -14,7 +14,7 @@ Each tool carries an annotation describing its effect (read-only, create, update
 
 The API user's Admin Role profile needs specific XML API permissions. Grant these on the profile's XML API tab, matched to the tools you intend to use:
 
-- **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config diff` operational command), and the job polling behind commit, validate, and push also need it.
+- **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config list changes` operational command), and the job polling behind commit, validate, and push also need it.
 - **Configuration** (`type=config`): required for every object and policy tool (address, service, group, tag, security and NAT rule create/update/delete/move).
 - **Commit**: required for `panos_commit`, and for `panos_push` to a Panorama device group.
 
@@ -108,7 +108,7 @@ The server registers 47 tools on Panorama and 44 on a firewall (the three Panora
 |------|------|-------------|
 | `panos_system_info` | read-only | Show device system info (model, serial, versions). Doubles as the connection test. |
 | `panos_job_status` | read-only | Poll a device job (commit, push, validate) by ID. |
-| `panos_config_diff` | read-only | Show pending candidate changes versus the running config. |
+| `panos_config_diff` | read-only | List pending candidate changes versus the running config (changed config paths). |
 | `panos_zone_list` | read-only | List security zone names for use in rules. On Panorama, requires a template. |
 | `panos_device_group_list` *(Panorama only)* | read-only | List Panorama device groups. |
 | `panos_template_list` *(Panorama only)* | read-only | List Panorama templates (zone and network config scopes). |

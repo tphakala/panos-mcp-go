@@ -242,9 +242,20 @@ func TestJobStatusError(t *testing.T) {
 	}
 }
 
+// configListChangesCmd is the exact operational command PAN-OS accepts for
+// listing pending candidate changes, as emitted by encoding/xml. The old
+// <show><config><diff/></show> command does not exist in the PAN-OS op
+// grammar and a real device (verified on 11.2.x) rejects it with "invalid
+// client cli" (issue #42). The diff tests route on the exact command, not a
+// substring, so any drift back to an unmodelled command hits the fake's
+// unmatched-request error, the same way a real device rejects it.
+const configListChangesCmd = "<show><config><list><changes></changes></list></config></show>"
+
 func TestConfigDiff(t *testing.T) {
-	diffBody := `<response status="success"><result>+ address entry web-1 added</result></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<diff"), Body: diffBody})
+	diffBody := `<response status="success"><result>` +
+		`/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/address/entry[@name='web-1']` +
+		`</result></response>`
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(configListChangesCmd), Body: diffBody})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if res.IsError {
 		t.Fatalf("diff failed: %s", textContent(t, res))
@@ -252,11 +263,22 @@ func TestConfigDiff(t *testing.T) {
 	if !strings.Contains(textContent(t, res), "web-1") {
 		t.Fatalf("diff content lost: %s", textContent(t, res))
 	}
+	// Assert the exact op command sent, not just that some request matched:
+	// this is the check that would have caught "invalid client cli".
+	var sent []string
+	for _, req := range f.Requests() {
+		if req.Get("type") == "op" && strings.Contains(req.Get("cmd"), "<config>") {
+			sent = append(sent, req.Get("cmd"))
+		}
+	}
+	if len(sent) != 1 || sent[0] != configListChangesCmd {
+		t.Fatalf("handler must send exactly %q, sent %q", configListChangesCmd, sent)
+	}
 }
 
 func TestConfigDiffEmpty(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: opContains("<diff"), Body: `<response status="success"><result></result></response>`})
+		fakeRoute{Match: opExact(configListChangesCmd), Body: `<response status="success"><result></result></response>`})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if res.IsError {
 		t.Fatalf("empty diff failed: %s", textContent(t, res))
@@ -268,7 +290,7 @@ func TestConfigDiffEmpty(t *testing.T) {
 
 func TestConfigDiffError(t *testing.T) {
 	errBody := `<response status="error"><msg><line>Unauthorized request</line></msg></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<diff"), Body: errBody})
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(configListChangesCmd), Body: errBody})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if !res.IsError {
 		t.Fatal("op error must surface as IsError")
