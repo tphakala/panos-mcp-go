@@ -142,32 +142,78 @@ func jobStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, JobIn
 	}
 }
 
-// configDiffHandler shows candidate changes versus the running config.
+// configDiffHandler lists pending candidate-config changes versus the running
+// config via "show config list changes", which returns a change journal: one
+// entry per touched xpath with the action taken and the change owner. The
+// "show config diff" path this tool emitted before is rejected by the PAN-OS
+// XML API as "invalid client cli" (issue #42, verified live against 11.2.6).
 func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		// Hold the read lock so the diff observes a stable candidate config and
+		// Hold the read lock so the listing observes a stable candidate config and
 		// never a half-applied one while a commit or edit holds the write lock
 		// (issue #14).
 		defer d.RLockReads()()
-		type diffReq struct {
+		type listChangesReq struct {
 			XMLName xml.Name `xml:"show"`
-			Cmd     string   `xml:"config>diff"`
+			Cmd     string   `xml:"config>list>changes"`
+		}
+		// Communicate runs with strip=false, so pango unmarshals the whole
+		// <response> envelope; the tags are rooted there. The changed nodes arrive
+		// as a journal of <entry> elements under <result>, not as chardata (the
+		// journal shape was captured live against 11.2.6). Inner keeps the raw
+		// contents of <result> so a success response that does not match the journal
+		// path is surfaced rather than mistaken for an empty candidate: a false
+		// "nothing pending" on this pre-commit/pre-revert check could lead to a
+		// destructive commit or revert of a candidate that was not actually clean.
+		type change struct {
+			XPath  string `xml:"xpath"`
+			Action string `xml:"action"`
+			Owner  string `xml:"owner"`
 		}
 		var resp struct {
-			Result string `xml:"result"`
+			XMLName xml.Name `xml:"response"`
+			Result  struct {
+				Changes []change `xml:"journal>entry"`
+				Inner   string   `xml:",innerxml"`
+			} `xml:"result"`
 		}
-		cmd := &xmlapi.Op{Command: diffReq{}}
+		cmd := &xmlapi.Op{Command: listChangesReq{}}
 		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
 		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
 			d.Logger.Error("failed: panos_config_diff", "error", err)
 			res, v := errorResult("failed: panos_config_diff: %v", err)
 			return res, v, nil
 		}
-		if resp.Result == "" {
+		changes := resp.Result.Changes
+		if len(changes) == 0 {
+			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
+				// Success, but not the journal shape this parser expects. Surface the
+				// raw result rather than claiming the candidate is clean.
+				res, v := textResult("unrecognized config-diff response; raw result: %s", raw)
+				return res, v, nil
+			}
 			res, v := textResult("no pending candidate changes")
 			return res, v, nil
 		}
-		res, v := textResult("%s", resp.Result)
+		// A human/LLM-readable summary, not jsonResult: this is a pre-commit review
+		// aid, and a compact list of changed paths is more token-efficient than a
+		// nested JSON array (jsonResult is for tools with programmatic fields to
+		// query, like panos_job_status).
+		var b strings.Builder
+		fmt.Fprintf(&b, "%d pending candidate change(s):", len(changes))
+		for _, c := range changes {
+			b.WriteString("\n- ")
+			// PAN-OS pads the action with a leading space (" EDIT", " DELETE").
+			if action := strings.TrimSpace(c.Action); action != "" {
+				b.WriteString(action)
+				b.WriteByte(' ')
+			}
+			b.WriteString(c.XPath)
+			if owner := strings.TrimSpace(c.Owner); owner != "" {
+				fmt.Fprintf(&b, " (by %s)", owner)
+			}
+		}
+		res, v := textResult("%s", b.String())
 		return res, v, nil
 	}
 }
@@ -384,7 +430,7 @@ func RegisterDeviceTools(s *mcp.Server, d *Deps) {
 	}, jobStatusHandler(d))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_config_diff",
-		Description: "Show pending candidate changes versus the running config. Check before panos_commit; other admins' changes commit too. Read-only.",
+		Description: "List pending candidate changes versus the running config (changed config path, action, and owner per entry). Check before panos_commit; other admins' changes commit too. Read-only.",
 		Annotations: readOnlyTool("Config diff"),
 	}, configDiffHandler(d))
 	mcp.AddTool(s, &mcp.Tool{

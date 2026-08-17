@@ -242,21 +242,62 @@ func TestJobStatusError(t *testing.T) {
 	}
 }
 
+// configListChangesCmd is the exact op command configDiffHandler must emit.
+// Real PAN-OS rejects the old <show><config><diff> path as "invalid client cli"
+// (issue #42), so tests pin this string verbatim, not just a substring.
+const configListChangesCmd = `<show><config><list><changes></changes></list></config></show>`
+
+// cfgDiffXPathAddr and cfgDiffXPathWeb1 are the two changed xpaths in the
+// journal fixture. They are shared by changeJournalBody and the expected output
+// lines so the test pins the FULL xpath (including the object leaf) surviving to
+// the rendered summary, not just a "/config" prefix.
+const (
+	cfgDiffXPathAddr = `/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/address`
+	cfgDiffXPathWeb1 = cfgDiffXPathAddr + `/entry[@name='web-1']`
+)
+
+// changeJournalBody is a live-verified "show config list changes" response
+// (PAN-OS 11.2.6): <action> carries a leading space, <entry> repeats, and the
+// extra <admin-history>/<component-type> fields must be ignored by the parser.
+const changeJournalBody = `<response status="success"><result><journal>` +
+	`<entry><xpath>` + cfgDiffXPathAddr + `</xpath>` +
+	`<owner>apiuser</owner><action> EDIT</action><admin-history>apiuser</admin-history><component-type>vsys</component-type></entry>` +
+	`<entry><xpath>` + cfgDiffXPathWeb1 + `</xpath>` +
+	`<owner>apiuser</owner><action> DELETE</action><admin-history>apiuser</admin-history><component-type>vsys</component-type></entry>` +
+	`</journal></result></response>`
+
 func TestConfigDiff(t *testing.T) {
-	diffBody := `<response status="success"><result>+ address entry web-1 added</result></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<diff"), Body: diffBody})
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: changeJournalBody})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
+	// Pin the exact op command BEFORE inspecting the result, so a regression back
+	// to the rejected <config><diff> path fails on this precise assertion rather
+	// than on the fake's generic unmatched-request error (issue #42).
+	assertRequestSent(t, f, func(v url.Values) bool {
+		return v.Get("type") == "op" && v.Get("cmd") == configListChangesCmd
+	}, "config diff must emit the show-config-list-changes op verbatim")
+	assertNoRequestSent(t, f, opContains("<config><diff>"),
+		"config diff must not send the rejected <config><diff> command")
 	if res.IsError {
 		t.Fatalf("diff failed: %s", textContent(t, res))
 	}
-	if !strings.Contains(textContent(t, res), "web-1") {
-		t.Fatalf("diff content lost: %s", textContent(t, res))
+	out := textContent(t, res)
+	// Assert the exact rendered lines. This pins the leading-space TrimSpace on the
+	// action (an untrimmed action renders "-  EDIT", which the single space after
+	// "- " rejects) and that the full xpath tail (the object leaf) survives.
+	for _, want := range []string{
+		"2 pending candidate change(s):",
+		"- EDIT " + cfgDiffXPathAddr + " (by apiuser)",
+		"- DELETE " + cfgDiffXPathWeb1 + " (by apiuser)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("config diff output missing %q: %s", want, out)
+		}
 	}
 }
 
 func TestConfigDiffEmpty(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: opContains("<diff"), Body: `<response status="success"><result></result></response>`})
+		fakeRoute{Match: opContains("<list><changes"), Body: `<response status="success"><result></result></response>`})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if res.IsError {
 		t.Fatalf("empty diff failed: %s", textContent(t, res))
@@ -268,13 +309,61 @@ func TestConfigDiffEmpty(t *testing.T) {
 
 func TestConfigDiffError(t *testing.T) {
 	errBody := `<response status="error"><msg><line>Unauthorized request</line></msg></response>`
-	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<diff"), Body: errBody})
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: errBody})
 	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
 	if !res.IsError {
 		t.Fatal("op error must surface as IsError")
 	}
 	if !strings.Contains(textContent(t, res), "Unauthorized") {
 		t.Fatalf("PAN-OS message lost: %s", textContent(t, res))
+	}
+}
+
+// TestConfigDiffUnrecognizedShape guards the safety net: a status="success"
+// response whose <result> is not the journal shape (e.g. a future PAN-OS
+// version) must NOT be reported as a clean candidate, since a false "nothing
+// pending" here could green-light a destructive commit or revert (issue #42).
+func TestConfigDiffUnrecognizedShape(t *testing.T) {
+	body := `<response status="success"><result><unexpected>+ address web-1</unexpected></result></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: body})
+	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
+	if res.IsError {
+		t.Fatalf("unrecognized shape should surface, not error: %s", textContent(t, res))
+	}
+	out := textContent(t, res)
+	if strings.Contains(out, "no pending candidate changes") {
+		t.Fatalf("unrecognized shape must not be reported as clean: %s", out)
+	}
+	if !strings.Contains(out, "address web-1") {
+		t.Fatalf("raw result content must be surfaced: %s", out)
+	}
+}
+
+// TestConfigDiffEntryWithoutOwner exercises the handler's skip-when-empty
+// branches (this body is a robustness case, not a shape claimed to come from the
+// device): a missing <owner> must not render "(by )", and a missing <action>
+// must not leave a double space after the "- " prefix.
+func TestConfigDiffEntryWithoutOwner(t *testing.T) {
+	body := `<response status="success"><result><journal>` +
+		`<entry><xpath>/config/a</xpath><action> SET</action></entry>` +
+		`<entry><xpath>/config/b</xpath><owner>apiuser</owner></entry>` +
+		`</journal></result></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opContains("<list><changes"), Body: body})
+	res, _, _ := configDiffHandler(d)(t.Context(), nil, struct{}{})
+	if res.IsError {
+		t.Fatalf("diff failed: %s", textContent(t, res))
+	}
+	out := textContent(t, res)
+	if strings.Contains(out, "(by )") {
+		t.Fatalf("missing owner must not render \"(by )\": %s", out)
+	}
+	if strings.Contains(out, "-  ") {
+		t.Fatalf("missing action must not leave a double space: %s", out)
+	}
+	for _, want := range []string{"- SET /config/a", "- /config/b (by apiuser)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q: %s", want, out)
+		}
 	}
 }
 
