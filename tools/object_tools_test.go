@@ -215,11 +215,7 @@ func TestAddressUpdateNoopSpecMatches(t *testing.T) {
 		t.Fatalf("unexpected error: %s", textContent(t, res))
 	}
 	// An identical overlay must issue no config write at all.
-	for _, req := range f.Requests() {
-		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
-			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
-		}
-	}
+	assertNoConfigWrite(t, f)
 }
 
 func TestAddressUpdateRejectsRename(t *testing.T) {
@@ -899,11 +895,7 @@ func TestAddressGroupUpdateNoopSpecMatches(t *testing.T) {
 		t.Fatalf("unexpected error: %s", textContent(t, res))
 	}
 	// An identical overlay must issue no config write at all.
-	for _, req := range f.Requests() {
-		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
-			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
-		}
-	}
+	assertNoConfigWrite(t, f)
 }
 
 func TestAddressGroupUpdateAPIError(t *testing.T) {
@@ -1040,26 +1032,7 @@ func TestAddressGroupGetUpdateViaRegisteredTools(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterAddressGroupTools(srv, d)
 
-	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := srv.Connect(ctx, serverT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := ss.Close(); err != nil {
-			t.Errorf("server session close: %v", err)
-		}
-	})
-	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
-	cs, err := cli.Connect(ctx, clientT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("client session close: %v", err)
-		}
-	})
+	cs := connectInMemory(t, srv)
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_address_group_get", Arguments: map[string]any{"name": "grp-1"}})
 	if err != nil {
@@ -1532,11 +1505,7 @@ func TestServiceUpdateNoopSpecMatches(t *testing.T) {
 		t.Fatalf("unexpected error: %s", textContent(t, res))
 	}
 	// An identical overlay must issue no config write at all.
-	for _, req := range f.Requests() {
-		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
-			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
-		}
-	}
+	assertNoConfigWrite(t, f)
 }
 
 func TestServiceUpdateAPIError(t *testing.T) {
@@ -1686,26 +1655,7 @@ func TestServiceGetUpdateViaRegisteredTools(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterServiceTools(srv, d)
 
-	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := srv.Connect(ctx, serverT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := ss.Close(); err != nil {
-			t.Errorf("server session close: %v", err)
-		}
-	})
-	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
-	cs, err := cli.Connect(ctx, clientT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("client session close: %v", err)
-		}
-	})
+	cs := connectInMemory(t, srv)
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_get", Arguments: map[string]any{"name": "svc-1"}})
 	if err != nil {
@@ -2037,11 +1987,7 @@ func TestServiceGroupUpdateNoopSpecMatches(t *testing.T) {
 		t.Fatalf("unexpected error: %s", textContent(t, res))
 	}
 	// An identical overlay must issue no config write at all.
-	for _, req := range f.Requests() {
-		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
-			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
-		}
-	}
+	assertNoConfigWrite(t, f)
 }
 
 func TestServiceGroupUpdateAPIError(t *testing.T) {
@@ -2173,26 +2119,7 @@ func TestServiceGroupGetUpdateViaRegisteredTools(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterServiceGroupTools(srv, d)
 
-	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := srv.Connect(ctx, serverT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := ss.Close(); err != nil {
-			t.Errorf("server session close: %v", err)
-		}
-	})
-	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
-	cs, err := cli.Connect(ctx, clientT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("client session close: %v", err)
-		}
-	})
+	cs := connectInMemory(t, srv)
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_service_group_get", Arguments: map[string]any{"name": "grp-1"}})
 	if err != nil {
@@ -2505,11 +2432,7 @@ func TestTagUpdateNoopSpecMatches(t *testing.T) {
 		t.Fatalf("unexpected error: %s", textContent(t, res))
 	}
 	// An identical overlay must issue no config write at all.
-	for _, req := range f.Requests() {
-		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
-			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
-		}
-	}
+	assertNoConfigWrite(t, f)
 }
 
 func TestTagUpdateAPIError(t *testing.T) {
@@ -2642,26 +2565,7 @@ func TestTagGetUpdateViaRegisteredTools(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
 	RegisterTagTools(srv, d)
 
-	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := srv.Connect(ctx, serverT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := ss.Close(); err != nil {
-			t.Errorf("server session close: %v", err)
-		}
-	})
-	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
-	cs, err := cli.Connect(ctx, clientT, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := cs.Close(); err != nil {
-			t.Errorf("client session close: %v", err)
-		}
-	})
+	cs := connectInMemory(t, srv)
 
 	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_tag_get", Arguments: map[string]any{"name": "t-1"}})
 	if err != nil {

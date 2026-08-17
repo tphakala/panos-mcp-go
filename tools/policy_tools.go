@@ -371,7 +371,7 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	svc := newSecurityRuleService(d)
 	raw := security.NewService(d.Client)
 	resolve := func(in LocationInput) (security.Location, error) { return resolveLocation(d, in, securityParts()) }
-	name := func(e *security.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in SecurityRuleInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -674,7 +674,7 @@ func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
 	svc := newNatRuleService(d)
 	raw := nat.NewService(d.Client)
 	resolve := func(in LocationInput) (nat.Location, error) { return resolveLocation(d, in, natParts()) }
-	name := func(e *nat.Entry) string { return e.Name }
+	name := svc.name
 	loc := func(in NatRuleInput) LocationInput { return in.Location }
 
 	mcp.AddTool(s, &mcp.Tool{

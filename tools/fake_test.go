@@ -255,9 +255,21 @@ func textContent(t *testing.T, res *mcp.CallToolResult) string {
 	return tc.Text
 }
 
-// serverToolNames connects an in-memory client session to srv and returns the
-// set of tool names srv exposes. Shared by all registration tests.
-func serverToolNames(t *testing.T, srv *mcp.Server) map[string]bool {
+// assertNoConfigWrite fails if the fake recorded any config-write action
+// (multi-config, edit, or set), naming the offending action. Used by the
+// no-op update tests, where an identical overlay must issue no write.
+func assertNoConfigWrite(t *testing.T, f *fakeAPI) {
+	t.Helper()
+	for _, req := range f.Requests() {
+		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
+			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
+		}
+	}
+}
+
+// connectInMemory wires an in-memory client session to srv and returns it,
+// registering both session closes as cleanups.
+func connectInMemory(t *testing.T, srv *mcp.Server) *mcp.ClientSession {
 	t.Helper()
 	ctx := t.Context()
 	clientT, serverT := mcp.NewInMemoryTransports()
@@ -270,7 +282,6 @@ func serverToolNames(t *testing.T, srv *mcp.Server) map[string]bool {
 			t.Errorf("server session close: %v", err)
 		}
 	})
-
 	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
 	cs, err := cli.Connect(ctx, clientT, nil)
 	if err != nil {
@@ -281,6 +292,15 @@ func serverToolNames(t *testing.T, srv *mcp.Server) map[string]bool {
 			t.Errorf("client session close: %v", err)
 		}
 	})
+	return cs
+}
+
+// serverToolNames connects an in-memory client session to srv and returns the
+// set of tool names srv exposes. Shared by all registration tests.
+func serverToolNames(t *testing.T, srv *mcp.Server) map[string]bool {
+	t.Helper()
+	ctx := t.Context()
+	cs := connectInMemory(t, srv)
 
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {
