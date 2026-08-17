@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
 
 # Final stage. Pin the minor release rather than :latest so the image is
 # reproducible; the docker Dependabot ecosystem keeps it current.
-FROM alpine:3.22
+FROM alpine:3.24
 WORKDIR /app
 
 # ca-certificates lets the server verify the firewall's TLS chain against the
