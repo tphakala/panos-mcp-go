@@ -2,10 +2,18 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,7 +34,7 @@ var configEnvVars = []string{
 	"PANOS_HOST", "PANOS_HOSTNAME", "PANOS_PORT", "PANOS_API_KEY", "PANOS_USERNAME", "PANOS_PASSWORD",
 	"PANOS_SKIP_VERIFY", "PANOS_SKIP_VERIFY_CERTIFICATE", "PANOS_CA_CERT",
 	"PANOS_ALLOW_WRITES", "PANOS_READ_ONLY", "PANOS_JOB_WAIT",
-	"MCP_TRANSPORT", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "PANOS_LOG_LEVEL", "LOG_LEVEL",
+	"MCP_TRANSPORT", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "MCP_HTTP_TOKEN", "PANOS_LOG_LEVEL", "LOG_LEVEL",
 }
 
 // setEnv unsets every configuration variable, then applies kv. The variables are
@@ -240,8 +248,9 @@ func TestLoadConfigParsesValues(t *testing.T) {
 		"PANOS_HOST": "fw.example.net", "PANOS_PORT": "8443",
 		"PANOS_USERNAME": "admin", "PANOS_PASSWORD": "pw",
 		"PANOS_SKIP_VERIFY": "true", "PANOS_ALLOW_WRITES": "true",
-		"PANOS_CA_CERT": "/etc/ssl/ca.pem", "PANOS_JOB_WAIT": "30",
-		"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_PORT": "9090",
+		"PANOS_JOB_WAIT": "30",
+		"MCP_TRANSPORT":  "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_PORT": "9090",
+		"MCP_HTTP_TOKEN":  "tok",
 		"PANOS_LOG_LEVEL": "debug",
 	})
 	cfg, err := LoadConfig()
@@ -254,9 +263,9 @@ func TestLoadConfigParsesValues(t *testing.T) {
 		{"Host", cfg.Host, "fw.example.net"},
 		{"Username", cfg.Username, "admin"},
 		{"Password", cfg.Password, "pw"},
-		{"CACert", cfg.CACert, "/etc/ssl/ca.pem"},
 		{"Transport", cfg.Transport, "http"},
 		{"HTTPHost", cfg.HTTPHost, "0.0.0.0"},
+		{"HTTPToken", cfg.HTTPToken, "tok"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -490,10 +499,11 @@ func TestConfigRedactsSecrets(t *testing.T) {
 	//nolint:gosec // G101: these are fixture values, not real credentials. The
 	// test exists precisely to prove they never reach a rendered Config.
 	cfg := Config{
-		Host:     "fw",
-		APIKey:   "LUFRPT1TUPERSECRETKEY",
-		Username: "admin",
-		Password: "hunter2",
+		Host:      "fw",
+		APIKey:    "LUFRPT1TUPERSECRETKEY",
+		Username:  "admin",
+		Password:  "hunter2",
+		HTTPToken: "TOKENSUPERSECRET1234",
 	}
 	// A real JSON handler, which is what main.go installs, plus the fmt verbs a
 	// caller might reach for. %#v is deliberately absent: it prints struct
@@ -536,6 +546,14 @@ func TestConfigRedactsSecrets(t *testing.T) {
 		if strings.Contains(rendered, "hunter2") {
 			t.Errorf("%s leaked the password: %s", name, rendered)
 		}
+		if strings.Contains(rendered, "TOKENSUPERSECRET1234") {
+			t.Errorf("%s leaked the http token: %s", name, rendered)
+		}
+	}
+	// The presence-only signal must still be reported, so an operator can confirm
+	// a token is configured without the value ever appearing.
+	if s := cfg.String(); !strings.Contains(s, "http_token_set=true") {
+		t.Errorf("String() should report http_token_set=true: %s", s)
 	}
 }
 
@@ -544,9 +562,10 @@ func TestConfigRedactsSecrets(t *testing.T) {
 func TestLoadConfigTrimsStringInputs(t *testing.T) {
 	setEnv(t, map[string]string{
 		"PANOS_HOST": "  fw  ", "PANOS_API_KEY": "  k  ",
-		"PANOS_USERNAME": "  admin  ", "PANOS_CA_CERT": "  /ca.pem  ",
-		"MCP_TRANSPORT": "  http  ", "MCP_HTTP_HOST": "  0.0.0.0  ",
-		"MCP_HTTP_PORT": "  9090  ", "PANOS_JOB_WAIT": "  30  ",
+		"PANOS_USERNAME": "  admin  ",
+		"MCP_TRANSPORT":  "  http  ", "MCP_HTTP_HOST": "  0.0.0.0  ",
+		"MCP_HTTP_PORT": "  9090  ", "MCP_HTTP_TOKEN": "  tok  ",
+		"PANOS_JOB_WAIT":    "  30  ",
 		"PANOS_SKIP_VERIFY": "  true  ", "PANOS_ALLOW_WRITES": "  true  ",
 		"PANOS_LOG_LEVEL": "  debug  ",
 	})
@@ -558,9 +577,9 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 		{"Host", cfg.Host, "fw"},
 		{"APIKey", cfg.APIKey, "k"},
 		{"Username", cfg.Username, "admin"},
-		{"CACert", cfg.CACert, "/ca.pem"},
 		{"Transport", cfg.Transport, "http"},
 		{"HTTPHost", cfg.HTTPHost, "0.0.0.0"},
+		{"HTTPToken", cfg.HTTPToken, "tok"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -584,4 +603,150 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Errorf("LogLevel = %v, want DEBUG", cfg.LogLevel)
 	}
+}
+
+// writeTestCA generates a throwaway self-signed CA, PEM-encodes it into a temp
+// file, and returns the path. Used by config and server tests that need a CA
+// file loadCACertPool will accept.
+func writeTestCA(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "panos-mcp-go test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("write ca: %v", err)
+	}
+	return path
+}
+
+// TestIsLoopback pins the loopback classification that the MCP_HTTP_TOKEN guard
+// relies on. Anything not provably loopback (a hostname, 0.0.0.0, empty, or an
+// IPv6 literal carrying a zone id that net.ParseIP rejects) must read as false so
+// the guard fails closed.
+func TestIsLoopback(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"127.0.0.2", true}, // the whole 127.0.0.0/8 range is loopback
+		{"::1", true},
+		{"[::1]", true},
+		{"localhost", true},
+		{"LocalHost", true},
+		{"0.0.0.0", false},
+		{"192.168.1.5", false},
+		{"example.com", false},
+		{"", false},
+		{"::1%lo0", false},   // a zone id is not parsed as an IP: fail closed
+		{"[::1%lo0]", false}, // same, bracketed
+	} {
+		if got := isLoopback(tc.host); got != tc.want {
+			t.Errorf("isLoopback(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
+// TestLoadConfigHTTPTokenRequiredWhenNonLoopback pins the fail-closed rule: an
+// http transport bound to a non-loopback interface must not start without
+// MCP_HTTP_TOKEN, while loopback and stdio are exempt (issue #5).
+func TestLoadConfigHTTPTokenRequiredWhenNonLoopback(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     map[string]string
+		wantErr string // substring; "" means expect success
+	}{
+		{"non-loopback http without token", map[string]string{
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0",
+		}, "MCP_HTTP_TOKEN"},
+		{"non-loopback http with token", map[string]string{
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_TOKEN": "tok",
+		}, ""},
+		{"loopback http without token", map[string]string{
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "127.0.0.1",
+		}, ""},
+		{"stdio ignores non-loopback host", map[string]string{
+			"MCP_TRANSPORT": "stdio", "MCP_HTTP_HOST": "0.0.0.0",
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k"}
+			for k, v := range tc.env {
+				env[k] = v
+			}
+			setEnv(t, env)
+			_, err := LoadConfig()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("LoadConfig: unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("LoadConfig error = %v, want substring %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadConfigRejectsSkipVerifyWithCACert pins that the two contradictory TLS
+// inputs are rejected rather than silently resolved (issue #8).
+func TestLoadConfigRejectsSkipVerifyWithCACert(t *testing.T) {
+	ca := writeTestCA(t)
+	setEnv(t, map[string]string{
+		"PANOS_HOST": "fw", "PANOS_API_KEY": "k",
+		"PANOS_SKIP_VERIFY": "true", "PANOS_CA_CERT": ca,
+	})
+	_, err := LoadConfig()
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("LoadConfig error = %v, want 'mutually exclusive'", err)
+	}
+}
+
+// TestLoadConfigValidatesCACert pins that PANOS_CA_CERT is read and parsed at
+// load time, so a bad path or a non-PEM file fails at startup, and that a valid
+// path is stored trimmed (issue #8).
+func TestLoadConfigValidatesCACert(t *testing.T) {
+	t.Run("nonexistent path", func(t *testing.T) {
+		setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "PANOS_CA_CERT": "/nonexistent/ca.pem"})
+		if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "PANOS_CA_CERT") {
+			t.Fatalf("LoadConfig error = %v, want a PANOS_CA_CERT read error", err)
+		}
+	})
+	t.Run("invalid pem", func(t *testing.T) {
+		bad := filepath.Join(t.TempDir(), "bad.pem")
+		if err := os.WriteFile(bad, []byte("not a pem"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "PANOS_CA_CERT": bad})
+		if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "no certificates parsed") {
+			t.Fatalf("LoadConfig error = %v, want a parse error", err)
+		}
+	})
+	t.Run("valid pem is loaded and trimmed", func(t *testing.T) {
+		ca := writeTestCA(t)
+		setEnv(t, map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k", "PANOS_CA_CERT": "  " + ca + "  "})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.CACert != ca {
+			t.Fatalf("CACert = %q, want trimmed %q", cfg.CACert, ca)
+		}
+	})
 }

@@ -34,6 +34,10 @@ type JobInput struct {
 // systemInfoHandler returns the device system info map.
 func systemInfoHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		// SystemInfo returns the map cached by run()'s startup RetrieveSystemInfo;
+		// the read lock keeps it ordered against writers (issue #14). It never
+		// re-fetches here (systemInfo is non-nil post-startup), so RLock, not Lock.
+		defer d.RLockReads()()
 		info, err := d.Client.SystemInfo(ctx)
 		if err != nil {
 			d.Logger.Error("failed: panos_system_info", "error", err)
@@ -116,6 +120,7 @@ func commitHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, CommitIn
 // jobStatusHandler polls one job by id without waiting.
 func jobStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, JobInput) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in JobInput) (*mcp.CallToolResult, any, error) {
+		defer d.RLockReads()()
 		if in.JobID == 0 {
 			res, v := errorResult("panos_job_status: job_id is required")
 			return res, v, nil
@@ -140,6 +145,10 @@ func jobStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, JobIn
 // configDiffHandler shows candidate changes versus the running config.
 func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		// Hold the read lock so the diff observes a stable candidate config and
+		// never a half-applied one while a commit or edit holds the write lock
+		// (issue #14).
+		defer d.RLockReads()()
 		type diffReq struct {
 			XMLName xml.Name `xml:"show"`
 			Cmd     string   `xml:"config>diff"`
@@ -216,6 +225,7 @@ type ZoneListInput struct {
 func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneListInput) (*mcp.CallToolResult, any, error) {
 	svc := zone.NewService(d.Client)
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in ZoneListInput) (*mcp.CallToolResult, any, error) {
+		defer d.RLockReads()()
 		var loc zone.Location
 		if d.IsPanorama {
 			if in.Template == "" {

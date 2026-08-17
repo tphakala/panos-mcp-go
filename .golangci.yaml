@@ -57,8 +57,6 @@ linters:
     - usestdlibvars
     - usetesting
     - wastedassign
-  disable:
-    - unused
   exclusions:
     rules:
       - path: '_test\.go'

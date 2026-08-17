@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -53,7 +55,11 @@ type Config struct {
 	Transport        string
 	HTTPHost         string
 	HTTPPort         int
-	LogLevel         slog.Level
+	// HTTPToken, when set, is the bearer token the http transport requires on
+	// /mcp. It is a secret: json:"-" for the same reason as APIKey and Password,
+	// and LogValue reports only http_token_set (issue #5).
+	HTTPToken string `json:"-"`
+	LogLevel  slog.Level
 }
 
 // LogValue implements slog.LogValuer. It reports whether the API key and the
@@ -79,6 +85,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("transport", c.Transport),
 		slog.String("http_host", c.HTTPHost),
 		slog.Int("http_port", c.HTTPPort),
+		slog.Bool("http_token_set", c.HTTPToken != ""),
 		slog.String("log_level", c.LogLevel.String()),
 	)
 }
@@ -105,12 +112,13 @@ func LoadConfig() (Config, error) {
 	// because it is the name pango itself reads (issue #4).
 	host, _ := envFirst("PANOS_HOST", "PANOS_HOSTNAME")
 	cfg := Config{
-		Host:     host,
-		APIKey:   strings.TrimSpace(os.Getenv("PANOS_API_KEY")),
-		Username: strings.TrimSpace(os.Getenv("PANOS_USERNAME")),
-		Password: os.Getenv("PANOS_PASSWORD"),
-		CACert:   strings.TrimSpace(os.Getenv("PANOS_CA_CERT")),
-		HTTPHost: envOr("MCP_HTTP_HOST", defaultHTTPHost),
+		Host:      host,
+		APIKey:    strings.TrimSpace(os.Getenv("PANOS_API_KEY")),
+		Username:  strings.TrimSpace(os.Getenv("PANOS_USERNAME")),
+		Password:  os.Getenv("PANOS_PASSWORD"),
+		CACert:    strings.TrimSpace(os.Getenv("PANOS_CA_CERT")),
+		HTTPHost:  envOr("MCP_HTTP_HOST", defaultHTTPHost),
+		HTTPToken: strings.TrimSpace(os.Getenv("MCP_HTTP_TOKEN")),
 		// ReadOnly defaults to true so writes are opt-in (issue #3). The assignment
 		// below overwrites it in the normal path; keeping the safe value here means
 		// that if that assignment is ever removed, the server fails closed
@@ -167,6 +175,11 @@ func LoadConfig() (Config, error) {
 
 	if cfg.HTTPPort, err = portEnv("MCP_HTTP_PORT", defaultHTTPPort); err != nil {
 		return Config{}, err
+	}
+	// Cross-field TLS and http-auth invariants that a per-field parse cannot check
+	// (issues #8, #5).
+	if verr := validateTLSAndAuth(&cfg); verr != nil {
+		return Config{}, verr
 	}
 	// Read PANOS_LOG_LEVEL only, never a bare LOG_LEVEL (issue #4): MCP clients
 	// pass their own environment down, so an unrelated LOG_LEVEL would otherwise
@@ -298,6 +311,68 @@ func readOnlyFromEnv() (bool, error) {
 		return true, err
 	}
 	return !allowWrites, nil
+}
+
+// validateTLSAndAuth enforces the cross-field invariants that a per-field parse
+// cannot: PANOS_SKIP_VERIFY and PANOS_CA_CERT are mutually exclusive, a CA bundle
+// must be readable and hold a certificate, and an http transport bound to a
+// non-loopback interface requires MCP_HTTP_TOKEN.
+func validateTLSAndAuth(cfg *Config) error {
+	// A CA bundle is pointless when verification is disabled, and pango cannot
+	// honour both at once, so silently ignoring one would hide an operator mistake
+	// (issue #8).
+	if cfg.SkipVerify && cfg.CACert != "" {
+		return errors.New(
+			"PANOS_SKIP_VERIFY=true and PANOS_CA_CERT are mutually exclusive: unset one of them")
+	}
+	// Validate the CA bundle at load time so a bad path or a non-PEM file surfaces
+	// as a uniform configuration error at startup rather than at first connect,
+	// after the server has already reported itself healthy (issue #8).
+	// buildPangoClient re-runs loadCACertPool to build the pool it actually uses.
+	if cfg.CACert != "" {
+		if _, err := loadCACertPool(cfg.CACert); err != nil {
+			return err
+		}
+	}
+	// The http transport exposes tools that read and modify firewall policy, so a
+	// non-loopback bind without a token must not start (issue #5). Fail closed; a
+	// token on a loopback bind is allowed (opt-in auth), and a stdio server ignores
+	// MCP_HTTP_HOST entirely, so only the http transport is guarded.
+	if cfg.Transport == transportHTTP && cfg.HTTPToken == "" && !isLoopback(cfg.HTTPHost) {
+		return fmt.Errorf(
+			"MCP_HTTP_TOKEN is required when MCP_HTTP_HOST (%q) is not a loopback address", cfg.HTTPHost)
+	}
+	return nil
+}
+
+// isLoopback reports whether host is a loopback bind address: "localhost"
+// (case-insensitive) or a literal IP in a loopback range (127.0.0.0/8 or ::1).
+// Anything else, including an empty string, "0.0.0.0" (all interfaces), a
+// hostname, and an IPv6 literal carrying a zone id (net.ParseIP rejects the
+// zone form, so it is not recognised as loopback), is treated as non-loopback.
+// That makes the MCP_HTTP_TOKEN guard fail closed on anything it cannot prove
+// is loopback.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+// loadCACertPool reads the PEM bundle at path into a fresh certificate pool. It
+// rejects an unreadable file and a file from which zero certificates parse,
+// naming PANOS_CA_CERT so the operator knows which variable to fix (issue #8).
+func loadCACertPool(path string) (*x509.CertPool, error) {
+	pemBytes, err := os.ReadFile(path) //nolint:gosec // G304: the CA path is an explicit operator-supplied config value (PANOS_CA_CERT), read once at startup
+	if err != nil {
+		return nil, fmt.Errorf("reading PANOS_CA_CERT: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("no certificates parsed from PANOS_CA_CERT file %s", path)
+	}
+	return pool, nil
 }
 
 // levelEnv parses a slog level, returning def when the variable is unset or

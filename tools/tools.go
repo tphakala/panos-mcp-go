@@ -22,12 +22,30 @@ type Deps struct {
 	ReadOnly   bool
 	JobWait    time.Duration
 
-	// writeMu serializes mutations: PAN-OS has one shared candidate config per
-	// device, so interleaved read-modify-write cycles race on it. Read handlers
-	// do NOT take this lock, and pango.Client is not goroutine-safe, so the
-	// server wiring must serialize handler dispatch (or add read-side locking)
-	// before running handlers concurrently.
-	writeMu sync.Mutex
+	// writeMu guards the one shared candidate config per device and orders reads
+	// against mutations. Writers (LockWrites) hold it exclusively: interleaved
+	// read-modify-write cycles would race on the candidate config. Readers
+	// (RLockReads) hold it shared, so a list or get never observes a half-applied
+	// mutation while independent reads still run concurrently. A read arriving
+	// during a commit, push, validate or revert waits until that job completes;
+	// that is intended, since its result would otherwise describe a moving target.
+	//
+	// The lock is required, not precautionary: go-sdk v1.7.0 dispatches every
+	// call except initialize asynchronously (mcp/server.go:1913 calls
+	// jsonrpc2.Async, and internal/jsonrpc2/conn.go runs each handler in its own
+	// goroutine), so handlers run concurrently even within one stdio session, and
+	// the streamable HTTP transport shares one *pango.Client across concurrent
+	// requests.
+	//
+	// Read handlers are also memory-safe on the shared *pango.Client: every
+	// shared client field is written only during startup (Setup, Initialize,
+	// RetrieveSystemInfo, IsPanorama in run()) and read-only afterwards. The read
+	// path calls Versioning(), GetTarget() and Communicate()/sendRequest(), none
+	// of which write client fields; LoadPanosConfig and RetrievePlugins, the only
+	// post-startup writers of client state, are never called by this server.
+	// VERIFIED against pango v0.10.3-0.20260731153743-efa43570c367 client.go, read
+	// 2026-08-17. Revisit on any pango upgrade.
+	writeMu sync.RWMutex
 }
 
 // LockWrites takes the mutation lock and returns the unlock function. Callers
@@ -43,9 +61,23 @@ type Deps struct {
 // Do not write "defer d.LockWrites()" (single call): defer evaluates the call
 // at function exit, so the body would run unlocked and the lock would then be
 // taken and never released.
+//
+// Write handlers take this exclusive lock; read handlers take RLockReads.
 func (d *Deps) LockWrites() func() {
 	d.writeMu.Lock()
 	return d.writeMu.Unlock
+}
+
+// RLockReads takes the shared (read) side of the mutation lock and returns the
+// unlock function. It follows the same capture-and-defer contract as LockWrites:
+//
+//	defer d.RLockReads()()
+//
+// never "defer d.RLockReads()" (single call). Concurrent readers hold it at the
+// same time; a writer waiting on LockWrites blocks until every reader releases.
+func (d *Deps) RLockReads() func() {
+	d.writeMu.RLock()
+	return d.writeMu.RUnlock
 }
 
 const (
@@ -266,6 +298,7 @@ func listHandler[L, E any](
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in ListInput) (*mcp.CallToolResult, any, error) {
+		defer d.RLockReads()()
 		d.Logger.Debug(tool, "limit", in.Limit, "offset", in.Offset, "filter", in.Filter)
 		loc, err := resolve(in.Location)
 		if err != nil {
@@ -305,6 +338,7 @@ func getHandler[L, E any](
 	resolve func(LocationInput) (L, error),
 ) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in NameInput) (*mcp.CallToolResult, any, error) {
+		defer d.RLockReads()()
 		if in.Name == "" {
 			res, v := errorResult("%s: name is required", tool)
 			return res, v, nil
