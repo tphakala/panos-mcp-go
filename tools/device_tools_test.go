@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/PaloAltoNetworks/pango"
 	"github.com/PaloAltoNetworks/pango/commit"
+	"github.com/PaloAltoNetworks/pango/panorama/devicegroup"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -72,6 +74,14 @@ func validateRoute() fakeRoute {
 func assertRequestSent(t *testing.T, f *fakeAPI, match func(url.Values) bool, msg string) {
 	t.Helper()
 	if !slices.ContainsFunc(f.Requests(), match) {
+		t.Fatal(msg)
+	}
+}
+
+// assertNoRequestSent fails the test if any recorded request matches.
+func assertNoRequestSent(t *testing.T, f *fakeAPI, match func(url.Values) bool, msg string) {
+	t.Helper()
+	if slices.ContainsFunc(f.Requests(), match) {
 		t.Fatal(msg)
 	}
 }
@@ -511,6 +521,21 @@ func TestZoneListFirewallAndPanorama(t *testing.T) {
 	})
 }
 
+// TestZoneListError drives zoneListHandler's svc.List error branch: a PAN-OS
+// error on the config get must surface as IsError carrying both the device
+// message and the tool name.
+func TestZoneListError(t *testing.T) {
+	errBody := `<response status="error"><msg><line>Invalid zone query</line></msg></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
+	res, _, _ := zoneListHandler(d)(t.Context(), nil, ZoneListInput{})
+	if !res.IsError {
+		t.Fatal("zone list error must surface as IsError")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "Invalid zone query") || !strings.Contains(body, "failed: panos_zone_list") {
+		t.Fatalf("error must carry the PAN-OS line and the tool name: %s", body)
+	}
+}
+
 func TestPushRequiresPanorama(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM")
 	res, _, err := pushHandler(d)(t.Context(), nil, PushInput{DeviceGroup: "dg1"})
@@ -523,11 +548,8 @@ func TestPushRequiresPanorama(t *testing.T) {
 	if !strings.Contains(textContent(t, res), "requires a Panorama connection") {
 		t.Fatalf("wrong rejection: %s", textContent(t, res))
 	}
-	for _, req := range f.Requests() {
-		if req.Get("type") == "commit" {
-			t.Fatal("no commit-all may be sent on a firewall")
-		}
-	}
+	assertNoRequestSent(t, f, func(v url.Values) bool { return v.Get("type") == "commit" },
+		"no commit-all may be sent on a firewall")
 }
 
 func TestPushRequiresDeviceGroup(t *testing.T) {
@@ -542,11 +564,8 @@ func TestPushRequiresDeviceGroup(t *testing.T) {
 	if !strings.Contains(textContent(t, res), "device_group is required") {
 		t.Fatalf("wrong rejection: %s", textContent(t, res))
 	}
-	for _, req := range f.Requests() {
-		if req.Get("type") == "commit" {
-			t.Fatal("no commit-all may be sent without a device group")
-		}
-	}
+	assertNoRequestSent(t, f, func(v url.Values) bool { return v.Get("type") == "commit" },
+		"no commit-all may be sent without a device group")
 }
 
 func TestPushCommitAll(t *testing.T) {
@@ -566,6 +585,22 @@ func TestPushCommitAll(t *testing.T) {
 	}, "commit-all request for the device group not recorded")
 }
 
+// TestPushErrorSurfaces drives pushHandler's StartJob error branch: a PAN-OS
+// error on the commit-all enqueue must surface as IsError carrying both the
+// device message and the tool name.
+func TestPushErrorSurfaces(t *testing.T) {
+	errBody := `<response status="error" code="13"><msg><line>commit-all rejected: device offline</line></msg></response>`
+	d, _ := newTestDeps(t, "Panorama",
+		fakeRoute{Match: func(v url.Values) bool { return v.Get("type") == "commit" && v.Get("action") == "all" }, Body: errBody})
+	res, _, _ := pushHandler(d)(t.Context(), nil, PushInput{DeviceGroup: "dg1"})
+	if !res.IsError {
+		t.Fatal("a rejected commit-all must surface as IsError")
+	}
+	if body := textContent(t, res); !strings.Contains(body, "device offline") || !strings.Contains(body, "failed: panos_push") {
+		t.Fatalf("error must carry the PAN-OS line and the tool name: %s", body)
+	}
+}
+
 func TestPushHoldsWriteLock(t *testing.T) {
 	d, f := newTestDeps(t, "Panorama", pushRoute(), jobRoute(jobFinBody))
 	assertHoldsWriteLock(t, d, f, func() (*mcp.CallToolResult, any, error) {
@@ -583,7 +618,7 @@ const deviceGroupListBody = `<response status="success"><result>` +
 
 func TestDeviceGroupList(t *testing.T) {
 	d, _ := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: deviceGroupListBody})
-	res, _, err := deviceGroupListHandler(d)(t.Context(), nil, ListInput{})
+	res, _, err := deviceGroupListHandler(d)(t.Context(), nil, PanoramaListInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,17 +630,36 @@ func TestDeviceGroupList(t *testing.T) {
 		t.Fatalf("summary missing name, description or templates: %s", body)
 	}
 
-	// A Panorama-level list rejects any location scoping in the input rather than
-	// silently ignoring it.
-	res, _, err = deviceGroupListHandler(d)(t.Context(), nil, ListInput{Location: LocationInput{Vsys: "vsys1"}})
+	// A case-insensitive filter that matches the entry name keeps it.
+	res, _, err = deviceGroupListHandler(d)(t.Context(), nil, PanoramaListInput{Filter: "DG"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.IsError {
-		t.Fatal("device group list must reject a location input")
+	if res.IsError {
+		t.Fatalf("filtered device group list failed: %s", textContent(t, res))
 	}
-	if !strings.Contains(textContent(t, res), "location does not apply") {
-		t.Fatalf("wrong rejection: %s", textContent(t, res))
+	if body := textContent(t, res); !strings.Contains(body, `"total": 1`) || !strings.Contains(body, "dg1") {
+		t.Fatalf("matching filter must return the entry: %s", body)
+	}
+
+	// A non-matching filter returns nothing.
+	res, _, err = deviceGroupListHandler(d)(t.Context(), nil, PanoramaListInput{Filter: "zzz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("filtered device group list failed: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"total": 0`) {
+		t.Fatalf("non-matching filter must return no entries: %s", body)
+	}
+
+	// PanoramaListInput carries no location, so the tool schema cannot advertise
+	// one; panoramaFixedResolve still rejects a non-empty location for direct Go
+	// callers, which keeps that guard covered after the schema change.
+	if _, err := panoramaFixedResolve("panos_device_group_list",
+		devicegroup.Location{Panorama: &devicegroup.PanoramaLocation{PanoramaDevice: defaultPanoramaDevice}})(LocationInput{Vsys: "vsys1"}); err == nil || !strings.Contains(err.Error(), "location does not apply") {
+		t.Fatalf("panoramaFixedResolve must reject a non-empty location, got %v", err)
 	}
 }
 
@@ -616,7 +670,7 @@ const templateListBody = `<response status="success"><result>` +
 
 func TestTemplateList(t *testing.T) {
 	d, _ := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: templateListBody})
-	res, _, err := templateListHandler(d)(t.Context(), nil, ListInput{})
+	res, _, err := templateListHandler(d)(t.Context(), nil, PanoramaListInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,8 +681,33 @@ func TestTemplateList(t *testing.T) {
 	if !strings.Contains(body, "edge-template") || !strings.Contains(body, "edge sites") {
 		t.Fatalf("summary missing name or description: %s", body)
 	}
+
+	// A case-insensitive filter that matches the entry name keeps it.
+	res, _, err = templateListHandler(d)(t.Context(), nil, PanoramaListInput{Filter: "EDGE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("filtered template list failed: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"total": 1`) || !strings.Contains(body, "edge-template") {
+		t.Fatalf("matching filter must return the entry: %s", body)
+	}
+
+	// A non-matching filter returns nothing.
+	res, _, err = templateListHandler(d)(t.Context(), nil, PanoramaListInput{Filter: "zzz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("filtered template list failed: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"total": 0`) {
+		t.Fatalf("non-matching filter must return no entries: %s", body)
+	}
 }
 
+//nolint:gocognit // three independent registration-gate scenarios (firewall write, panorama read-only, panorama write), each a simple present/absent tool-name sweep.
 func TestRegisterDeviceToolsGates(t *testing.T) {
 	t.Run("firewall write mode", func(t *testing.T) {
 		d, _ := newTestDeps(t, "PA-VM")
@@ -667,4 +746,77 @@ func TestRegisterDeviceToolsGates(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("panorama write mode", func(t *testing.T) {
+		d, _ := newTestDeps(t, "Panorama")
+		d.ReadOnly = false
+		s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+		RegisterDeviceTools(s, d)
+		names := serverToolNames(t, s)
+		for _, n := range []string{
+			"panos_commit", "panos_validate", "panos_revert", "panos_push",
+			"panos_device_group_list", "panos_template_list",
+		} {
+			if !names[n] {
+				t.Errorf("panorama write: %q must be registered", n)
+			}
+		}
+	})
+}
+
+// TestPanoramaListSchemasOmitLocation pins that the two Panorama list tools take
+// PanoramaListInput, not ListInput: their advertised input schema must expose
+// filter but never a location parameter, since panoramaFixedResolve always
+// rejects a non-empty location.
+func TestPanoramaListSchemasOmitLocation(t *testing.T) {
+	ctx := t.Context()
+	d, _ := newTestDeps(t, "Panorama")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	RegisterDeviceTools(srv, d)
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := ss.Close(); err != nil {
+			t.Errorf("server session close: %v", err)
+		}
+	})
+	cli := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := cli.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client session close: %v", err)
+		}
+	})
+
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemas := make(map[string]string, len(res.Tools))
+	for _, tl := range res.Tools {
+		b, err := json.Marshal(tl.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s input schema: %v", tl.Name, err)
+		}
+		schemas[tl.Name] = string(b)
+	}
+	for _, n := range []string{"panos_device_group_list", "panos_template_list"} {
+		sc, ok := schemas[n]
+		if !ok {
+			t.Fatalf("%s not registered on a Panorama server", n)
+		}
+		if !strings.Contains(sc, "filter") {
+			t.Fatalf("%s schema must expose the filter parameter: %s", n, sc)
+		}
+		if strings.Contains(sc, "location") {
+			t.Fatalf("%s schema must not advertise a location parameter: %s", n, sc)
+		}
+	}
 }

@@ -394,7 +394,7 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	}, securityRuleCreateHandler(d, raw))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_update",
-		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). position is ignored here; use panos_security_rule_move. Candidate config only.",
+		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). position is ignored here; use panos_security_rule_move. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update security rule"),
 	}, updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update", svc, resolve, loc,
 		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule))
@@ -405,7 +405,7 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	}, deleteHandler[security.Location, security.Entry](d, "panos_security_rule_delete", svc, resolve))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_move",
-		Description: "Move a security rule within its rulebase: top, bottom, or directly before/after another rule. Candidate config only.",
+		Description: "Move a security rule within its rulebase: top, bottom, or directly before/after another rule. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Move security rule"),
 	}, moveHandler[security.Location, security.Entry](d, "panos_security_rule_move", svc, raw, resolve))
 }
@@ -697,7 +697,7 @@ func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
 	}, natRuleCreateHandler(d, raw))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_nat_rule_update",
-		Description: "Update a NAT rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided snat_ field replaces the WHOLE source translation; a provided dnat_address MERGES into the existing destination translation, so omitting dnat_port keeps the rule's existing translated port (clearing a translation, or just its port, is not supported here: delete and recreate). position is ignored; use panos_nat_rule_move. Candidate config only.",
+		Description: "Update a NAT rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided snat_ field replaces the WHOLE source translation; a provided dnat_address MERGES into the existing destination translation, so omitting dnat_port keeps the rule's existing translated port (clearing a translation, or just its port, is not supported here: delete and recreate). position is ignored; use panos_nat_rule_move. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update NAT rule"),
 	}, updateHandler[nat.Location, nat.Entry, NatRuleInput](d, "panos_nat_rule_update", svc, resolve, loc,
 		func(in NatRuleInput) string { return in.Name }, overlayNatRule))
@@ -708,7 +708,7 @@ func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
 	}, deleteHandler[nat.Location, nat.Entry](d, "panos_nat_rule_delete", svc, resolve))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_nat_rule_move",
-		Description: "Move a NAT rule within its rulebase: top, bottom, or directly before/after another rule. Candidate config only.",
+		Description: "Move a NAT rule within its rulebase: top, bottom, or directly before/after another rule. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Move NAT rule"),
 	}, moveHandler[nat.Location, nat.Entry](d, "panos_nat_rule_move", svc, raw, resolve))
 }
