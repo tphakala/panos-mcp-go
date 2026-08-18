@@ -257,7 +257,7 @@ func RegisterCustomURLCategoryTools(s *mcp.Server, d *Deps) {
 	}, createHandler[customurlcategory.Location, customurlcategory.Entry, CustomURLCategoryInput](d, "panos_custom_url_category_create", svc, resolve, loc, buildCustomURLCategoryEntry, customURLCategorySummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_custom_url_category_update",
-		Description: "Update a custom URL category: read-modify-write, only provided fields change. A non-empty members list replaces the full list; an explicitly empty list is rejected. Switching type keeps the existing members (one shared list on the wire), so the device validates that members match the new kind; change type and members together. Candidate config only; run panos_commit to apply.",
+		Description: "Update a custom URL category: read-modify-write, only provided fields change. A non-empty members list replaces the full list; an explicitly empty list is rejected. Switching type keeps the existing members (one shared list on the wire); the members must match the new kind, so change type and members together. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update custom URL category"),
 	}, updateHandler[customurlcategory.Location, customurlcategory.Entry, CustomURLCategoryInput](d, "panos_custom_url_category_update", svc, resolve, loc,
 		func(in CustomURLCategoryInput) string { return in.Name }, overlayCustomURLCategory, customURLCategorySummary))
@@ -444,6 +444,12 @@ func buildScheduleBranch(e *schedules.Entry, in *ScheduleInput) error {
 			rec = &schedules.ScheduleTypeRecurring{}
 			st.Recurring = rec
 		}
+		// Carry the existing weekly struct's unknown XML across the rebuild so a
+		// same-type update preserves nested Misc (the PR #62 lesson), consistent
+		// with the reuse of *ScheduleType and *ScheduleTypeRecurring above.
+		if rec.Weekly != nil {
+			w.Misc, w.MiscAttributes = rec.Weekly.Misc, rec.Weekly.MiscAttributes
+		}
 		rec.Daily = nil
 		rec.Weekly = w
 	}
@@ -478,10 +484,16 @@ func overlayScheduleInBranch(e *schedules.Entry, in *ScheduleInput, timesProvide
 		if timesProvided {
 			return errors.New("this schedule is weekly; use the per-day lists, not time_ranges")
 		}
-		scheduleOverlayWeeklyDays(st.Recurring.Weekly, in)
-		if !scheduleWeeklyHasAny(st.Recurring.Weekly) {
+		// Overlay onto a copy and commit only when valid, so a rejected overlay
+		// leaves the entry untouched (the invariant the sibling overlays hold).
+		// The shallow copy is safe: the day lists are replaced wholesale, never
+		// mutated in place, and the copy carries the struct's Misc.
+		merged := *st.Recurring.Weekly
+		scheduleOverlayWeeklyDays(&merged, in)
+		if !scheduleWeeklyHasAny(&merged) {
 			return errors.New("a weekly schedule must keep at least one day with time ranges")
 		}
+		*st.Recurring.Weekly = merged
 	default:
 		return errors.New("this schedule has no recognized type; provide schedule_type")
 	}
@@ -669,7 +681,7 @@ type EdlInput struct {
 	ExceptionList       []string      `json:"exception_list,omitempty" jsonschema:"Entries excluded from the list; replaces fully when provided, an explicitly empty list clears it"`
 	CertificateProfile  string        `json:"certificate_profile,omitempty" jsonschema:"Certificate profile for HTTPS source validation; ip, domain, and url types only"`
 	ExpandDomain        *bool         `json:"expand_domain,omitempty" jsonschema:"Expand to include subdomains; domain type only"`
-	Recurring           string        `json:"recurring,omitempty" jsonschema:"Refresh interval: five-minute, hourly, daily, weekly, monthly; ip, domain, and url types only. Omitted leaves the device default"`
+	Recurring           string        `json:"recurring,omitempty" jsonschema:"Refresh interval: five-minute, hourly, daily, weekly, monthly; ip, domain, and url types only. Omitted leaves recurring unset"`
 	RecurringAt         string        `json:"recurring_at,omitempty" jsonschema:"Refresh time; daily, weekly, and monthly intervals only. Device-validated format"`
 	RecurringDayOfWeek  string        `json:"recurring_day_of_week,omitempty" jsonschema:"Weekly refresh day (sunday..saturday); weekly interval only"`
 	RecurringDayOfMonth *int64        `json:"recurring_day_of_month,omitempty" jsonschema:"Monthly refresh day 1-31; monthly interval only"`
@@ -1026,6 +1038,14 @@ func applyEdlSource(e *extdynlist.Entry, in *EdlInput) error {
 	if err != nil {
 		return err
 	}
+	// Carry the <type> element's unknown XML across the wholesale rebuild (the
+	// PR #62 nested-Misc lesson), matching how schedule and zone preserve their
+	// container Misc. The chosen branch is redefined from the input by design (a
+	// provided type is a full source redefinition), so only the type-container
+	// Misc carries over, not the old branch's.
+	if e.Type != nil {
+		t.Misc, t.MiscAttributes = e.Type.Misc, e.Type.MiscAttributes
+	}
 	e.Type = t
 	return nil
 }
@@ -1181,7 +1201,7 @@ func RegisterEdlTools(s *mcp.Server, d *Deps) {
 	}, createHandler[extdynlist.Location, extdynlist.Entry, EdlInput](d, "panos_edl_create", svc, resolve, loc, buildEdlEntry, edlDetail))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_edl_update",
-		Description: "Update an external dynamic list: read-modify-write, only provided fields change. A provided type replaces the whole source definition (url required); without a type, url/description/exception_list/recurring overlay within the current type. exception_list replaces fully (an empty list clears it). Candidate config only; run panos_commit to apply.",
+		Description: "Update an external dynamic list: read-modify-write, only provided fields change. A provided type replaces the whole source definition (url required); without a type, the source fields (url, description, exception_list, certificate_profile, expand_domain, recurring) overlay within the current type, and a field not valid for that type is rejected (for example expand_domain applies to domain only, and predefined lists take none of certificate_profile, expand_domain, or recurring). exception_list replaces fully (an empty list clears it). Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update EDL"),
 	}, updateHandler[extdynlist.Location, extdynlist.Entry, EdlInput](d, "panos_edl_update", svc, resolve, loc,
 		func(in EdlInput) string { return in.Name }, overlayEdl, edlDetail))

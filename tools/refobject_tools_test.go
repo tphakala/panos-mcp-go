@@ -388,12 +388,18 @@ func TestOverlayScheduleInBranch(t *testing.T) {
 			t.Fatalf("tuesday must be cleared by an explicit empty list: %v", w.Tuesday)
 		}
 	})
-	t.Run("clearing every weekly day rejected", func(t *testing.T) {
+	t.Run("clearing every weekly day rejected leaves entry untouched", func(t *testing.T) {
 		e := &schedules.Entry{Name: "s", ScheduleType: &schedules.ScheduleType{Recurring: &schedules.ScheduleTypeRecurring{Weekly: &schedules.ScheduleTypeRecurringWeekly{
 			Monday: []string{"09:00-17:00"},
 		}}}}
 		if err := overlaySchedule(e, ScheduleInput{Monday: []string{}}); err == nil || !strings.Contains(err.Error(), "at least one day") {
 			t.Fatalf("emptying the last day must be rejected: %v", err)
+		}
+		// A rejected overlay must not have mutated the entry (the invariant the
+		// sibling overlays hold; the overlay applies onto a copy and commits only
+		// when valid).
+		if len(e.ScheduleType.Recurring.Weekly.Monday) != 1 {
+			t.Fatalf("a rejected weekly overlay must leave Monday untouched, got: %v", e.ScheduleType.Recurring.Weekly.Monday)
 		}
 	})
 	t.Run("no type and no fields on a typeless schedule leaves it", func(t *testing.T) {
@@ -430,6 +436,14 @@ func TestScheduleSummary(t *testing.T) {
 		tr, ok := m["time_ranges"].([]string)
 		if m["schedule_type"] != "daily" || !ok || len(tr) != 1 {
 			t.Fatalf("daily summary wrong: %v", m)
+		}
+	})
+	t.Run("non-recurring exposes time_ranges", func(t *testing.T) {
+		e := &schedules.Entry{Name: "s", ScheduleType: &schedules.ScheduleType{NonRecurring: []string{"2026/01/01@09:00-2026/01/01@17:00"}}}
+		m := asMap(t, scheduleSummary(e))
+		tr, ok := m["time_ranges"].([]string)
+		if m["schedule_type"] != "non-recurring" || !ok || len(tr) != 1 {
+			t.Fatalf("non-recurring summary wrong: %v", m)
 		}
 	})
 }
@@ -709,4 +723,147 @@ func TestRegisterEdlToolsReadOnly(t *testing.T) {
 	assertReadOnlyGating(t, RegisterEdlTools,
 		[]string{"panos_edl_list", "panos_edl_get"},
 		[]string{"panos_edl_create", "panos_edl_update", "panos_edl_delete"})
+}
+
+// TestBuildEdlUrlAndPredefinedUrl covers the two settable types the other build
+// tests omit (url and predefined-url), so their build branches are exercised.
+func TestBuildEdlUrlAndPredefinedUrl(t *testing.T) {
+	t.Run("url type builds the url branch with recurring", func(t *testing.T) {
+		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "url", URL: "https://x/list", Description: "d", CertificateProfile: "cp", Recurring: "five-minute"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Type.Url == nil || strVal(e.Type.Url.Url) != "https://x/list" || strVal(e.Type.Url.CertificateProfile) != "cp" || e.Type.Url.Recurring.FiveMinute == nil {
+			t.Fatalf("url branch wrong: %+v", e.Type.Url)
+		}
+		if asMap(t, edlDetail(e))[typeKey] != "url" {
+			t.Fatalf("url detail type wrong")
+		}
+	})
+	t.Run("predefined-url builds the predefined-url branch", func(t *testing.T) {
+		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "predefined-url", URL: "panw-auth-portal-exclude-list", ExceptionList: []string{"x.com"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Type.PredefinedUrl == nil || strVal(e.Type.PredefinedUrl.Url) != "panw-auth-portal-exclude-list" || len(e.Type.PredefinedUrl.ExceptionList) != 1 {
+			t.Fatalf("predefined-url branch wrong: %+v", e.Type.PredefinedUrl)
+		}
+		det := asMap(t, edlDetail(e))
+		if det[typeKey] != "predefined-url" || det["url"] != "panw-auth-portal-exclude-list" {
+			t.Fatalf("predefined-url detail wrong: %v", det)
+		}
+	})
+}
+
+// TestEdlRecurringMatrixBuildAndReadback exercises every recurring frequency
+// through build and the edlDetail readback, closing the partial-matrix gap.
+//
+//nolint:gocognit,gocyclo // one independent subtest per recurring frequency.
+func TestEdlRecurringMatrixBuildAndReadback(t *testing.T) {
+	ip := func(rec, at, dow string, dom *int64) *extdynlist.Entry {
+		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "ip", URL: "x", Recurring: rec, RecurringAt: at, RecurringDayOfWeek: dow, RecurringDayOfMonth: dom})
+		if err != nil {
+			t.Fatalf("build %s: %v", rec, err)
+		}
+		return e
+	}
+	t.Run("five-minute", func(t *testing.T) {
+		e := ip("five-minute", "", "", nil)
+		if e.Type.Ip.Recurring.FiveMinute == nil {
+			t.Fatal("five-minute branch not built")
+		}
+		if asMap(t, edlDetail(e))["recurring"] != "five-minute" {
+			t.Fatal("five-minute readback wrong")
+		}
+	})
+	t.Run("daily", func(t *testing.T) {
+		e := ip("daily", "03:00", "", nil)
+		if e.Type.Ip.Recurring.Daily == nil || strVal(e.Type.Ip.Recurring.Daily.At) != "03:00" {
+			t.Fatalf("daily branch wrong: %+v", e.Type.Ip.Recurring.Daily)
+		}
+		if asMap(t, edlDetail(e))["recurring_at"] != "03:00" {
+			t.Fatal("daily at readback wrong")
+		}
+	})
+	t.Run("monthly day_of_month readback", func(t *testing.T) {
+		e := ip("monthly", "03:00", "", ptr(int64(15)))
+		if e.Type.Ip.Recurring.Monthly == nil || *e.Type.Ip.Recurring.Monthly.DayOfMonth != 15 {
+			t.Fatalf("monthly branch wrong: %+v", e.Type.Ip.Recurring.Monthly)
+		}
+		det := asMap(t, edlDetail(e))
+		if det["recurring"] != "monthly" || det["recurring_day_of_month"] != int64(15) {
+			t.Fatalf("monthly readback wrong: %v", det)
+		}
+	})
+	t.Run("domain hourly", func(t *testing.T) {
+		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "domain", URL: "x", Recurring: "hourly"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Type.Domain.Recurring.Hourly == nil {
+			t.Fatalf("domain hourly not built: %+v", e.Type.Domain.Recurring)
+		}
+		if asMap(t, edlDetail(e))["recurring"] != "hourly" {
+			t.Fatal("domain hourly readback wrong")
+		}
+	})
+}
+
+// TestOverlayEdlPredefinedInBranch exercises the predefined in-branch overlay
+// arm (edlOverlayPredefined), which the ip-only overlay test does not reach.
+func TestOverlayEdlPredefinedInBranch(t *testing.T) {
+	t.Run("url and description overlay", func(t *testing.T) {
+		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{PredefinedIp: &extdynlist.TypePredefinedIp{Url: ptr("old")}}}
+		if err := overlayEdl(e, EdlInput{URL: "new", Description: "d"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.Type.PredefinedIp.Url) != "new" || strVal(e.Type.PredefinedIp.Description) != "d" {
+			t.Fatalf("predefined overlay wrong: %+v", e.Type.PredefinedIp)
+		}
+	})
+	t.Run("recurring rejected on a predefined branch", func(t *testing.T) {
+		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{PredefinedUrl: &extdynlist.TypePredefinedUrl{Url: ptr("x")}}}
+		if err := overlayEdl(e, EdlInput{Recurring: "hourly"}); err == nil || !strings.Contains(err.Error(), "predefined lists have no recurring") {
+			t.Fatalf("recurring on a predefined branch must be rejected: %v", err)
+		}
+	})
+}
+
+// TestOverlayEdlTypeSwitchPreservesTypeMisc pins that the <type> element's
+// unknown XML survives a wholesale type switch (consistent with schedule/zone).
+func TestOverlayEdlTypeSwitchPreservesTypeMisc(t *testing.T) {
+	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{
+		Ip:             &extdynlist.TypeIp{Url: ptr("old")},
+		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
+	}}
+	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Type.MiscAttributes) != 1 || e.Type.MiscAttributes[0].Value != "keep-me" {
+		t.Fatalf("the <type> element's unknown XML must survive a type switch: %+v", e.Type.MiscAttributes)
+	}
+}
+
+// TestBuildScheduleWeeklyPreservesMisc pins that a same-type weekly rebuild keeps
+// the weekly struct's unknown XML while wholesale-replacing the days.
+func TestBuildScheduleWeeklyPreservesMisc(t *testing.T) {
+	e := &schedules.Entry{Name: "s", ScheduleType: &schedules.ScheduleType{Recurring: &schedules.ScheduleTypeRecurring{Weekly: &schedules.ScheduleTypeRecurringWeekly{
+		Monday:         []string{"09:00-17:00"},
+		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
+	}}}}
+	if err := overlaySchedule(e, ScheduleInput{ScheduleType: "weekly", Tuesday: []string{"08:00-12:00"}}); err != nil {
+		t.Fatal(err)
+	}
+	w := e.ScheduleType.Recurring.Weekly
+	if len(w.MiscAttributes) != 1 || w.MiscAttributes[0].Value != "keep-me" {
+		t.Fatalf("weekly unknown XML must survive a rebuild: %+v", w.MiscAttributes)
+	}
+	// A provided schedule_type is a wholesale rebuild: Monday (absent from the
+	// input) is cleared, Tuesday is set.
+	if len(w.Monday) != 0 {
+		t.Fatalf("wholesale weekly rebuild must clear an unprovided day, got Monday=%v", w.Monday)
+	}
+	if len(w.Tuesday) != 1 {
+		t.Fatalf("tuesday not set: %v", w.Tuesday)
+	}
 }

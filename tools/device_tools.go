@@ -372,7 +372,7 @@ type ZoneWriteInput struct {
 	Vsys                         string   `json:"vsys,omitempty" jsonschema:"Firewall vsys (default vsys1); firewall only, rejected on Panorama"`
 	Template                     string   `json:"template,omitempty" jsonschema:"Template name; required on Panorama, rejected on a firewall"`
 	NetworkType                  string   `json:"network_type,omitempty" jsonschema:"layer3, layer2, virtual-wire, tap, external, or tunnel. Required on create; on update a provided value replaces the type and its interface list"`
-	Interfaces                   []string `json:"interfaces,omitempty" jsonschema:"Member interfaces of the network type (for external: the external zone members); replaces fully when provided, not allowed with tunnel"`
+	Interfaces                   []string `json:"interfaces,omitempty" jsonschema:"Member interfaces of the network type (for external: the external zone members); replaces fully when provided (an explicit empty list clears them, keeping the type), not allowed with tunnel"`
 	ZoneProtectionProfile        string   `json:"zone_protection_profile,omitempty"`
 	LogSetting                   string   `json:"log_setting,omitempty" jsonschema:"Log forwarding profile for zone-protection logs"`
 	EnablePacketBufferProtection *bool    `json:"enable_packet_buffer_protection,omitempty"`
@@ -409,6 +409,10 @@ func nonNilStrings(in []string) []string {
 // reusing n so the protection fields and Network.Misc survive a type switch (the
 // nested-Misc lesson from PR #62).
 func zoneSetNetworkType(n *zone.Network, networkType string, interfaces []string) {
+	// Capture the tunnel branch before clearing so a tunnel-to-tunnel rebuild
+	// keeps its unknown XML (the interface branches are []string and carry no
+	// Misc, so only tunnel needs this).
+	oldTunnel := n.Tunnel
 	n.Layer3, n.Layer2, n.VirtualWire, n.Tap, n.External, n.Tunnel = nil, nil, nil, nil, nil, nil
 	switch networkType {
 	case zoneTypeLayer3:
@@ -422,7 +426,11 @@ func zoneSetNetworkType(n *zone.Network, networkType string, interfaces []string
 	case zoneTypeExternal:
 		n.External = nonNilStrings(interfaces)
 	case zoneTypeTunnel:
-		n.Tunnel = &zone.NetworkTunnel{}
+		if oldTunnel != nil {
+			n.Tunnel = oldTunnel
+		} else {
+			n.Tunnel = &zone.NetworkTunnel{}
+		}
 	}
 }
 
@@ -468,7 +476,7 @@ func applyZoneNetwork(e *zone.Entry, in *ZoneWriteInput) error {
 	if in.EnableDeviceIdentification != nil {
 		e.EnableDeviceIdentification = in.EnableDeviceIdentification
 	}
-	networkFieldProvided := in.NetworkType != "" || len(in.Interfaces) > 0 ||
+	networkFieldProvided := in.NetworkType != "" || in.Interfaces != nil ||
 		in.ZoneProtectionProfile != "" || in.LogSetting != "" || in.EnablePacketBufferProtection != nil
 	if !networkFieldProvided {
 		return nil
@@ -491,7 +499,10 @@ func applyZoneNetwork(e *zone.Entry, in *ZoneWriteInput) error {
 		zoneSetNetworkType(n, in.NetworkType, in.Interfaces)
 		return nil
 	}
-	if len(in.Interfaces) > 0 {
+	// A provided interfaces list (including an explicit empty list, which clears
+	// the members while keeping the type) replaces the current branch. An omitted
+	// list (nil) leaves it untouched.
+	if in.Interfaces != nil {
 		return zoneReplaceInterfaces(n, in.Interfaces)
 	}
 	return nil

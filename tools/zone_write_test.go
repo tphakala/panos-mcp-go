@@ -315,3 +315,96 @@ func TestRegisterZoneWriteToolsReadOnly(t *testing.T) {
 		[]string{"panos_zone_list"},
 		[]string{"panos_zone_create", "panos_zone_update", "panos_zone_delete"})
 }
+
+// TestBuildZoneEntryAllInterfaceTypes exercises every interface-typed branch
+// through the builder and the summary, closing the virtual-wire/tap/external gap.
+func TestBuildZoneEntryAllInterfaceTypes(t *testing.T) {
+	for _, nt := range []string{"layer3", "layer2", "virtual-wire", "tap", "external"} {
+		t.Run(nt, func(t *testing.T) {
+			e, err := buildZoneEntry(&ZoneWriteInput{Name: "z", NetworkType: nt, Interfaces: []string{"ethernet1/1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := zoneNetworkTypeString(e.Network); got != nt {
+				t.Fatalf("network_type %q not built, zoneNetworkTypeString returned %q", nt, got)
+			}
+			if ifs := zoneInterfaces(e.Network); len(ifs) != 1 || ifs[0] != "ethernet1/1" {
+				t.Fatalf("interfaces wrong for %q: %v", nt, ifs)
+			}
+			if m := asMap(t, zoneSummary(e)); m["network_type"] != nt {
+				t.Fatalf("summary network_type wrong for %q: %v", nt, m["network_type"])
+			}
+		})
+	}
+}
+
+// TestBuildZoneEntryToggles exercises the toggle setters the other build tests
+// omit (log_setting, packet-buffer-protection, device-identification).
+func TestBuildZoneEntryToggles(t *testing.T) {
+	e, err := buildZoneEntry(&ZoneWriteInput{
+		Name: "z", NetworkType: "layer3", LogSetting: "lf",
+		EnablePacketBufferProtection: ptr(true),
+		EnableDeviceIdentification:   ptr(true),
+		EnableUserIdentification:     ptr(false),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strVal(e.Network.LogSetting) != "lf" {
+		t.Fatalf("log_setting not set: %v", strVal(e.Network.LogSetting))
+	}
+	if !boolVal(e.Network.EnablePacketBufferProtection) {
+		t.Fatal("enable_packet_buffer_protection must be set true")
+	}
+	if !boolVal(e.EnableDeviceIdentification) {
+		t.Fatal("enable_device_identification must be set true")
+	}
+	if e.EnableUserIdentification == nil || *e.EnableUserIdentification {
+		t.Fatalf("enable_user_identification must be set to false, got %v", e.EnableUserIdentification)
+	}
+	m := asMap(t, zoneSummary(e))
+	if m["log_setting"] != "lf" || m["enable_packet_buffer_protection"] != true || m["enable_device_identification"] != true {
+		t.Fatalf("summary toggles wrong: %v", m)
+	}
+}
+
+// TestOverlayZoneClearInterfaces pins that an explicit empty interfaces list
+// clears the members while keeping the type marker, and that an omitted list
+// leaves the branch untouched.
+func TestOverlayZoneClearInterfaces(t *testing.T) {
+	t.Run("explicit empty list clears but keeps the type", func(t *testing.T) {
+		e := &zone.Entry{Name: "z", Network: &zone.Network{Layer3: []string{"ethernet1/1", "ethernet1/2"}}}
+		if err := overlayZone(e, &ZoneWriteInput{Interfaces: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Network.Layer3 == nil || len(e.Network.Layer3) != 0 {
+			t.Fatalf("an explicit empty interfaces list must clear the members but keep the non-nil type marker, got %#v", e.Network.Layer3)
+		}
+		if zoneNetworkTypeString(e.Network) != "layer3" {
+			t.Fatalf("clearing interfaces must keep the layer3 type: %s", zoneNetworkTypeString(e.Network))
+		}
+	})
+	t.Run("omitted interfaces leave the branch untouched", func(t *testing.T) {
+		e := &zone.Entry{Name: "z", Network: &zone.Network{Layer3: []string{"ethernet1/1"}}}
+		if err := overlayZone(e, &ZoneWriteInput{ZoneProtectionProfile: "zpp"}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Network.Layer3) != 1 {
+			t.Fatalf("omitted interfaces must not clear the branch, got %v", e.Network.Layer3)
+		}
+	})
+}
+
+// TestZoneTunnelRebuildPreservesMisc pins that a tunnel-to-tunnel rebuild keeps
+// the tunnel struct's unknown XML (the interface branches carry no Misc).
+func TestZoneTunnelRebuildPreservesMisc(t *testing.T) {
+	e := &zone.Entry{Name: "z", Network: &zone.Network{Tunnel: &zone.NetworkTunnel{
+		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
+	}}}
+	if err := overlayZone(e, &ZoneWriteInput{NetworkType: "tunnel"}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Network.Tunnel == nil || len(e.Network.Tunnel.MiscAttributes) != 1 || e.Network.Tunnel.MiscAttributes[0].Value != "keep-me" {
+		t.Fatalf("tunnel unknown XML must survive a tunnel-to-tunnel rebuild: %+v", e.Network.Tunnel)
+	}
+}

@@ -108,7 +108,7 @@ These are the config objects rules and profiles commonly reference. They reuse t
 | `panos_custom_url_category_delete` | write | Delete a custom URL category from the candidate config. |
 | `panos_schedule_list` | read-only | List schedules (time windows a rule can be bound to) at a location. |
 | `panos_schedule_get` | read-only | Get one schedule by name with its type and time ranges. |
-| `panos_schedule_create` | write | Create a schedule; schedule_type (non-recurring, daily, or weekly) is required with its time ranges. |
+| `panos_schedule_create` | write | Create a schedule; schedule_type (non-recurring, daily, or weekly) is required (non-recurring and daily take time ranges, weekly takes per-day lists). |
 | `panos_schedule_update` | write | Update a schedule: read-modify-write; a provided schedule_type replaces the whole definition. |
 | `panos_schedule_delete` | write | Delete a schedule from the candidate config. |
 
@@ -201,7 +201,7 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_system_info` | read-only | Show device system info (model, serial, versions). Doubles as the connection test. |
 | `panos_job_status` | read-only | Poll a device job (commit, push, validate) by ID. |
 | `panos_config_diff` | read-only | List pending candidate changes (changed path, action, owner) versus the running config. |
-| `panos_zone_list` | read-only | List security zone names for use in rules. On Panorama, requires a template. |
+| `panos_zone_list` | read-only | List security zone names for use in rules. Firewall: optional vsys (a template is rejected); Panorama: template required (a vsys is rejected). |
 | `panos_zone_create` | write | Create a security zone; network_type is required. Firewall: vsys scope; Panorama: template required. |
 | `panos_zone_update` | write | Update a security zone: read-modify-write; a provided network_type replaces the type and its interface list. |
 | `panos_zone_delete` | write | Delete a security zone from the candidate config. |
