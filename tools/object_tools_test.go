@@ -114,7 +114,7 @@ func TestAddressCreateBuildsEntry(t *testing.T) {
 	)
 	h := createHandler[address.Location, address.Entry, AddressInput](d, "panos_address_create",
 		newAddressService(d), addressResolve(d),
-		func(in AddressInput) LocationInput { return in.Location }, buildAddressEntry)
+		func(in AddressInput) LocationInput { return in.Location }, buildAddressEntry, addressSummary)
 
 	res, _, err := h(t.Context(), nil, AddressInput{Name: "web-1", IPNetmask: "10.0.0.10/32", Description: "web box", Tags: []string{"prod"}})
 	if err != nil {
@@ -149,7 +149,7 @@ func TestAddressCreateValidation(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM")
 	h := createHandler[address.Location, address.Entry, AddressInput](d, "panos_address_create",
 		newAddressService(d), addressResolve(d),
-		func(in AddressInput) LocationInput { return in.Location }, buildAddressEntry)
+		func(in AddressInput) LocationInput { return in.Location }, buildAddressEntry, addressSummary)
 
 	// Assert each rejection's distinct message, not merely IsError, so the name,
 	// value-count and location guards cannot pass on one another's error.
@@ -186,7 +186,7 @@ func TestAddressAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[address.Location, address.Entry](d, "panos_address_get",
-		newAddressService(d), addressResolve(d))
+		newAddressService(d), addressResolve(d), addressSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -204,6 +204,37 @@ func TestAddressAPIErrorSurfaces(t *testing.T) {
 	assertSingleWrappedGet(t, f, "entry[@name='nope']")
 }
 
+// TestAddressGetReturnsCleanSchema pins issue #48: get returns the clean summary
+// shape, not the raw pango Entry. A candidate-config get carries pango-internal
+// attributes (dirtyId, admin, time) on the entry element, and the raw struct
+// marshals with Go PascalCase field names; neither may leak into the tool output.
+func TestAddressGetReturnsCleanSchema(t *testing.T) {
+	body := `<response status="success"><result>` +
+		`<entry name="web-1" admin="admin" dirtyId="7" time="2026/08/17 23:58:58">` +
+		`<ip-netmask>10.0.0.10/32</ip-netmask></entry></result></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: body})
+	h := getHandler[address.Location, address.Entry](d, "panos_address_get",
+		newAddressService(d), addressResolve(d), addressSummary)
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "web-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	out := textContent(t, res)
+	if !strings.Contains(out, `"name": "web-1"`) || !strings.Contains(out, `"ip_netmask": "10.0.0.10/32"`) {
+		t.Fatalf("get must return the clean snake_case summary, got: %s", out)
+	}
+	// The raw pango struct would surface these; the clean summary must not.
+	for _, leak := range []string{"MiscAttributes", "dirtyId", "IpNetmask", "DisableOverride"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("get output leaked internal/raw field %q: %s", leak, out)
+		}
+	}
+}
+
 func TestAddressUpdate(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("get"), Body: addressCurrentBody},
@@ -213,7 +244,7 @@ func TestAddressUpdate(t *testing.T) {
 	h := updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update",
 		newAddressService(d), addressResolve(d),
 		func(in AddressInput) LocationInput { return in.Location },
-		func(in AddressInput) string { return in.Name }, overlayAddress)
+		func(in AddressInput) string { return in.Name }, overlayAddress, addressSummary)
 
 	res, _, err := h(t.Context(), nil, AddressInput{Name: "web-1", IPNetmask: "10.9.9.9/32"})
 	if err != nil {
@@ -238,7 +269,7 @@ func TestAddressUpdateNoopSpecMatches(t *testing.T) {
 	h := updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update",
 		newAddressService(d), addressResolve(d),
 		func(in AddressInput) LocationInput { return in.Location },
-		func(in AddressInput) string { return in.Name }, overlayAddress)
+		func(in AddressInput) string { return in.Name }, overlayAddress, addressSummary)
 
 	// Only the name is set, and it matches the entry read back, so the overlay
 	// leaves the spec unchanged.
@@ -272,7 +303,7 @@ func TestAddressUpdateRejectsConflict(t *testing.T) {
 	h := updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update",
 		newAddressService(d), addressResolve(d),
 		func(in AddressInput) LocationInput { return in.Location },
-		func(in AddressInput) string { return in.Name }, overlayAddress)
+		func(in AddressInput) string { return in.Name }, overlayAddress, addressSummary)
 
 	res, _, err := h(t.Context(), nil, AddressInput{Name: "web-1", IPNetmask: "10.9.9.9/32", FQDN: "a.example.com"})
 	if err != nil {
@@ -505,7 +536,7 @@ func TestAddressPanoramaLocations(t *testing.T) {
 	t.Run("device group get", func(t *testing.T) {
 		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: addressCurrentBody})
 		h := getHandler[address.Location, address.Entry](d, "panos_address_get",
-			newAddressService(d), addressResolve(d))
+			newAddressService(d), addressResolve(d), addressSummary)
 		res, _, err := h(t.Context(), nil, NameInput{Name: "web-1", Location: LocationInput{DeviceGroup: "dg1"}})
 		if err != nil {
 			t.Fatal(err)
@@ -747,7 +778,7 @@ func TestAddressGroupCreateBuildsEntry(t *testing.T) {
 	)
 	h := createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create",
 		newAddressGroupService(d), addressGroupResolve(d),
-		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry)
+		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry, addressGroupSummary)
 
 	res, _, err := h(t.Context(), nil, AddressGroupInput{Name: "grp-1", Static: []string{"web-1"}, Description: "web tier", Tags: []string{"prod"}})
 	if err != nil {
@@ -782,7 +813,7 @@ func TestAddressGroupCreateValidation(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM")
 	h := createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create",
 		newAddressGroupService(d), addressGroupResolve(d),
-		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry)
+		func(in AddressGroupInput) LocationInput { return in.Location }, buildAddressGroupEntry, addressGroupSummary)
 
 	// Assert each rejection's distinct message, not merely IsError, so the name,
 	// XOR and location guards cannot pass on one another's error.
@@ -818,7 +849,7 @@ func TestAddressGroupAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get",
-		newAddressGroupService(d), addressGroupResolve(d))
+		newAddressGroupService(d), addressGroupResolve(d), addressGroupSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -857,7 +888,7 @@ func newAddressGroupUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRe
 	return updateHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_update",
 		newAddressGroupService(d), addressGroupResolve(d),
 		func(in AddressGroupInput) LocationInput { return in.Location },
-		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup)
+		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup, addressGroupSummary)
 }
 
 func TestAddressGroupUpdate(t *testing.T) {
@@ -1037,7 +1068,7 @@ func TestAddressGroupPanoramaLocations(t *testing.T) {
 	t.Run("device group get", func(t *testing.T) {
 		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: addressGroupCurrentBody})
 		h := getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get",
-			newAddressGroupService(d), addressGroupResolve(d))
+			newAddressGroupService(d), addressGroupResolve(d), addressGroupSummary)
 		res, _, err := h(t.Context(), nil, NameInput{Name: "grp-1", Location: LocationInput{DeviceGroup: "dg1"}})
 		if err != nil {
 			t.Fatal(err)
@@ -1360,7 +1391,7 @@ func TestServiceCreateBuildsEntry(t *testing.T) {
 	)
 	h := createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create",
 		newServiceService(d), serviceResolve(d),
-		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry)
+		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry, serviceSummary)
 
 	res, _, err := h(t.Context(), nil, ServiceInput{Name: "web-8080", Protocol: "tcp", Port: "8080", Description: "web svc", Tags: []string{"prod"}})
 	if err != nil {
@@ -1396,7 +1427,7 @@ func TestServiceCreateValidation(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM")
 	h := createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create",
 		newServiceService(d), serviceResolve(d),
-		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry)
+		func(in ServiceInput) LocationInput { return in.Location }, buildServiceEntry, serviceSummary)
 
 	// Assert each rejection's distinct message, not merely IsError, so the name,
 	// port, protocol and location guards cannot pass on one another's error.
@@ -1432,7 +1463,7 @@ func TestServiceAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[service.Location, service.Entry](d, "panos_service_get",
-		newServiceService(d), serviceResolve(d))
+		newServiceService(d), serviceResolve(d), serviceSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -1456,7 +1487,7 @@ func newServiceUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest
 	return updateHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_update",
 		newServiceService(d), serviceResolve(d),
 		func(in ServiceInput) LocationInput { return in.Location },
-		func(in ServiceInput) string { return in.Name }, overlayService)
+		func(in ServiceInput) string { return in.Name }, overlayService, serviceSummary)
 }
 
 func TestServiceUpdate(t *testing.T) {
@@ -1661,7 +1692,7 @@ func TestServicePanoramaLocations(t *testing.T) {
 	t.Run("device group get", func(t *testing.T) {
 		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: serviceCurrentBody})
 		h := getHandler[service.Location, service.Entry](d, "panos_service_get",
-			newServiceService(d), serviceResolve(d))
+			newServiceService(d), serviceResolve(d), serviceSummary)
 		res, _, err := h(t.Context(), nil, NameInput{Name: "svc-1", Location: LocationInput{DeviceGroup: "dg1"}})
 		if err != nil {
 			t.Fatal(err)
@@ -1878,7 +1909,7 @@ func TestServiceGroupCreateBuildsEntry(t *testing.T) {
 	)
 	h := createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create",
 		newServiceGroupService(d), serviceGroupResolve(d),
-		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry)
+		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry, serviceGroupSummary)
 
 	res, _, err := h(t.Context(), nil, ServiceGroupInput{Name: "grp-web", Members: []string{"web-8080"}, Tags: []string{"prod"}})
 	if err != nil {
@@ -1913,7 +1944,7 @@ func TestServiceGroupCreateValidation(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM")
 	h := createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create",
 		newServiceGroupService(d), serviceGroupResolve(d),
-		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry)
+		func(in ServiceGroupInput) LocationInput { return in.Location }, buildServiceGroupEntry, serviceGroupSummary)
 
 	// Assert each rejection's distinct message, not merely IsError, so the name,
 	// members and location guards cannot pass on one another's error.
@@ -1948,7 +1979,7 @@ func TestServiceGroupAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get",
-		newServiceGroupService(d), serviceGroupResolve(d))
+		newServiceGroupService(d), serviceGroupResolve(d), serviceGroupSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -1972,7 +2003,7 @@ func newServiceGroupUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRe
 	return updateHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_update",
 		newServiceGroupService(d), serviceGroupResolve(d),
 		func(in ServiceGroupInput) LocationInput { return in.Location },
-		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup)
+		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup, serviceGroupSummary)
 }
 
 func TestServiceGroupUpdate(t *testing.T) {
@@ -2124,7 +2155,7 @@ func TestServiceGroupPanoramaLocations(t *testing.T) {
 	t.Run("device group get", func(t *testing.T) {
 		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: serviceGroupCurrentBody})
 		h := getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get",
-			newServiceGroupService(d), serviceGroupResolve(d))
+			newServiceGroupService(d), serviceGroupResolve(d), serviceGroupSummary)
 		res, _, err := h(t.Context(), nil, NameInput{Name: "grp-1", Location: LocationInput{DeviceGroup: "dg1"}})
 		if err != nil {
 			t.Fatal(err)
@@ -2325,7 +2356,7 @@ func TestTagCreateBuildsEntry(t *testing.T) {
 	)
 	h := createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create",
 		newTagService(d), tagResolve(d),
-		func(in TagInput) LocationInput { return in.Location }, buildTagEntry)
+		func(in TagInput) LocationInput { return in.Location }, buildTagEntry, tagSummary)
 
 	res, _, err := h(t.Context(), nil, TagInput{Name: "prod", Color: "color13", Comments: "production workloads"})
 	if err != nil {
@@ -2360,7 +2391,7 @@ func TestTagCreateValidation(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM")
 	h := createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create",
 		newTagService(d), tagResolve(d),
-		func(in TagInput) LocationInput { return in.Location }, buildTagEntry)
+		func(in TagInput) LocationInput { return in.Location }, buildTagEntry, tagSummary)
 
 	// Assert each rejection's distinct message, not merely IsError, so the name
 	// and location guards cannot pass on one another's error.
@@ -2394,7 +2425,7 @@ func TestTagAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get",
-		newTagService(d), tagResolve(d))
+		newTagService(d), tagResolve(d), tagSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -2418,7 +2449,7 @@ func newTagUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Ta
 	return updateHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_update",
 		newTagService(d), tagResolve(d),
 		func(in TagInput) LocationInput { return in.Location },
-		func(in TagInput) string { return in.Name }, overlayTag)
+		func(in TagInput) string { return in.Name }, overlayTag, tagSummary)
 }
 
 func TestTagUpdate(t *testing.T) {
@@ -2571,7 +2602,7 @@ func TestTagPanoramaLocations(t *testing.T) {
 	t.Run("device group get", func(t *testing.T) {
 		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: tagCurrentBody})
 		h := getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get",
-			newTagService(d), tagResolve(d))
+			newTagService(d), tagResolve(d), tagSummary)
 		res, _, err := h(t.Context(), nil, NameInput{Name: "t-1", Location: LocationInput{DeviceGroup: "dg1"}})
 		if err != nil {
 			t.Fatal(err)

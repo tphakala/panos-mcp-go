@@ -273,7 +273,14 @@ func okResolve(LocationInput) (fakeLoc, error) { return fakeLoc{kind: "vsys", ar
 
 func entryName(e *fakeEntry) string { return e.Name }
 
-func entrySummary(e *fakeEntry) any { return map[string]string{"name": e.Name} }
+// entrySummary is a stand-in clean projection for the generic handler tests.
+// The "projected" marker is absent from the raw fakeEntry JSON, so a test
+// asserting on it proves the handler ran summarize on its output rather than
+// marshaling the raw entry (issue #48). fakeEntry has snake_case json tags, so
+// a plain key like "value" could not tell the two apart.
+func entrySummary(e *fakeEntry) any {
+	return map[string]any{"name": e.Name, "value": e.Value, "projected": true}
+}
 
 func TestListHandler(t *testing.T) {
 	svc := &fakeSvc{entries: []*fakeEntry{{Name: "web-server"}, {Name: "db-server"}, {Name: "gateway"}}}
@@ -299,14 +306,16 @@ func TestListHandler(t *testing.T) {
 
 func TestGetHandler(t *testing.T) {
 	svc := &fakeSvc{entries: []*fakeEntry{{Name: "a", Value: "1"}}}
-	h := getHandler[fakeLoc, fakeEntry](handlerDeps(), "panos_get", svc, okResolve)
+	h := getHandler[fakeLoc, fakeEntry](handlerDeps(), "panos_get", svc, okResolve, entrySummary)
 
 	if res, _, _ := h(t.Context(), nil, NameInput{}); !res.IsError {
 		t.Fatal("empty name must be an error result")
 	}
 	res, _, err := h(t.Context(), nil, NameInput{Name: "a"})
-	if err != nil || res.IsError || !strings.Contains(textContent(t, res), `"value": "1"`) {
-		t.Fatalf("get existing: err=%v isErr=%v", err, res.IsError)
+	if err != nil || res.IsError ||
+		!strings.Contains(textContent(t, res), `"value": "1"`) ||
+		!strings.Contains(textContent(t, res), `"projected": true`) {
+		t.Fatalf("get must return the summarized projection: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
 	}
 	if res, _, _ := h(t.Context(), nil, NameInput{Name: "missing"}); !res.IsError {
 		t.Fatal("missing entry must be an error result")
@@ -338,7 +347,7 @@ func TestCreateHandler(t *testing.T) {
 		return &fakeEntry{Name: in.Name}, nil
 	}
 	loc := func(in NameInput) LocationInput { return in.Location }
-	h := createHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "panos_create", svc, okResolve, loc, build)
+	h := createHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "panos_create", svc, okResolve, loc, build, entrySummary)
 
 	if res, _, _ := h(t.Context(), nil, NameInput{Name: "bad"}); !res.IsError {
 		t.Fatal("build error must be an error result")
@@ -350,6 +359,9 @@ func TestCreateHandler(t *testing.T) {
 	if len(svc.created) != 1 || svc.created[0].Name != "new" {
 		t.Fatalf("create must call the service: %v", svc.created)
 	}
+	if body := textContent(t, res); !strings.Contains(body, `"projected": true`) {
+		t.Fatalf("create must return the summarized projection, got: %s", body)
+	}
 }
 
 func TestUpdateHandler(t *testing.T) {
@@ -357,7 +369,7 @@ func TestUpdateHandler(t *testing.T) {
 	name := func(in NameInput) string { return in.Name }
 	loc := func(in NameInput) LocationInput { return in.Location }
 	overlay := func(e *fakeEntry, _ NameInput) error { e.Value = "new"; return nil }
-	h := updateHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "panos_update", svc, okResolve, loc, name, overlay)
+	h := updateHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "panos_update", svc, okResolve, loc, name, overlay, entrySummary)
 
 	if res, _, _ := h(t.Context(), nil, NameInput{}); !res.IsError {
 		t.Fatal("empty name must be an error result")
@@ -368,6 +380,9 @@ func TestUpdateHandler(t *testing.T) {
 	}
 	if len(svc.updated) != 1 || svc.updated[0].Value != "new" {
 		t.Fatalf("update must apply the overlay before calling the service: %v", svc.updated)
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"projected": true`) {
+		t.Fatalf("update must return the summarized projection, got: %s", body)
 	}
 }
 
@@ -395,7 +410,7 @@ func TestHandlerErrorPaths(t *testing.T) {
 	// surface the service message instead of "bad location"; the delete and update
 	// cases assert the service recorded no call.
 	getSvc := &fakeSvc{readErr: fmt.Errorf("read must not run")}
-	gh := getHandler[fakeLoc, fakeEntry](d, "g", getSvc, errResolve)
+	gh := getHandler[fakeLoc, fakeEntry](d, "g", getSvc, errResolve, entrySummary)
 	if res, _, err := gh(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError || !strings.Contains(textContent(t, res), "bad location") {
 		t.Fatalf("get resolve error: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
 	}
@@ -411,7 +426,7 @@ func TestHandlerErrorPaths(t *testing.T) {
 
 	updSvc := &fakeSvc{entries: []*fakeEntry{{Name: "a"}}}
 	up := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", updSvc, errResolve, loc, name,
-		func(*fakeEntry, NameInput) error { return nil })
+		func(*fakeEntry, NameInput) error { return nil }, entrySummary)
 	if res, _, err := up(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError || !strings.Contains(textContent(t, res), "bad location") {
 		t.Fatalf("update resolve error: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
 	}
@@ -425,25 +440,25 @@ func TestHandlerErrorPaths(t *testing.T) {
 	}
 
 	build := func(NameInput) (*fakeEntry, error) { return &fakeEntry{Name: "a"}, nil }
-	cr := createHandler[fakeLoc, fakeEntry, NameInput](d, "c", &fakeSvc{createErr: fmt.Errorf("x")}, okResolve, loc, build)
+	cr := createHandler[fakeLoc, fakeEntry, NameInput](d, "c", &fakeSvc{createErr: fmt.Errorf("x")}, okResolve, loc, build, entrySummary)
 	if res, _, err := cr(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("create svc error: err=%v isErr=%v", err, res.IsError)
 	}
 
 	upRead := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{readErr: fmt.Errorf("x")}, okResolve, loc, name,
-		func(*fakeEntry, NameInput) error { return nil })
+		func(*fakeEntry, NameInput) error { return nil }, entrySummary)
 	if res, _, err := upRead(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("update read error: err=%v isErr=%v", err, res.IsError)
 	}
 
 	upOverlay := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{entries: []*fakeEntry{{Name: "a"}}}, okResolve, loc, name,
-		func(*fakeEntry, NameInput) error { return fmt.Errorf("overlay bad") })
+		func(*fakeEntry, NameInput) error { return fmt.Errorf("overlay bad") }, entrySummary)
 	if res, _, err := upOverlay(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("update overlay error: err=%v isErr=%v", err, res.IsError)
 	}
 
 	upSvc := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{entries: []*fakeEntry{{Name: "a"}}, updateErr: fmt.Errorf("x")}, okResolve, loc, name,
-		func(*fakeEntry, NameInput) error { return nil })
+		func(*fakeEntry, NameInput) error { return nil }, entrySummary)
 	if res, _, err := upSvc(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("update service error: err=%v isErr=%v", err, res.IsError)
 	}
@@ -458,7 +473,7 @@ func TestMutationHandlersSerialize(t *testing.T) {
 	svc := &fakeSvc{}
 	build := func(NameInput) (*fakeEntry, error) { return &fakeEntry{Name: "x"}, nil }
 	loc := func(in NameInput) LocationInput { return in.Location }
-	h := createHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "c", svc, okResolve, loc, build)
+	h := createHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "c", svc, okResolve, loc, build, entrySummary)
 
 	const n = 50
 	var wg sync.WaitGroup

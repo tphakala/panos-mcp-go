@@ -355,10 +355,14 @@ func listHandler[L, E any](
 	}
 }
 
-// getHandler builds a get tool handler returning the full entry as JSON.
+// getHandler builds a get tool handler returning the entry through summarize,
+// the same clean projection the list tool uses, so get, list, create, and
+// update all speak one schema and none leaks pango's internal struct fields
+// (issue #48).
 func getHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E],
 	resolve func(LocationInput) (L, error),
+	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in NameInput) (*mcp.CallToolResult, any, error) {
 		defer d.RLockReads()()
@@ -377,7 +381,7 @@ func getHandler[L, E any](
 			res, v := errorResult("failed: %s: %v", tool, err)
 			return res, v, nil
 		}
-		res, v := jsonResult(entry)
+		res, v := jsonResult(summarize(entry))
 		return res, v, nil
 	}
 }
@@ -415,6 +419,7 @@ func createHandler[L, E, In any](
 	resolve func(LocationInput) (L, error),
 	location func(In) LocationInput,
 	build func(In) (*E, error),
+	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		entry, err := build(in)
@@ -435,7 +440,7 @@ func createHandler[L, E, In any](
 			return res, v, nil
 		}
 		d.Logger.Info(tool + " succeeded")
-		res, v := jsonResult(created)
+		res, v := jsonResult(summarize(created))
 		return res, v, nil
 	}
 }
@@ -449,6 +454,7 @@ func updateHandler[L, E, In any](
 	location func(In) LocationInput,
 	name func(In) string,
 	overlay func(*E, In) error,
+	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		n := name(in)
@@ -479,7 +485,7 @@ func updateHandler[L, E, In any](
 			return res, v, nil
 		}
 		d.Logger.Info(tool+" succeeded", "name", n)
-		res, v := jsonResult(updated)
+		res, v := jsonResult(summarize(updated))
 		return res, v, nil
 	}
 }
