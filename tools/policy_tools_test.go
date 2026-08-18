@@ -1500,3 +1500,99 @@ func TestNatRuleGetUpdateViaRegisteredTools(t *testing.T) {
 		t.Fatalf("registered update did not reach the API with the new service: %s", el)
 	}
 }
+
+// --- Security rule profile_group extension ----------------------------------
+
+func TestBuildSecurityRuleEntryProfileGroup(t *testing.T) {
+	e, err := buildSecurityRuleEntry(SecurityRuleInput{Name: "r1", Action: "allow", ProfileGroup: "pg1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.ProfileSetting == nil || len(e.ProfileSetting.Group) != 1 || e.ProfileSetting.Group[0] != "pg1" {
+		t.Errorf("profile_group must map to ProfileSetting.Group: %+v", e.ProfileSetting)
+	}
+	// No profile_group leaves the profile setting unset.
+	e2, err := buildSecurityRuleEntry(SecurityRuleInput{Name: "r2", Action: "allow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e2.ProfileSetting != nil {
+		t.Errorf("no profile_group must leave ProfileSetting nil: %+v", e2.ProfileSetting)
+	}
+}
+
+// TestOverlaySecurityRuleProfileGroupReplaces pins that a provided profile_group
+// replaces the whole profile-setting subtree, clearing any individually assigned
+// profiles (the pango dual-set config is invalid). Starting the entry with
+// ProfileSetting.Profiles set proves the overlay clears it.
+func TestOverlaySecurityRuleProfileGroupReplaces(t *testing.T) {
+	e := &security.Entry{
+		Name:           "r1",
+		ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{Virus: []string{"av1"}}},
+	}
+	if err := overlaySecurityRule(e, SecurityRuleInput{Name: "r1", ProfileGroup: "pg1"}); err != nil {
+		t.Fatal(err)
+	}
+	if e.ProfileSetting == nil || len(e.ProfileSetting.Group) != 1 || e.ProfileSetting.Group[0] != "pg1" {
+		t.Errorf("overlay must set the group: %+v", e.ProfileSetting)
+	}
+	if e.ProfileSetting.Profiles != nil {
+		t.Errorf("overlay must clear the individual profiles subtree: %+v", e.ProfileSetting.Profiles)
+	}
+
+	// An omitted profile_group leaves the existing setting untouched.
+	keep := &security.Entry{Name: "r1", ProfileSetting: &security.ProfileSetting{Group: []string{"pg-old"}}}
+	if err := overlaySecurityRule(keep, SecurityRuleInput{Name: "r1", Action: "deny"}); err != nil {
+		t.Fatal(err)
+	}
+	if keep.ProfileSetting == nil || len(keep.ProfileSetting.Group) != 1 || keep.ProfileSetting.Group[0] != "pg-old" {
+		t.Errorf("omitted profile_group must preserve the existing group: %+v", keep.ProfileSetting)
+	}
+}
+
+func TestSecurityRuleSummaryProfileGroup(t *testing.T) {
+	withGroup := &security.Entry{Name: "r1", Action: ptr("allow"), ProfileSetting: &security.ProfileSetting{Group: []string{"pg1"}}}
+	if m := mustMap(t, securityRuleSummary(withGroup)); m["profile_group"] != "pg1" {
+		t.Errorf("summary must surface the group: %+v", m["profile_group"])
+	}
+	// Individual profiles (no group) report an empty profile_group, not a leak.
+	withProfiles := &security.Entry{Name: "r2", Action: ptr("allow"), ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{Virus: []string{"av1"}}}}
+	if m := mustMap(t, securityRuleSummary(withProfiles)); m["profile_group"] != "" {
+		t.Errorf("individual-profile rule must report empty profile_group: %+v", m["profile_group"])
+	}
+	// No profile setting at all reports empty.
+	if m := mustMap(t, securityRuleSummary(&security.Entry{Name: "r3", Action: ptr("allow")})); m["profile_group"] != "" {
+		t.Errorf("no profile setting must report empty profile_group: %+v", m["profile_group"])
+	}
+}
+
+// TestSecurityRuleUpdateSetsProfileGroup drives the update through the wire and
+// asserts the profile-setting group reaches the multi-config element, and that a
+// get carrying a group round-trips into the summary.
+func TestSecurityRuleUpdateSetsProfileGroup(t *testing.T) {
+	ruleWithGroupBody := `<response status="success"><result>` +
+		`<entry name="rule-a"><action>allow</action>` +
+		`<from><member>any</member></from><to><member>any</member></to>` +
+		`<source><member>any</member></source><destination><member>any</member></destination>` +
+		`<application><member>any</member></application><service><member>application-default</member></service>` +
+		`<profile-setting><group><member>pg-old</member></group></profile-setting></entry>` +
+		`</result></response>`
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: ruleWithGroupBody},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	h := updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update", newSecurityRuleService(d), securityResolve(d),
+		func(in SecurityRuleInput) LocationInput { return in.Location },
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary)
+	res, _, err := h(t.Context(), nil, SecurityRuleInput{Name: "rule-a", ProfileGroup: "pg-new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("update failed: %s", textContent(t, res))
+	}
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<profile-setting><group><member>pg-new</member></group></profile-setting>") {
+		t.Fatalf("update did not set the new profile group: %s", el)
+	}
+}

@@ -195,7 +195,11 @@ func clampList(limit, offset, n int) (lo, hi int) {
 
 // locParts supplies the per-resource location constructors for resolveLocation.
 // The rulebase argument is meaningful only when rules is true; object
-// resources ignore it.
+// resources ignore it. vsys may be nil: a few pango profile packages
+// (urlfiltering, vulnerability, wildfireanalysis, secgroup) generate no vsys
+// location at all, only shared and device_group. resolveLocation treats a nil
+// vsys as "no vsys location for this type": an explicit vsys request errors, and
+// the firewall default falls back to shared.
 type locParts[L any] struct {
 	shared      func(rulebase string) L
 	vsys        func(vsys string) L
@@ -232,9 +236,17 @@ func resolveLocation[L any](d *Deps, in LocationInput, p locParts[L]) (L, error)
 		if d.IsPanorama {
 			return zero, fmt.Errorf("location vsys requires a firewall connection; use shared or device_group")
 		}
+		if p.vsys == nil {
+			return zero, fmt.Errorf("location vsys is not supported for this object type; pango models it at shared or device_group only")
+		}
 		return p.vsys(in.Vsys), nil
 	case d.IsPanorama:
 		return p.shared(rb), nil
+	case p.vsys == nil:
+		// A firewall object type pango models only at shared (its SDK package
+		// generates no vsys location): default to shared so the tool stays
+		// usable on a firewall. Each affected tool documents this fallback.
+		return p.shared(""), nil
 	default:
 		return p.vsys(defaultVsys), nil
 	}
@@ -498,6 +510,13 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterServiceTools(s, d)
 	RegisterServiceGroupTools(s, d)
 	RegisterTagTools(s, d)
+	RegisterAntivirusProfileTools(s, d)
+	RegisterVulnerabilityProfileTools(s, d)
+	RegisterSpywareProfileTools(s, d)
+	RegisterURLFilteringProfileTools(s, d)
+	RegisterFileBlockingProfileTools(s, d)
+	RegisterWildfireAnalysisProfileTools(s, d)
+	RegisterProfileGroupTools(s, d)
 	RegisterSecurityRuleTools(s, d)
 	RegisterNatRuleTools(s, d)
 	RegisterDecryptionRuleTools(s, d)

@@ -48,20 +48,21 @@ func newSecurityRuleService(d *Deps) nameFixAdapter[security.Location, security.
 // remaining fields (profiles, QoS, HIP, schedule, log settings, ...) stay
 // SDK-only until a task needs them.
 type SecurityRuleInput struct {
-	Name        string        `json:"name" jsonschema:"Rule name"`
-	Location    LocationInput `json:"location,omitempty"`
-	Action      string        `json:"action,omitempty" jsonschema:"allow, deny, drop, reset-client, reset-server or reset-both; required on create, no default"`
-	From        []string      `json:"from,omitempty" jsonschema:"Source zones (create default: any); a non-empty list replaces fully"`
-	To          []string      `json:"to,omitempty" jsonschema:"Destination zones (create default: any); a non-empty list replaces fully"`
-	Source      []string      `json:"source,omitempty" jsonschema:"Source addresses (create default: any); a non-empty list replaces fully"`
-	Destination []string      `json:"destination,omitempty" jsonschema:"Destination addresses (create default: any); a non-empty list replaces fully"`
-	Application []string      `json:"application,omitempty" jsonschema:"Applications (create default: any); a non-empty list replaces fully"`
-	Service     []string      `json:"service,omitempty" jsonschema:"Services (create default: application-default); a non-empty list replaces fully"`
-	Description string        `json:"description,omitempty"`
-	Tags        []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided; an empty list clears it"`
-	Disabled    *bool         `json:"disabled,omitempty"`
-	Position    string        `json:"position,omitempty" jsonschema:"Optional placement on create: top, bottom, before, after (PAN-OS appends at the bottom by default); ignored on update"`
-	RelativeTo  string        `json:"relative_to,omitempty" jsonschema:"Rule name for position before/after; ignored on update"`
+	Name         string        `json:"name" jsonschema:"Rule name"`
+	Location     LocationInput `json:"location,omitempty"`
+	Action       string        `json:"action,omitempty" jsonschema:"allow, deny, drop, reset-client, reset-server or reset-both; required on create, no default"`
+	From         []string      `json:"from,omitempty" jsonschema:"Source zones (create default: any); a non-empty list replaces fully"`
+	To           []string      `json:"to,omitempty" jsonschema:"Destination zones (create default: any); a non-empty list replaces fully"`
+	Source       []string      `json:"source,omitempty" jsonschema:"Source addresses (create default: any); a non-empty list replaces fully"`
+	Destination  []string      `json:"destination,omitempty" jsonschema:"Destination addresses (create default: any); a non-empty list replaces fully"`
+	Application  []string      `json:"application,omitempty" jsonschema:"Applications (create default: any); a non-empty list replaces fully"`
+	Service      []string      `json:"service,omitempty" jsonschema:"Services (create default: application-default); a non-empty list replaces fully"`
+	Description  string        `json:"description,omitempty"`
+	Tags         []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided; an empty list clears it"`
+	Disabled     *bool         `json:"disabled,omitempty"`
+	ProfileGroup string        `json:"profile_group,omitempty" jsonschema:"Security profile group applied to matching traffic; a provided value replaces the whole profile-setting subtree (clearing any individually assigned profiles). Individual per-type profile assignment is not modelled here."`
+	Position     string        `json:"position,omitempty" jsonschema:"Optional placement on create: top, bottom, before, after (PAN-OS appends at the bottom by default); ignored on update"`
+	RelativeTo   string        `json:"relative_to,omitempty" jsonschema:"Rule name for position before/after; ignored on update"`
 }
 
 // validRuleActions are the PAN-OS security rule verdicts.
@@ -124,6 +125,9 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
+	if in.ProfileGroup != "" {
+		e.ProfileSetting = &security.ProfileSetting{Group: []string{in.ProfileGroup}}
+	}
 	return e, nil
 }
 
@@ -170,7 +174,21 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 	if in.Disabled != nil {
 		e.Disabled = in.Disabled
 	}
+	if in.ProfileGroup != "" {
+		e.ProfileSetting = &security.ProfileSetting{Group: []string{in.ProfileGroup}}
+	}
 	return nil
+}
+
+// securityRuleProfileGroup returns the profile group applied to a rule, or "".
+// A rule may instead carry individually assigned profiles (pango's
+// ProfileSetting.Profiles branch), which this server does not model; that case
+// returns "" so the get simply reports no profile_group.
+func securityRuleProfileGroup(ps *security.ProfileSetting) string {
+	if ps == nil {
+		return ""
+	}
+	return firstMember(ps.Group)
 }
 
 // securityRuleSummary reduces an entry to the list view fields on top of the
@@ -185,6 +203,7 @@ func securityRuleSummary(e *security.Entry) any {
 	m["application"] = e.Application
 	m["service"] = e.Service
 	m["disabled"] = e.Disabled != nil && *e.Disabled
+	m["profile_group"] = securityRuleProfileGroup(e.ProfileSetting)
 	return m
 }
 
@@ -383,7 +402,7 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	}, listHandler[security.Location, security.Entry](d, "panos_security_rule_list", svc, resolve, name, securityRuleSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_get",
-		Description: "Get one security rule by name with the fields this server manages (match, action, tags, disabled). Read-only.",
+		Description: "Get one security rule by name with the fields this server manages (match, action, tags, disabled, profile_group). Read-only.",
 		Annotations: readOnlyTool("Get security rule"),
 	}, getHandler[security.Location, security.Entry](d, "panos_security_rule_get", svc, resolve, securityRuleSummary))
 	if d.ReadOnly {
@@ -396,7 +415,7 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	}, securityRuleCreateHandler(d, raw))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_update",
-		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). position is ignored here; use panos_security_rule_move. Candidate config only; run panos_commit to apply.",
+		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided profile_group replaces the whole profile-setting subtree. position is ignored here; use panos_security_rule_move. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update security rule"),
 	}, updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update", svc, resolve, loc,
 		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary))
