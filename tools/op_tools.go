@@ -144,7 +144,7 @@ func sessionSummary(e *sessionEntry) map[string]any {
 		"to":                   e.To,
 		"application":          e.Application,
 		"state":                e.State,
-		"type":                 e.Type,
+		typeKey:                e.Type,
 		"start_time":           e.StartTime,
 		"nat_source":           e.XSource,
 		"nat_source_port":      e.XSPort,
