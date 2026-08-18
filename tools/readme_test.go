@@ -14,9 +14,9 @@ import (
 
 // allRegisteredNames registers the full tool surface via RegisterAll (object,
 // policy and device tools) on a fresh in-memory server and returns the tool
-// names it exposes for the given device model and write mode. This mirrors
-// TestRegisterAllToolCounts, but the README guard needs the names, not just the
-// count.
+// names it exposes for the given device model and write mode. Both
+// TestRegisterAllToolCounts (which needs only the count) and the README guard
+// (which needs the names) build on it.
 func allRegisteredNames(t *testing.T, model string, readOnly bool) map[string]bool {
 	t.Helper()
 	d, _ := newTestDeps(t, model)
