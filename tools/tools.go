@@ -501,4 +501,5 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterSecurityRuleTools(s, d)
 	RegisterNatRuleTools(s, d)
 	RegisterDeviceTools(s, d)
+	RegisterOpTools(s, d)
 }
