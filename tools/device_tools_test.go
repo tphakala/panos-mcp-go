@@ -611,6 +611,23 @@ func TestZoneListFirewallAndPanorama(t *testing.T) {
 	})
 }
 
+func TestZoneListEmptyReturnsEmpty(t *testing.T) {
+	// A firewall with no zones configured: PAN-OS answers the config get with
+	// code 7, which pango surfaces as an error. zone_list must treat it as an
+	// empty list, not a failure (issue #47).
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: objectNotFoundBody})
+	res, _, err := zoneListHandler(d)(t.Context(), nil, ZoneListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("empty zone set must not be an error result: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"total": 0`) || !strings.Contains(body, `"count": 0`) {
+		t.Fatalf("expected an empty zone list, got: %s", body)
+	}
+}
+
 // TestZoneListError drives zoneListHandler's svc.List error branch: a PAN-OS
 // error on the config get must surface as IsError carrying both the device
 // message and the tool name.

@@ -2,12 +2,14 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 
+	panoserr "github.com/PaloAltoNetworks/pango/errors"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -32,6 +34,24 @@ func TestRegisterAllToolCounts(t *testing.T) {
 		if got := len(allRegisteredNames(t, c.model, c.readOnly)); got != c.want {
 			t.Errorf("%s readOnly=%v: got %d tools, want %d", c.model, c.readOnly, got, c.want)
 		}
+	}
+}
+
+func TestIsObjectNotFound(t *testing.T) {
+	if !isObjectNotFound(panoserr.ObjectNotFound()) {
+		t.Error("a PAN-OS code 7 error must be treated as object-not-found")
+	}
+	if !isObjectNotFound(fmt.Errorf("list failed: %w", panoserr.ObjectNotFound())) {
+		t.Error("a wrapped code 7 error must be detected via errors.AsType")
+	}
+	if isObjectNotFound(panoserr.Panos{Msg: "Bad Xpath", Code: 6}) {
+		t.Error("a non-code-7 PAN-OS error must not be treated as object-not-found")
+	}
+	if isObjectNotFound(errors.New("connection refused")) {
+		t.Error("a non-PAN-OS error must not be treated as object-not-found")
+	}
+	if isObjectNotFound(nil) {
+		t.Error("a nil error must not be treated as object-not-found")
 	}
 }
 

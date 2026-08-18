@@ -71,6 +71,41 @@ func TestAddressList(t *testing.T) {
 	}
 }
 
+// objectNotFoundBody is what PAN-OS returns for a config get on an object node
+// with no entries: status success but code 7, which pango surfaces as an
+// "object not found" error. The list tools must treat it as an empty list, not
+// a failure (issue #47).
+const objectNotFoundBody = `<response status="success" code="7"><result/></response>`
+
+func TestAddressListEmptyObjectSetReturnsEmpty(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: objectNotFoundBody})
+	h := listHandler[address.Location, address.Entry](d, "panos_address_list",
+		newAddressService(d), addressResolve(d), addressName, addressSummary)
+
+	res, _, err := h(t.Context(), nil, ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("empty object set must not be an error result: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"total": 0`) || !strings.Contains(body, `"count": 0`) {
+		t.Fatalf("expected an empty list, got: %s", body)
+	}
+
+	// A filter over an empty set must also yield an empty list, not an error.
+	res, _, err = h(t.Context(), nil, ListInput{Filter: "anything"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("filtered empty set must not be an error result: %s", textContent(t, res))
+	}
+	if body := textContent(t, res); !strings.Contains(body, `"total": 0`) {
+		t.Fatalf("expected an empty filtered list, got: %s", body)
+	}
+}
+
 func TestAddressCreateBuildsEntry(t *testing.T) {
 	d, f := newTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
