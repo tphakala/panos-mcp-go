@@ -1042,7 +1042,7 @@ func RegisterProfileGroupTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_profile_group_create",
-		Description: "Create a security profile group in the candidate config, referencing one profile per type. A security rule applies a group via its profile_group field. On a firewall it is created at shared. Run panos_commit to apply.",
+		Description: "Create a security profile group in the candidate config, referencing one profile per type. A security rule applies a group via its profile_group field. On a firewall the group is created at shared, and a shared group cannot reference a vsys-scoped profile, so any antivirus/anti-spyware/file-blocking profiles it references must also be created at shared (location.shared: true). Run panos_commit to apply.",
 		Annotations: createTool("Create profile group"),
 	}, createHandler[secgroup.Location, secgroup.Entry, ProfileGroupInput](d, "panos_profile_group_create", svc, resolve, loc, buildProfileGroupEntry, profileGroupSummary))
 	mcp.AddTool(s, &mcp.Tool{

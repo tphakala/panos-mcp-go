@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/xml"
 	"net/url"
 	"strings"
 	"testing"
@@ -1526,9 +1527,14 @@ func TestBuildSecurityRuleEntryProfileGroup(t *testing.T) {
 // profiles (the pango dual-set config is invalid). Starting the entry with
 // ProfileSetting.Profiles set proves the overlay clears it.
 func TestOverlaySecurityRuleProfileGroupReplaces(t *testing.T) {
+	// The starting profile-setting also carries unknown XML (MiscAttributes) that
+	// a read-modify-write must preserve, not drop when the group replaces it.
 	e := &security.Entry{
-		Name:           "r1",
-		ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{Virus: []string{"av1"}}},
+		Name: "r1",
+		ProfileSetting: &security.ProfileSetting{
+			Profiles:       &security.ProfileSettingProfiles{Virus: []string{"av1"}},
+			MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
+		},
 	}
 	if err := overlaySecurityRule(e, SecurityRuleInput{Name: "r1", ProfileGroup: "pg1"}); err != nil {
 		t.Fatal(err)
@@ -1538,6 +1544,9 @@ func TestOverlaySecurityRuleProfileGroupReplaces(t *testing.T) {
 	}
 	if e.ProfileSetting.Profiles != nil {
 		t.Errorf("overlay must clear the individual profiles subtree: %+v", e.ProfileSetting.Profiles)
+	}
+	if len(e.ProfileSetting.MiscAttributes) != 1 || e.ProfileSetting.MiscAttributes[0].Value != "keep-me" {
+		t.Errorf("overlay must preserve unknown profile-setting XML: %+v", e.ProfileSetting.MiscAttributes)
 	}
 
 	// An omitted profile_group leaves the existing setting untouched.
@@ -1552,17 +1561,18 @@ func TestOverlaySecurityRuleProfileGroupReplaces(t *testing.T) {
 
 func TestSecurityRuleSummaryProfileGroup(t *testing.T) {
 	withGroup := &security.Entry{Name: "r1", Action: ptr("allow"), ProfileSetting: &security.ProfileSetting{Group: []string{"pg1"}}}
-	if m := mustMap(t, securityRuleSummary(withGroup)); m["profile_group"] != "pg1" {
-		t.Errorf("summary must surface the group: %+v", m["profile_group"])
+	if m := mustMap(t, securityRuleSummary(withGroup)); m["profile_group"] != "pg1" || m["has_individual_profiles"] != false {
+		t.Errorf("group rule must surface the group and no individual profiles: %+v", m)
 	}
-	// Individual profiles (no group) report an empty profile_group, not a leak.
+	// Individual profiles (no group) report an empty profile_group but a set flag,
+	// so a get does not conflate them with a rule that has no security profiles.
 	withProfiles := &security.Entry{Name: "r2", Action: ptr("allow"), ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{Virus: []string{"av1"}}}}
-	if m := mustMap(t, securityRuleSummary(withProfiles)); m["profile_group"] != "" {
-		t.Errorf("individual-profile rule must report empty profile_group: %+v", m["profile_group"])
+	if m := mustMap(t, securityRuleSummary(withProfiles)); m["profile_group"] != "" || m["has_individual_profiles"] != true {
+		t.Errorf("individual-profile rule must report empty group but set the flag: %+v", m)
 	}
-	// No profile setting at all reports empty.
-	if m := mustMap(t, securityRuleSummary(&security.Entry{Name: "r3", Action: ptr("allow")})); m["profile_group"] != "" {
-		t.Errorf("no profile setting must report empty profile_group: %+v", m["profile_group"])
+	// No profile setting at all reports empty and unset.
+	if m := mustMap(t, securityRuleSummary(&security.Entry{Name: "r3", Action: ptr("allow")})); m["profile_group"] != "" || m["has_individual_profiles"] != false {
+		t.Errorf("no profile setting must report empty group and no individual profiles: %+v", m)
 	}
 }
 

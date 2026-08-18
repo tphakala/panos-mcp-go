@@ -87,7 +87,7 @@ The server registers 102 tools on Panorama and 104 on a firewall (the three Pano
 
 ### Security profiles and profile groups
 
-A security rule references a profile group via its `profile_group` field. create/update model the practical flat field subset per profile; the deeply nested per-signature rule subtrees (vulnerability/anti-spyware threat rules, anti-spyware DNS security, URL credential-enforcement and HTTP-header-insertion) are read-only through get and not settable here. The four profile types with no vsys location in the pango SDK (vulnerability, URL filtering, WildFire analysis, and profile groups) are managed at the shared location on a firewall.
+A security rule references a profile group via its `profile_group` field. create/update model the practical flat field subset per profile. The deeply nested per-signature rule subtrees (vulnerability/anti-spyware threat rules, anti-spyware DNS security, URL credential-enforcement and HTTP-header-insertion) are neither reported by get nor settable here; an update preserves them unchanged. The three profile types and the profile group that have no vsys location in the pango SDK (vulnerability, URL filtering, WildFire analysis, and profile groups) are managed at the shared location on a firewall. Because a shared profile group cannot reference a vsys-scoped profile, on a firewall the antivirus, anti-spyware, and file-blocking profiles a group references must also be created at the shared location (`location.shared: true`), not the default vsys.
 
 | Tool | Mode | Description |
 |------|------|-------------|

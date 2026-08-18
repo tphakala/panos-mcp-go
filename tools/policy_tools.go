@@ -85,6 +85,25 @@ func orAny(v []string) []string {
 	return v
 }
 
+// applyRuleProfileGroup sets a profile group on a rule, clearing any
+// individually assigned profiles so the group/profiles oneof is never both-set
+// (PAN-OS rejects that), while preserving unknown profile-setting XML
+// (Misc/MiscAttributes) across a read-modify-write update. A blank group leaves
+// the setting untouched: an existing group cannot be cleared in place, matching
+// the other single-value fields.
+func applyRuleProfileGroup(e *security.Entry, group string) {
+	if group == "" {
+		return
+	}
+	ps := e.ProfileSetting
+	if ps == nil {
+		ps = &security.ProfileSetting{}
+	}
+	ps.Group = []string{group}
+	ps.Profiles = nil
+	e.ProfileSetting = ps
+}
+
 // buildSecurityRuleEntry validates input and builds a create entry with the
 // PAN-OS-conventional defaults: the match fields default to any and service
 // to application-default, mirroring what the GUI pre-fills for a new rule (a
@@ -125,9 +144,7 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
-	if in.ProfileGroup != "" {
-		e.ProfileSetting = &security.ProfileSetting{Group: []string{in.ProfileGroup}}
-	}
+	applyRuleProfileGroup(e, in.ProfileGroup)
 	return e, nil
 }
 
@@ -174,21 +191,27 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 	if in.Disabled != nil {
 		e.Disabled = in.Disabled
 	}
-	if in.ProfileGroup != "" {
-		e.ProfileSetting = &security.ProfileSetting{Group: []string{in.ProfileGroup}}
-	}
+	applyRuleProfileGroup(e, in.ProfileGroup)
 	return nil
 }
 
 // securityRuleProfileGroup returns the profile group applied to a rule, or "".
 // A rule may instead carry individually assigned profiles (pango's
-// ProfileSetting.Profiles branch), which this server does not model; that case
-// returns "" so the get simply reports no profile_group.
+// ProfileSetting.Profiles branch), which this server does not model;
+// securityRuleHasIndividualProfiles reports that branch so a get does not
+// conflate it with a rule that has no security profiles at all.
 func securityRuleProfileGroup(ps *security.ProfileSetting) string {
 	if ps == nil {
 		return ""
 	}
 	return firstMember(ps.Group)
+}
+
+// securityRuleHasIndividualProfiles reports whether the rule assigns profiles
+// per type instead of a group. That subtree is SDK-only here, so the read tools
+// surface only its presence.
+func securityRuleHasIndividualProfiles(ps *security.ProfileSetting) bool {
+	return ps != nil && ps.Profiles != nil
 }
 
 // securityRuleSummary reduces an entry to the list view fields on top of the
@@ -204,6 +227,7 @@ func securityRuleSummary(e *security.Entry) any {
 	m["service"] = e.Service
 	m["disabled"] = e.Disabled != nil && *e.Disabled
 	m["profile_group"] = securityRuleProfileGroup(e.ProfileSetting)
+	m["has_individual_profiles"] = securityRuleHasIndividualProfiles(e.ProfileSetting)
 	return m
 }
 
