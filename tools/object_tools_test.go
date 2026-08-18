@@ -552,9 +552,9 @@ func TestAddressPanoramaLocations(t *testing.T) {
 	})
 }
 
-// registeredToolNames registers the address, address group, service, service
-// group, tag, security rule and NAT rule tools on a fresh in-memory MCP
-// server/client pair and returns the set of tool names the server exposes.
+// registeredToolNames registers every object and rule tool set (but not the
+// device or op tools) on a fresh in-memory MCP server/client pair and returns
+// the set of tool names the server exposes.
 func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
@@ -565,6 +565,9 @@ func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	RegisterTagTools(srv, d)
 	RegisterSecurityRuleTools(srv, d)
 	RegisterNatRuleTools(srv, d)
+	RegisterDecryptionRuleTools(srv, d)
+	RegisterAuthenticationRuleTools(srv, d)
+	RegisterPbfRuleTools(srv, d)
 	return serverToolNames(t, srv)
 }
 

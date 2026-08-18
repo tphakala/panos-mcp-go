@@ -1118,7 +1118,8 @@ func TestNatRuleCreateWithPosition(t *testing.T) {
 		// move then fails inside MoveGroup (the pivot is not in the listing)
 		// and the result must report the created-but-not-positioned state.
 		// This is the only test pinning ruleCreateHandler's partial-failure
-		// branch for BOTH security and NAT (see plan D1).
+		// branch, which every rulebase that uses ruleCreateHandler shares
+		// (security, NAT, decryption, authentication, PBF).
 		d, f := newTestDeps(t, "PA-VM",
 			fakeRoute{Match: getEntryXpath("out-snat"), Body: natRuleGetBody("out-snat")},
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},

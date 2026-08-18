@@ -193,8 +193,8 @@ func securityRuleSummary(e *security.Entry) any {
 // against the pivot (Directly: true): "move X before Y" means immediately
 // before, and pango would otherwise treat any earlier slot as already
 // satisfied and do nothing. top/bottom reject a relative_to so a confused
-// call gets an error instead of a silently dropped argument. Shared by the
-// security and NAT rule tools.
+// call gets an error instead of a silently dropped argument. Shared by all
+// the rule tools.
 func movePosition(position, relativeTo string) (movement.Position, error) {
 	switch position {
 	case "top":
@@ -222,7 +222,7 @@ func movePosition(position, relativeTo string) (movement.Position, error) {
 	}
 }
 
-// MoveInput is the input for the rule move tools (security and NAT).
+// MoveInput is the input for the rule move tools.
 type MoveInput struct {
 	Name       string        `json:"name" jsonschema:"Rule name to move"`
 	Location   LocationInput `json:"location,omitempty"`
@@ -233,8 +233,8 @@ type MoveInput struct {
 // ruleMover is the one move capability the rule tools need from a raw pango
 // rule service. MoveGroup is not part of crudService and the shared
 // nameFixAdapter hides its underlying service, so the registration function
-// passes the raw service separately for moves. Generic so the security and
-// NAT rule tools share moveHandler.
+// passes the raw service separately for moves. Generic so every rule tool
+// shares moveHandler.
 type ruleMover[L, E any] interface {
 	MoveGroup(ctx context.Context, loc L, position movement.Position, entries []*E, batchSize int) error
 }
@@ -302,7 +302,7 @@ type ruleCreator[L, E any] interface {
 // rule that does not exist passes the syntax check but fails at MoveGroup
 // after the create; the result then reports the rule was created but left
 // at the rulebase bottom, never silently mispositioned. Shared by the
-// security and NAT rule create tools.
+// rule create tools.
 func ruleCreateHandler[L, E, In any](
 	d *Deps, tool string, svc ruleCreator[L, E],
 	resolve func(LocationInput) (L, error),
