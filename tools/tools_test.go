@@ -29,11 +29,7 @@ func TestRegisterAllToolCounts(t *testing.T) {
 		{"Panorama", true, 20},
 	}
 	for _, c := range cases {
-		d, _ := newTestDeps(t, c.model)
-		d.ReadOnly = c.readOnly
-		s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-		RegisterAll(s, d)
-		if got := len(serverToolNames(t, s)); got != c.want {
+		if got := len(allRegisteredNames(t, c.model, c.readOnly)); got != c.want {
 			t.Errorf("%s readOnly=%v: got %d tools, want %d", c.model, c.readOnly, got, c.want)
 		}
 	}

@@ -11,7 +11,7 @@ COPY . .
 # Version is stamped into main.version the same way task go:build does it. It
 # comes in as a build arg rather than from `git describe` because .dockerignore
 # excludes .git, so describe inside the build would always fall back. Pass the
-# real value with `docker build --build-arg VERSION=$(git describe --tags --always)`
+# real value with `docker build --build-arg VERSION=$(git describe --tags --always --dirty)`
 # or via `task image:build`; a bare build harmlessly reports "docker".
 ARG VERSION=docker
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
