@@ -356,9 +356,10 @@ func listHandler[L, E any](
 }
 
 // getHandler builds a get tool handler returning the entry through summarize,
-// the same clean projection the list tool uses, so get, list, create, and
-// update all speak one schema and none leaks pango's internal struct fields
-// (issue #48).
+// a clean per-resource projection, so get, create, and update never leak
+// pango's internal struct fields (issue #48). summarize is usually the same
+// function list uses; the NAT tools pass natRuleDetail for get/create/update,
+// a fuller projection than the compact NAT list summary.
 func getHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E],
 	resolve func(LocationInput) (L, error),
