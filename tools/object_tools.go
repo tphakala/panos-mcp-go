@@ -194,7 +194,7 @@ func RegisterAddressTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_address_get",
 		Description: "Get one address object by name with all fields. Read-only.",
 		Annotations: readOnlyTool("Get address"),
-	}, getHandler[address.Location, address.Entry](d, "panos_address_get", svc, resolve))
+	}, getHandler[address.Location, address.Entry](d, "panos_address_get", svc, resolve, addressSummary))
 	if d.ReadOnly {
 		return
 	}
@@ -202,13 +202,13 @@ func RegisterAddressTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_address_create",
 		Description: "Create an address object in the candidate config. Exactly one of ip_netmask, ip_range, fqdn. Run panos_commit to apply.",
 		Annotations: createTool("Create address"),
-	}, createHandler[address.Location, address.Entry, AddressInput](d, "panos_address_create", svc, resolve, loc, buildAddressEntry))
+	}, createHandler[address.Location, address.Entry, AddressInput](d, "panos_address_create", svc, resolve, loc, buildAddressEntry, addressSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_update",
 		Description: "Update an address object: read-modify-write, only provided fields change; provided arrays replace fully. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update address"),
 	}, updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update", svc, resolve, loc,
-		func(in AddressInput) string { return in.Name }, overlayAddress))
+		func(in AddressInput) string { return in.Name }, overlayAddress, addressSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_delete",
 		Description: "Delete an address object from the candidate config. Run panos_commit to apply.",
@@ -334,7 +334,7 @@ func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_address_group_get",
 		Description: "Get one address group by name with all fields. Read-only.",
 		Annotations: readOnlyTool("Get address group"),
-	}, getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get", svc, resolve))
+	}, getHandler[address_group.Location, address_group.Entry](d, "panos_address_group_get", svc, resolve, addressGroupSummary))
 	if d.ReadOnly {
 		return
 	}
@@ -342,13 +342,13 @@ func RegisterAddressGroupTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_address_group_create",
 		Description: "Create an address group in the candidate config. Exactly one of static, dynamic_filter. Run panos_commit to apply.",
 		Annotations: createTool("Create address group"),
-	}, createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create", svc, resolve, loc, buildAddressGroupEntry))
+	}, createHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_create", svc, resolve, loc, buildAddressGroupEntry, addressGroupSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_group_update",
 		Description: "Update an address group: read-modify-write, only provided fields change. Tags replace fully (an empty list clears them); a non-empty static or dynamic_filter replaces membership and switches the group type. An explicitly empty static list is rejected: a static group cannot be emptied in place, so switch to dynamic_filter or delete the group. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update address group"),
 	}, updateHandler[address_group.Location, address_group.Entry, AddressGroupInput](d, "panos_address_group_update", svc, resolve, loc,
-		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup))
+		func(in AddressGroupInput) string { return in.Name }, overlayAddressGroup, addressGroupSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_address_group_delete",
 		Description: "Delete an address group from the candidate config. Run panos_commit to apply.",
@@ -525,7 +525,7 @@ func RegisterServiceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_service_get",
 		Description: "Get one service object by name with all fields. Read-only.",
 		Annotations: readOnlyTool("Get service"),
-	}, getHandler[service.Location, service.Entry](d, "panos_service_get", svc, resolve))
+	}, getHandler[service.Location, service.Entry](d, "panos_service_get", svc, resolve, serviceSummary))
 	if d.ReadOnly {
 		return
 	}
@@ -533,13 +533,13 @@ func RegisterServiceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_service_create",
 		Description: "Create a service object in the candidate config. protocol (tcp|udp) and port are required. Run panos_commit to apply.",
 		Annotations: createTool("Create service"),
-	}, createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create", svc, resolve, loc, buildServiceEntry))
+	}, createHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_create", svc, resolve, loc, buildServiceEntry, serviceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_update",
 		Description: "Update a service object: read-modify-write, only provided fields change; changing ports requires protocol and port together and replaces the whole protocol block. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update service"),
 	}, updateHandler[service.Location, service.Entry, ServiceInput](d, "panos_service_update", svc, resolve, loc,
-		func(in ServiceInput) string { return in.Name }, overlayService))
+		func(in ServiceInput) string { return in.Name }, overlayService, serviceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_delete",
 		Description: "Delete a service object from the candidate config. Fails while rules reference it. Run panos_commit to apply.",
@@ -644,7 +644,7 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_service_group_get",
 		Description: "Get one service group by name with all fields. Read-only.",
 		Annotations: readOnlyTool("Get service group"),
-	}, getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get", svc, resolve))
+	}, getHandler[service_group.Location, service_group.Entry](d, "panos_service_group_get", svc, resolve, serviceGroupSummary))
 	if d.ReadOnly {
 		return
 	}
@@ -652,13 +652,13 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_service_group_create",
 		Description: "Create a service group in the candidate config. At least one member is required. Run panos_commit to apply.",
 		Annotations: createTool("Create service group"),
-	}, createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create", svc, resolve, loc, buildServiceGroupEntry))
+	}, createHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_create", svc, resolve, loc, buildServiceGroupEntry, serviceGroupSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_group_update",
 		Description: "Update a service group: read-modify-write, only provided fields change. A non-empty members list replaces the full membership; an explicitly empty members list is rejected (a group cannot be emptied in place; delete it instead); tags replace fully (an empty list clears them). Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update service group"),
 	}, updateHandler[service_group.Location, service_group.Entry, ServiceGroupInput](d, "panos_service_group_update", svc, resolve, loc,
-		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup))
+		func(in ServiceGroupInput) string { return in.Name }, overlayServiceGroup, serviceGroupSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_service_group_delete",
 		Description: "Delete a service group from the candidate config. Run panos_commit to apply.",
@@ -783,7 +783,7 @@ func RegisterTagTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_tag_get",
 		Description: "Get one tag by name with all fields. Read-only.",
 		Annotations: readOnlyTool("Get tag"),
-	}, getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get", svc, resolve))
+	}, getHandler[admintag.Location, admintag.Entry](d, "panos_tag_get", svc, resolve, tagSummary))
 	if d.ReadOnly {
 		return
 	}
@@ -791,13 +791,13 @@ func RegisterTagTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_tag_create",
 		Description: "Create a tag in the candidate config. Only the name is required; color (color1 to color42, excluding color11 and color18) and comments are optional. Run panos_commit to apply.",
 		Annotations: createTool("Create tag"),
-	}, createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create", svc, resolve, loc, buildTagEntry))
+	}, createHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_create", svc, resolve, loc, buildTagEntry, tagSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tag_update",
 		Description: "Update a tag: read-modify-write, only provided fields change; an omitted color or comments keeps the current value, so neither can be cleared in place. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update tag"),
 	}, updateHandler[admintag.Location, admintag.Entry, TagInput](d, "panos_tag_update", svc, resolve, loc,
-		func(in TagInput) string { return in.Name }, overlayTag))
+		func(in TagInput) string { return in.Name }, overlayTag, tagSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tag_delete",
 		Description: "Delete a tag from the candidate config. Fails while objects or rules still reference it. Run panos_commit to apply.",

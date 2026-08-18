@@ -320,7 +320,7 @@ func TestSecurityRuleAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid rule</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[security.Location, security.Entry](d, "panos_security_rule_get",
-		newSecurityRuleService(d), securityResolve(d))
+		newSecurityRuleService(d), securityResolve(d), securityRuleSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -346,7 +346,7 @@ func TestSecurityRuleUpdate(t *testing.T) {
 	h := updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update",
 		newSecurityRuleService(d), securityResolve(d),
 		func(in SecurityRuleInput) LocationInput { return in.Location },
-		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule)
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary)
 
 	// The overlay must CHANGE something: pango skips the edit entirely when
 	// the overlaid entry SpecMatches the current one.
@@ -904,6 +904,34 @@ func natResolve(d *Deps) func(LocationInput) (nat.Location, error) {
 
 func natRuleName(e *nat.Entry) string { return e.Name }
 
+// TestNatRuleGetReturnsTranslationDetails pins issue #48 for NAT: get returns
+// the flattened translation fields that create and update accept, not the
+// compact has_*_translation booleans the list view uses, and never the raw
+// pango struct.
+func TestNatRuleGetReturnsTranslationDetails(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: natRuleGetBody("port-fwd")})
+	h := getHandler[nat.Location, nat.Entry](d, "panos_nat_rule_get", newNatRuleService(d), natResolve(d), natRuleDetail)
+
+	res, _, err := h(t.Context(), nil, NameInput{Name: "port-fwd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, res))
+	}
+	out := textContent(t, res)
+	for _, want := range []string{`"snat_interface": "ethernet1/1"`, `"dnat_address": "10.0.0.80"`, `"dnat_port": 8080`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("nat get must include %s, got: %s", want, out)
+		}
+	}
+	for _, leak := range []string{"has_source_translation", "has_destination_translation", "SourceTranslation", "DestinationTranslation", "MiscAttributes"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("nat get leaked %q: %s", leak, out)
+		}
+	}
+}
+
 // setElements returns the element bodies of all recorded config set requests.
 func setElements(f *fakeAPI) []string {
 	var els []string
@@ -1123,7 +1151,7 @@ func TestNatRuleAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid nat rule</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[nat.Location, nat.Entry](d, "panos_nat_rule_get",
-		newNatRuleService(d), natResolve(d))
+		newNatRuleService(d), natResolve(d), natRuleSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -1149,7 +1177,7 @@ func TestNatRuleUpdate(t *testing.T) {
 	h := updateHandler[nat.Location, nat.Entry, NatRuleInput](d, "panos_nat_rule_update",
 		newNatRuleService(d), natResolve(d),
 		func(in NatRuleInput) LocationInput { return in.Location },
-		func(in NatRuleInput) string { return in.Name }, overlayNatRule)
+		func(in NatRuleInput) string { return in.Name }, overlayNatRule, natRuleSummary)
 
 	// The overlay must CHANGE something: pango skips the edit entirely when
 	// the overlaid entry SpecMatches the current one.
@@ -1187,7 +1215,7 @@ func TestNatRuleUpdatePreservesDNATPort(t *testing.T) {
 	h := updateHandler[nat.Location, nat.Entry, NatRuleInput](d, "panos_nat_rule_update",
 		newNatRuleService(d), natResolve(d),
 		func(in NatRuleInput) LocationInput { return in.Location },
-		func(in NatRuleInput) string { return in.Name }, overlayNatRule)
+		func(in NatRuleInput) string { return in.Name }, overlayNatRule, natRuleSummary)
 
 	// Change only the translated address; the port must ride along unchanged.
 	res, _, err := h(t.Context(), nil, NatRuleInput{Name: "out-snat", DNATAddress: "10.0.0.99"})

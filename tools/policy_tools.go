@@ -310,6 +310,7 @@ func ruleCreateHandler[L, E, In any](
 	location func(In) LocationInput,
 	name func(In) string,
 	posOf func(In) (pos, relativeTo string),
+	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		entry, err := build(in)
@@ -344,7 +345,7 @@ func ruleCreateHandler[L, E, In any](
 			}
 		}
 		d.Logger.Info(tool+" succeeded", "name", name(in))
-		res, v := jsonResult(created)
+		res, v := jsonResult(summarize(created))
 		return res, v, nil
 	}
 }
@@ -362,6 +363,7 @@ func securityRuleCreateHandler(d *Deps, svc *security.Service) func(context.Cont
 		func(in SecurityRuleInput) LocationInput { return in.Location },
 		func(in SecurityRuleInput) string { return in.Name },
 		func(in SecurityRuleInput) (string, string) { return in.Position, in.RelativeTo },
+		securityRuleSummary,
 	)
 }
 
@@ -381,9 +383,9 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	}, listHandler[security.Location, security.Entry](d, "panos_security_rule_list", svc, resolve, name, securityRuleSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_get",
-		Description: "Get one security rule by name with all fields. Read-only.",
+		Description: "Get one security rule by name with the fields this server manages (match, action, tags, disabled). Read-only.",
 		Annotations: readOnlyTool("Get security rule"),
-	}, getHandler[security.Location, security.Entry](d, "panos_security_rule_get", svc, resolve))
+	}, getHandler[security.Location, security.Entry](d, "panos_security_rule_get", svc, resolve, securityRuleSummary))
 	if d.ReadOnly {
 		return
 	}
@@ -397,7 +399,7 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). position is ignored here; use panos_security_rule_move. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update security rule"),
 	}, updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update", svc, resolve, loc,
-		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule))
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_delete",
 		Description: "Delete a security rule from the candidate config. Run panos_commit to apply.",
@@ -648,6 +650,7 @@ func natRuleCreateHandler(d *Deps, svc *nat.Service) func(context.Context, *mcp.
 		func(in NatRuleInput) LocationInput { return in.Location },
 		func(in NatRuleInput) string { return in.Name },
 		func(in NatRuleInput) (string, string) { return in.Position, in.RelativeTo },
+		natRuleDetail,
 	)
 }
 
@@ -668,6 +671,42 @@ func natRuleSummary(e *nat.Entry) any {
 	return m
 }
 
+// natRuleDetail is the get/create/update projection for a NAT rule: the list
+// fields plus the flattened translation details and to_interface, so a get
+// returns exactly what create and update accept (snat_interface/snat_addresses,
+// dnat_address/dnat_port). list keeps natRuleSummary's compact
+// has_*_translation booleans (issue #48).
+func natRuleDetail(e *nat.Entry) any {
+	m := summaryBase(e.Name, e.Description, e.Tag)
+	m["from"] = e.From
+	m["to"] = e.To
+	m["source"] = e.Source
+	m["destination"] = e.Destination
+	m["service"] = strVal(e.Service)
+	m["nat_type"] = strVal(e.NatType)
+	m["to_interface"] = strVal(e.ToInterface)
+	m["disabled"] = e.Disabled != nil && *e.Disabled
+	// Flatten the source translation (dynamic-ip-and-port: egress interface or
+	// a translated-address pool, mutually exclusive per applyNatTranslations).
+	if st := e.SourceTranslation; st != nil && st.DynamicIpAndPort != nil {
+		dip := st.DynamicIpAndPort
+		if dip.InterfaceAddress != nil {
+			m["snat_interface"] = strVal(dip.InterfaceAddress.Interface)
+		}
+		if len(dip.TranslatedAddress) > 0 {
+			m["snat_addresses"] = dip.TranslatedAddress
+		}
+	}
+	// Flatten the destination translation (address and optional port).
+	if dt := e.DestinationTranslation; dt != nil {
+		m["dnat_address"] = strVal(dt.TranslatedAddress)
+		if dt.TranslatedPort != nil {
+			m["dnat_port"] = *dt.TranslatedPort
+		}
+	}
+	return m
+}
+
 // RegisterNatRuleTools registers the NAT rule tools. All four mutating
 // tools, including move, are skipped entirely in read-only mode.
 func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
@@ -684,9 +723,9 @@ func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
 	}, listHandler[nat.Location, nat.Entry](d, "panos_nat_rule_list", svc, resolve, name, natRuleSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_nat_rule_get",
-		Description: "Get one NAT rule by name with all fields including the full translation subtrees. Read-only.",
+		Description: "Get one NAT rule by name with the fields this server manages, including the flattened source and destination translation details. Read-only.",
 		Annotations: readOnlyTool("Get NAT rule"),
-	}, getHandler[nat.Location, nat.Entry](d, "panos_nat_rule_get", svc, resolve))
+	}, getHandler[nat.Location, nat.Entry](d, "panos_nat_rule_get", svc, resolve, natRuleDetail))
 	if d.ReadOnly {
 		return
 	}
@@ -700,7 +739,7 @@ func RegisterNatRuleTools(s *mcp.Server, d *Deps) {
 		Description: "Update a NAT rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided snat_ field replaces the WHOLE source translation; a provided dnat_address MERGES into the existing destination translation, so omitting dnat_port keeps the rule's existing translated port (clearing a translation, or just its port, is not supported here: delete and recreate). position is ignored; use panos_nat_rule_move. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update NAT rule"),
 	}, updateHandler[nat.Location, nat.Entry, NatRuleInput](d, "panos_nat_rule_update", svc, resolve, loc,
-		func(in NatRuleInput) string { return in.Name }, overlayNatRule))
+		func(in NatRuleInput) string { return in.Name }, overlayNatRule, natRuleDetail))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_nat_rule_delete",
 		Description: "Delete a NAT rule from the candidate config. Run panos_commit to apply.",

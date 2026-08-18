@@ -74,7 +74,7 @@ func TestReadHandlersHoldReadLock(t *testing.T) {
 	list := listHandler[struct{}, raceEntry](d, "race_list", svc, resolve,
 		func(e *raceEntry) string { return e.Name },
 		func(e *raceEntry) any { return e.Name })
-	get := getHandler[struct{}, raceEntry](d, "race_get", svc, resolve)
+	get := getHandler[struct{}, raceEntry](d, "race_get", svc, resolve, func(e *raceEntry) any { return e })
 
 	ctx := t.Context()
 
