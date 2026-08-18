@@ -14,7 +14,7 @@ Each tool carries an annotation describing its effect (read-only, create, update
 
 The API user's Admin Role profile needs specific XML API permissions. Grant these on the profile's XML API tab, matched to the tools you intend to use:
 
-- **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config list changes` operational command), and the job polling behind commit, validate, and push also need it.
+- **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config list changes` operational command), and the job polling behind commit, validate, and push also need it. The operational-visibility and policy-test tools (`panos_system_resources`, `panos_ha_status`, `panos_session_list`, `panos_interface_status`, `panos_route_list`, `panos_test_security_policy_match`, `panos_test_nat_policy_match`) are operational requests too.
 - **Configuration** (`type=config`): required for every object and policy tool (address, service, group, tag, security and NAT rule create/update/delete/move).
 - **Commit**: required for `panos_commit`, and for `panos_push` to a Panorama device group.
 
@@ -51,7 +51,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 47 tools on Panorama and 44 on a firewall (the three Panorama-only tools below are absent on a firewall). In read-only mode (the default) only the read-only tools are registered: 20 on Panorama, 18 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 49 tools on Panorama and 51 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 22 on Panorama, 25 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -116,6 +116,20 @@ The server registers 47 tools on Panorama and 44 on a firewall (the three Panora
 | `panos_validate` | write | Validate the candidate config without committing. |
 | `panos_revert` | write | Revert the candidate config to the running config. Discards all pending changes device-wide; check `panos_config_diff` first. |
 | `panos_push` *(Panorama only)* | write | Push committed config to a device group's firewalls (commit-all). Does not commit first; run `panos_commit` before it. |
+
+### Operational visibility and policy tests
+
+These are read-only operational commands (`type=op`), not configuration changes. The policy-match tests evaluate a hypothetical flow against the running (committed) config, so they are a safe way to reason about a rule before or after a change. The firewall-only tools (sessions, interfaces, routes, and the two policy-match tests) need a dataplane or a running firewall policy that Panorama does not have, so they are absent there.
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_system_resources` | read-only | Show management-plane resource usage (CPU, memory, load) as reported by the device. |
+| `panos_ha_status` | read-only | Show high-availability state: enabled, mode, and local and peer state. |
+| `panos_session_list` *(Firewall only)* | read-only | List active sessions from the flow table, with optional source, destination, port, application, and zone filters. |
+| `panos_interface_status` *(Firewall only)* | read-only | Show interface status (hardware and logical), optionally filtered to one interface. |
+| `panos_route_list` *(Firewall only)* | read-only | List routes from the legacy virtual-router routing table, optionally scoped to one virtual router. |
+| `panos_test_security_policy_match` *(Firewall only)* | read-only | Test which security rule a hypothetical flow would match against the running config. |
+| `panos_test_nat_policy_match` *(Firewall only)* | read-only | Test which NAT rule a hypothetical flow would match, and the resulting translation, against the running config. |
 
 ## Example MCP client configuration
 

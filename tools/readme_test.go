@@ -26,25 +26,29 @@ func allRegisteredNames(t *testing.T, model string, readOnly bool) map[string]bo
 	return serverToolNames(t, s)
 }
 
-// readmeTable holds what the README's three tool tables claim: the set of tool
-// names listed, which are marked Panorama-only, and the mode column value.
+// readmeTable holds what the README's tool tables claim: the set of tool names
+// listed, which are marked Panorama-only or firewall-only, and the mode column
+// value.
 type readmeTable struct {
 	names    map[string]bool
 	panoOnly map[string]bool
+	fwOnly   map[string]bool
 	mode     map[string]string
 }
 
-// parseReadmeTables extracts the tool rows from the README. Only the three tool
+// parseReadmeTables extracts the tool rows from the README. Only the tool
 // tables match: their rows begin "| `panos_...` |" at line start, whereas the
 // env-var table uses uppercase PANOS_ names and prose never starts a line with
-// "| `panos".
+// "| `panos". A row may carry a "(Panorama only)" or "(Firewall only)" marker
+// after the tool name.
 func parseReadmeTables(t *testing.T, readme string) readmeTable {
 	t.Helper()
 	const bt = "`"
-	rowRe := regexp.MustCompile(`(?m)^\| ` + bt + `(panos_[a-z0-9_]+)` + bt + `( \*\(Panorama only\)\*)? \| (read-only|write) \|`)
+	rowRe := regexp.MustCompile(`(?m)^\| ` + bt + `(panos_[a-z0-9_]+)` + bt + `( \*\((Panorama|Firewall) only\)\*)? \| (read-only|write) \|`)
 	tbl := readmeTable{
 		names:    map[string]bool{},
 		panoOnly: map[string]bool{},
+		fwOnly:   map[string]bool{},
 		mode:     map[string]string{},
 	}
 	for _, m := range rowRe.FindAllStringSubmatch(readme, -1) {
@@ -53,10 +57,13 @@ func parseReadmeTables(t *testing.T, readme string) readmeTable {
 			t.Errorf("README lists tool %q in more than one table row", name)
 		}
 		tbl.names[name] = true
-		if m[2] != "" {
+		switch m[3] {
+		case "Panorama":
 			tbl.panoOnly[name] = true
+		case "Firewall":
+			tbl.fwOnly[name] = true
 		}
-		tbl.mode[name] = m[3]
+		tbl.mode[name] = m[4]
 	}
 	return tbl
 }
@@ -99,6 +106,15 @@ func diffSet(a, b map[string]bool) map[string]bool {
 	return out
 }
 
+// unionSet returns the keys present in either a or b.
+func unionSet(a, b map[string]bool) map[string]bool {
+	out := maps.Clone(a)
+	for k := range b {
+		out[k] = true
+	}
+	return out
+}
+
 // assertSameKeys fails for every key present in one set but not the other, in
 // both directions.
 func assertSameKeys(t *testing.T, aLabel string, a map[string]bool, bLabel string, b map[string]bool) {
@@ -136,8 +152,12 @@ func TestReadmeToolTablesMatchRegistrations(t *testing.T) {
 	panoRO := allRegisteredNames(t, "Panorama", true)
 
 	// Panorama-only tools are those RegisterAll adds on Panorama but not on a
-	// firewall. Read-only tools are those registered even in read-only mode.
+	// firewall; firewall-only tools are the reverse. Read-only tools are those
+	// registered even in read-only mode. No single device type sees the whole
+	// surface, so the README lists the union of both write-mode sets.
 	panoOnly := diffSet(panoWrite, fwWrite)
+	fwOnly := diffSet(fwWrite, panoWrite)
+	allTools := unionSet(panoWrite, fwWrite)
 
 	b, err := os.ReadFile("../README.md")
 	if err != nil {
@@ -146,10 +166,11 @@ func TestReadmeToolTablesMatchRegistrations(t *testing.T) {
 	readme := string(b)
 	tbl := parseReadmeTables(t, readme)
 
-	// The README must list exactly the full (Panorama, write-mode) tool set.
-	assertSameKeys(t, "registered", panoWrite, "listed in the README", tbl.names)
+	// The README must list exactly the union of the firewall and Panorama
+	// write-mode tool sets.
+	assertSameKeys(t, "registered", allTools, "listed in the README", tbl.names)
 
-	// Every listed tool's Panorama-only marking and mode column must match how
+	// Every listed tool's device-only marking and mode column must match how
 	// RegisterAll gates it. Sort for stable failure output.
 	for _, name := range slices.Sorted(maps.Keys(tbl.names)) {
 		wantPanoOnly := panoOnly[name]
@@ -157,8 +178,13 @@ func TestReadmeToolTablesMatchRegistrations(t *testing.T) {
 			t.Errorf("tool %q: README Panorama-only marking is %v, registration says %v; fix the README Tools section or the registration",
 				name, tbl.panoOnly[name], wantPanoOnly)
 		}
+		wantFwOnly := fwOnly[name]
+		if tbl.fwOnly[name] != wantFwOnly {
+			t.Errorf("tool %q: README firewall-only marking is %v, registration says %v; fix the README Tools section or the registration",
+				name, tbl.fwOnly[name], wantFwOnly)
+		}
 		wantMode := "write"
-		if panoRO[name] {
+		if panoRO[name] || fwRO[name] {
 			wantMode = "read-only"
 		}
 		if tbl.mode[name] != wantMode {
@@ -174,10 +200,15 @@ func TestReadmeToolTablesMatchRegistrations(t *testing.T) {
 	checkCount(t, "Panorama read-only", gotPanoRO, len(panoRO))
 	checkCount(t, "firewall read-only", gotFwRO, len(fwRO))
 
-	// The same sentence spells out the Panorama-only count in words.
+	// The same sentence spells out the Panorama-only and firewall-only counts in
+	// words.
 	phrase := "the " + numberWord(len(panoOnly)) + " Panorama-only tools below"
 	if !strings.Contains(readme, phrase) {
 		t.Errorf("README should say %q (there are %d Panorama-only tools); update the count sentence in the Tools section", phrase, len(panoOnly))
+	}
+	fwPhrase := "the " + numberWord(len(fwOnly)) + " firewall-only tools below"
+	if !strings.Contains(readme, fwPhrase) {
+		t.Errorf("README should say %q (there are %d firewall-only tools); update the count sentence in the Tools section", fwPhrase, len(fwOnly))
 	}
 }
 
