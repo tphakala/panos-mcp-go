@@ -464,6 +464,15 @@ func haStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct
 			return res, v, nil
 		}
 		enabled := strings.TrimSpace(resp.Result.Enabled)
+		// An absent <enabled> alongside other content is an unrecognized shape, not
+		// a disabled HA: surface it raw rather than a false "disabled" verdict
+		// (issue #42). An explicit "no", or a genuinely empty result, is disabled.
+		if enabled == "" {
+			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
+				res, v := textResult("unrecognized panos_ha_status response; raw result: %s", raw)
+				return res, v, nil
+			}
+		}
 		if enabled == "" || strings.EqualFold(enabled, "no") {
 			res, v := jsonResult(map[string]any{"enabled": false})
 			return res, v, nil

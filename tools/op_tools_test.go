@@ -346,6 +346,23 @@ func TestHAStatusPanoramaShape(t *testing.T) {
 	}
 }
 
+// TestHAStatusEnabledAbsent proves a response carrying HA state but no <enabled>
+// element is surfaced raw, not reported as a false "HA disabled" verdict.
+func TestHAStatusEnabledAbsent(t *testing.T) {
+	body := `<response status="success"><result>` +
+		`<group><local-info><state>active</state></local-info></group>` +
+		`</result></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(haStateCmd), Body: body})
+	res, _, _ := haStatusHandler(d)(t.Context(), nil, struct{}{})
+	if res.IsError {
+		t.Fatalf("absent-enabled HA must be a non-error text result: %s", textContent(t, res))
+	}
+	out := textContent(t, res)
+	if !strings.Contains(out, "unrecognized panos_ha_status") || !strings.Contains(out, "local-info") {
+		t.Errorf("absent-enabled HA = %q, want the raw fallback carrying the response body", out)
+	}
+}
+
 func TestSecurityPolicyMatch(t *testing.T) {
 	// Modern shape: <entry name="..."><index>..</index><action>..</action>.
 	body := `<response status="success"><result><rules>` +
