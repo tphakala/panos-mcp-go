@@ -51,7 +51,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 102 tools on Panorama and 104 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 42 on Panorama, 45 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 125 tools on Panorama and 127 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 50 on Panorama, 53 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -84,6 +84,33 @@ The server registers 102 tools on Panorama and 104 on a firewall (the three Pano
 | `panos_tag_create` | write | Create a tag in the candidate config. |
 | `panos_tag_update` | write | Update a tag: read-modify-write, only provided fields change; an omitted color or comments keeps the current value, so neither can be cleared in place. |
 | `panos_tag_delete` | write | Delete a tag from the candidate config. |
+
+### Application groups, external dynamic lists, URL categories, and schedules
+
+These are the config objects rules and profiles commonly reference. They reuse the same generic CRUD and location model as the address, service, and tag objects.
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_application_group_list` | read-only | List application groups (named sets of applications, filters, and nested groups) at a location. |
+| `panos_application_group_get` | read-only | Get one application group by name with its members. |
+| `panos_application_group_create` | write | Create an application group in the candidate config; at least one member is required. |
+| `panos_application_group_update` | write | Update an application group: read-modify-write; a non-empty members list replaces the full membership. |
+| `panos_application_group_delete` | write | Delete an application group from the candidate config. |
+| `panos_edl_list` | read-only | List external dynamic lists (EDLs) with their type and source URL at a location. |
+| `panos_edl_get` | read-only | Get one external dynamic list by name with its type, source, exceptions, and refresh schedule. |
+| `panos_edl_create` | write | Create an external dynamic list; type and url are required (predefined types use the built-in list name). |
+| `panos_edl_update` | write | Update an external dynamic list: read-modify-write; a provided type replaces the whole source definition. |
+| `panos_edl_delete` | write | Delete an external dynamic list from the candidate config. |
+| `panos_custom_url_category_list` | read-only | List custom URL categories (URL lists or category-match sets) at a location. |
+| `panos_custom_url_category_get` | read-only | Get one custom URL category by name with its type and members. |
+| `panos_custom_url_category_create` | write | Create a custom URL category; type ('URL List' or 'Category Match') and at least one member are required. |
+| `panos_custom_url_category_update` | write | Update a custom URL category: read-modify-write; a non-empty members list replaces the full list. |
+| `panos_custom_url_category_delete` | write | Delete a custom URL category from the candidate config. |
+| `panos_schedule_list` | read-only | List schedules (time windows a rule can be bound to) at a location. |
+| `panos_schedule_get` | read-only | Get one schedule by name with its type and time ranges. |
+| `panos_schedule_create` | write | Create a schedule; schedule_type (non-recurring, daily, or weekly) is required with its time ranges. |
+| `panos_schedule_update` | write | Update a schedule: read-modify-write; a provided schedule_type replaces the whole definition. |
+| `panos_schedule_delete` | write | Delete a schedule from the candidate config. |
 
 ### Security profiles and profile groups
 
@@ -175,6 +202,9 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_job_status` | read-only | Poll a device job (commit, push, validate) by ID. |
 | `panos_config_diff` | read-only | List pending candidate changes (changed path, action, owner) versus the running config. |
 | `panos_zone_list` | read-only | List security zone names for use in rules. On Panorama, requires a template. |
+| `panos_zone_create` | write | Create a security zone; network_type is required. Firewall: vsys scope; Panorama: template required. |
+| `panos_zone_update` | write | Update a security zone: read-modify-write; a provided network_type replaces the type and its interface list. |
+| `panos_zone_delete` | write | Delete a security zone from the candidate config. |
 | `panos_device_group_list` *(Panorama only)* | read-only | List Panorama device groups. |
 | `panos_template_list` *(Panorama only)* | read-only | List Panorama templates (zone and network config scopes). |
 | `panos_commit` | write | Commit the candidate config to the running config. On Panorama this commits to Panorama itself; push to firewalls with `panos_push`. |
