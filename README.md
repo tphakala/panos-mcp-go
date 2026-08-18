@@ -1,6 +1,6 @@
 # panos-mcp-go
 
-An MCP server for Palo Alto Networks PAN-OS firewalls and Panorama, written in Go on top of the [pango](https://github.com/PaloAltoNetworks/pango) SDK. It gives an MCP client (an AI assistant, for example) configuration management of a single device: address and service objects, groups and tags, security and NAT policy, and the candidate commit lifecycle. One server instance talks to one device.
+An MCP server for Palo Alto Networks PAN-OS firewalls and Panorama, written in Go on top of the [pango](https://github.com/PaloAltoNetworks/pango) SDK. It gives an MCP client (an AI assistant, for example) configuration management of a single device: address and service objects, groups and tags, security, NAT, decryption, authentication and policy-based forwarding policy, and the candidate commit lifecycle. One server instance talks to one device.
 
 ## Safety model
 
@@ -15,7 +15,7 @@ Each tool carries an annotation describing its effect (read-only, create, update
 The API user's Admin Role profile needs specific XML API permissions. Grant these on the profile's XML API tab, matched to the tools you intend to use:
 
 - **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config list changes` operational command), and the job polling behind commit, validate, and push also need it. The operational-visibility and policy-test tools (`panos_system_resources`, `panos_ha_status`, `panos_session_list`, `panos_interface_status`, `panos_route_list`, `panos_test_security_policy_match`, `panos_test_nat_policy_match`) are operational requests too.
-- **Configuration** (`type=config`): required for every object and policy tool (address, service, group, tag, security and NAT rule create/update/delete/move).
+- **Configuration** (`type=config`): required for every object and policy tool (address, service, group, tag, and security, NAT, decryption, authentication and PBF rule create/update/delete/move).
 - **Commit**: required for `panos_commit`, and for `panos_push` to a Panorama device group.
 
 A Configuration-only role cannot start the server: the warm-up is an operational request, so startup fails with
@@ -51,7 +51,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 49 tools on Panorama and 51 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 22 on Panorama, 25 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 67 tools on Panorama and 69 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 28 on Panorama, 31 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -101,6 +101,29 @@ The server registers 49 tools on Panorama and 51 on a firewall (the three Panora
 | `panos_nat_rule_update` | write | Update a NAT rule: read-modify-write, only provided fields change; non-empty lists replace fully (send `["any"]` to reset a match field). |
 | `panos_nat_rule_delete` | write | Delete a NAT rule from the candidate config. |
 | `panos_nat_rule_move` | write | Move a NAT rule within its rulebase: top, bottom, or directly before/after another rule. |
+
+### Decryption, authentication, and policy-based forwarding policy
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_decryption_rule_list` | read-only | List decryption rules in evaluation order at a location. |
+| `panos_decryption_rule_get` | read-only | Get one decryption rule by name with the managed fields, including the decryption type and its certificates. |
+| `panos_decryption_rule_create` | write | Create a decryption rule in the candidate config. action (decrypt or no-decrypt) is required; decryption_type selects ssh-proxy, ssl-forward-proxy or ssl-inbound-inspection. |
+| `panos_decryption_rule_update` | write | Update a decryption rule: read-modify-write, only provided fields change; non-empty lists replace fully (send `["any"]` to reset a match field). A provided decryption_type replaces the whole type choice. |
+| `panos_decryption_rule_delete` | write | Delete a decryption rule from the candidate config. |
+| `panos_decryption_rule_move` | write | Move a decryption rule within its rulebase: top, bottom, or directly before/after another rule. |
+| `panos_authentication_rule_list` | read-only | List authentication rules in evaluation order at a location. |
+| `panos_authentication_rule_get` | read-only | Get one authentication rule by name with the managed fields, including the authentication enforcement object and timeout. |
+| `panos_authentication_rule_create` | write | Create an authentication rule in the candidate config. Nothing beyond name is required; authentication_enforcement names the enforcement object applied to matching traffic. |
+| `panos_authentication_rule_update` | write | Update an authentication rule: read-modify-write, only provided fields change; non-empty lists replace fully (send `["any"]` to reset a match field). |
+| `panos_authentication_rule_delete` | write | Delete an authentication rule from the candidate config. |
+| `panos_authentication_rule_move` | write | Move an authentication rule within its rulebase: top, bottom, or directly before/after another rule. |
+| `panos_pbf_rule_list` | read-only | List policy-based forwarding rules in evaluation order at a location. |
+| `panos_pbf_rule_get` | read-only | Get one policy-based forwarding rule by name with the managed fields, including the action and its forward parameters. |
+| `panos_pbf_rule_create` | write | Create a policy-based forwarding rule in the candidate config. action (forward, forward-to-vsys, discard or no-pbf) and from (source zones) are required; action forward requires egress_interface with optional nexthop_ip or nexthop_fqdn. |
+| `panos_pbf_rule_update` | write | Update a policy-based forwarding rule: read-modify-write, only provided fields change; a provided action or from replaces the whole choice; non-empty lists replace fully. |
+| `panos_pbf_rule_delete` | write | Delete a policy-based forwarding rule from the candidate config. |
+| `panos_pbf_rule_move` | write | Move a policy-based forwarding rule within its rulebase: top, bottom, or directly before/after another rule. |
 
 ### Device operations
 

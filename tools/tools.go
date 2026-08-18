@@ -500,6 +500,9 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterTagTools(s, d)
 	RegisterSecurityRuleTools(s, d)
 	RegisterNatRuleTools(s, d)
+	RegisterDecryptionRuleTools(s, d)
+	RegisterAuthenticationRuleTools(s, d)
+	RegisterPbfRuleTools(s, d)
 	RegisterDeviceTools(s, d)
 	RegisterOpTools(s, d)
 }
