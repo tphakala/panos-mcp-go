@@ -301,9 +301,14 @@ func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneLi
 		}
 		entries, err := svc.List(ctx, loc, "get", "", "")
 		if err != nil {
-			d.Logger.Error("failed: panos_zone_list", "error", err)
-			res, v := errorResult("failed: panos_zone_list: %v", err)
-			return res, v, nil
+			if !isObjectNotFound(err) {
+				d.Logger.Error("failed: panos_zone_list", "error", err)
+				res, v := errorResult("failed: panos_zone_list: %v", err)
+				return res, v, nil
+			}
+			// No zones configured: PAN-OS returns code 7 for the empty node.
+			// Treat it as an empty list rather than a failure.
+			entries = nil
 		}
 		names := make([]string, 0, len(entries))
 		needle := strings.ToLower(in.Filter)

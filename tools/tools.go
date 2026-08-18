@@ -4,6 +4,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PaloAltoNetworks/pango"
+	panoserr "github.com/PaloAltoNetworks/pango/errors"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -289,6 +291,21 @@ type crudService[L, E any] interface {
 	List(ctx context.Context, loc L, action, filter, quote string) ([]*E, error)
 }
 
+// isObjectNotFound reports whether err is PAN-OS's "object not found" (code 7).
+// pango returns this from a config get when the target node has no entries, so
+// a list of an empty object set arrives as an error; callers treat it as empty.
+// AsType unwraps in case a caller ever wraps the pango error.
+//
+// PAN-OS also answers code 7 for a get on a nonexistent parent location: a
+// missing vsys, device, or template all return code 7 (MEASURED against PAN-OS
+// 12.1.7), indistinguishable from an empty node. So a list against a mistyped
+// location reads as empty rather than an error; telling the two apart would
+// need a separate existence check per call, not worth the extra round-trip.
+func isObjectNotFound(err error) bool {
+	pe, ok := errors.AsType[panoserr.Panos](err)
+	return ok && pe.ObjectNotFound()
+}
+
 // listHandler builds a list tool handler: fetch all entries at the location
 // (the XML API has no server-side pagination), filter by name substring,
 // clamp, and summarize.
@@ -307,9 +324,15 @@ func listHandler[L, E any](
 		}
 		entries, err := svc.List(ctx, loc, "get", "", "")
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
-			return res, v, nil
+			if !isObjectNotFound(err) {
+				d.Logger.Error("failed: "+tool, "error", err)
+				res, v := errorResult("failed: %s: %v", tool, err)
+				return res, v, nil
+			}
+			// An empty object set: PAN-OS returns code 7 for a config get on a
+			// node with no entries. That is not a failure, so continue with no
+			// entries and return an empty list.
+			entries = nil
 		}
 		if in.Filter != "" {
 			needle := strings.ToLower(in.Filter)
