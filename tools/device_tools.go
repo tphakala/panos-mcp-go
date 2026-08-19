@@ -373,8 +373,8 @@ type ZoneWriteInput struct {
 	EnableDeviceIdentification   *bool    `json:"enable_device_identification,omitempty"`
 }
 
-// ZoneNameInput is the input for panos_zone_delete: a name plus the flat zone
-// location selectors.
+// ZoneNameInput is the input for panos_zone_get and panos_zone_delete: a name
+// plus the flat zone location selectors.
 type ZoneNameInput struct {
 	Name     string `json:"name" jsonschema:"Zone name"`
 	Vsys     string `json:"vsys,omitempty" jsonschema:"Firewall vsys (default vsys1); firewall only"`
@@ -671,6 +671,37 @@ func zoneDeleteHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Zone
 	}
 }
 
+// zoneGetHandler returns one zone's full detail (network type, interfaces,
+// protection settings, and the user/device-id toggles) through zoneSummary,
+// completing the zone CRUD set that panos_zone_list (names only) leaves
+// incomplete. It uses the flat vsys/template location the other zone tools share,
+// so it cannot reuse the generic getHandler (which takes NameInput/LocationInput).
+// The Read goes through newZoneService so the raw entry name is xpath-wrapped like
+// the other zone reads. Read-only.
+func zoneGetHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneNameInput) (*mcp.CallToolResult, any, error) {
+	svc := newZoneService(d)
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in ZoneNameInput) (*mcp.CallToolResult, any, error) {
+		defer d.RLockReads()()
+		if in.Name == "" {
+			res, v := errorResult("panos_zone_get: name is required")
+			return res, v, nil
+		}
+		loc, err := resolveZoneLocation(d, in.Vsys, in.Template)
+		if err != nil {
+			res, v := errorResult("panos_zone_get: %v", err)
+			return res, v, nil
+		}
+		entry, err := svc.Read(ctx, loc, in.Name, "get")
+		if err != nil {
+			d.Logger.Error("failed: panos_zone_get", "error", err)
+			res, v := errorResult("failed: panos_zone_get: %v", err)
+			return res, v, nil
+		}
+		res, v := jsonResult(zoneSummary(entry))
+		return res, v, nil
+	}
+}
+
 // PushInput is the input for panos_push.
 type PushInput struct {
 	DeviceGroup      string `json:"device_group" jsonschema:"Device group to push to (see panos_device_group_list)"`
@@ -790,6 +821,11 @@ func RegisterDeviceTools(s *mcp.Server, d *Deps) {
 		Description: "List security zone names for use in rules. On Panorama requires template (see panos_template_list). Read-only.",
 		Annotations: readOnlyTool("List zones"),
 	}, zoneListHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_zone_get",
+		Description: "Get one security zone's full detail (network type, interfaces, zone-protection profile, log setting, packet-buffer protection, and user/device-id flags). On Panorama requires template (see panos_template_list). Read-only.",
+		Annotations: readOnlyTool("Get zone"),
+	}, zoneGetHandler(d))
 	if d.IsPanorama {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "panos_device_group_list",

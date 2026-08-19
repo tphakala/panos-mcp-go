@@ -310,6 +310,65 @@ func TestZoneDelete(t *testing.T) {
 	}
 }
 
+// zoneGetXpath returns the xpath of the recorded config get that targets the
+// zone node, failing if none was recorded.
+func zoneGetXpath(t *testing.T, f *fakeAPI) string {
+	t.Helper()
+	for _, xp := range getConfigXpaths(f) {
+		if strings.Contains(xp, "/zone") {
+			return xp
+		}
+	}
+	t.Fatal("no zone config get recorded")
+	return ""
+}
+
+func TestZoneGet(t *testing.T) {
+	t.Run("firewall returns the summary from the vsys zone xpath", func(t *testing.T) {
+		d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: zoneCreatedBody})
+		res, v, err := zoneGetHandler(d)(t.Context(), nil, ZoneNameInput{Name: "z1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		m := asMap(t, v)
+		ifs, _ := m["interfaces"].([]string)
+		if m[tagNameKey] != "z1" || m["network_type"] != "layer3" || len(ifs) != 1 || ifs[0] != "ethernet1/1" {
+			t.Fatalf("summary wrong: %v", m)
+		}
+		if xp := zoneGetXpath(t, f); !strings.Contains(xp, "vsys1") {
+			t.Fatalf("firewall get must target the vsys zone xpath: %s", xp)
+		}
+		// The name reaches the API wrapped exactly once as an entry xpath.
+		assertSingleWrappedGet(t, f, `entry[@name='z1']`)
+	})
+	t.Run("panorama targets the template zone xpath", func(t *testing.T) {
+		d, f := newTestDeps(t, "Panorama", fakeRoute{Match: configAction("get"), Body: zoneCreatedBody})
+		res, _, err := zoneGetHandler(d)(t.Context(), nil, ZoneNameInput{Name: "z1", Template: "edge"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", textContent(t, res))
+		}
+		if xp := zoneGetXpath(t, f); !strings.Contains(xp, "edge") {
+			t.Fatalf("Panorama get must target the template zone xpath: %s", xp)
+		}
+	})
+	t.Run("name is required", func(t *testing.T) {
+		d, _ := newTestDeps(t, "PA-VM")
+		res, _, err := zoneGetHandler(d)(t.Context(), nil, ZoneNameInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Fatal("empty name must be rejected")
+		}
+	})
+}
+
 func TestRegisterZoneWriteToolsReadOnly(t *testing.T) {
 	assertReadOnlyGating(t, RegisterDeviceTools,
 		[]string{"panos_zone_list"},

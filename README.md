@@ -51,7 +51,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 125 tools on Panorama and 127 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 50 on Panorama, 53 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 126 tools on Panorama and 128 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 51 on Panorama, 54 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -202,6 +202,7 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_job_status` | read-only | Poll a device job (commit, push, validate) by ID. |
 | `panos_config_diff` | read-only | List pending candidate changes (changed path, action, owner) versus the running config. |
 | `panos_zone_list` | read-only | List security zone names for use in rules. Firewall: optional vsys (a template is rejected); Panorama: template required (a vsys is rejected). |
+| `panos_zone_get` | read-only | Get one security zone's full detail (network type, interfaces, protection settings, and user/device-id flags). Firewall: optional vsys; Panorama: template required. |
 | `panos_zone_create` | write | Create a security zone; network_type is required. Firewall: vsys scope; Panorama: template required. |
 | `panos_zone_update` | write | Update a security zone: read-modify-write; a provided network_type replaces the type and its interface list. |
 | `panos_zone_delete` | write | Delete a security zone from the candidate config. |
