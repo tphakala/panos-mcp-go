@@ -131,10 +131,7 @@ func jobStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, JobIn
 		}
 		var job util.BasicJob
 		cmd := &xmlapi.Op{Command: jobsReq{ID: in.JobID}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &job); err != nil {
-			d.Logger.Error("failed: panos_job_status", "error", err)
-			res, v := errorResult("failed: panos_job_status: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_job_status", cmd, &job); !ok {
 			return res, v, nil
 		}
 		res, v := jsonResult(jobSummary(in.JobID, &job))
@@ -178,18 +175,14 @@ func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, stru
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: listChangesReq{}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_config_diff", "error", err)
-			res, v := errorResult("failed: panos_config_diff: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_config_diff", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		changes := resp.Result.Changes
 		if len(changes) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				// Success, but not the journal shape this parser expects. Surface the
-				// raw result rather than claiming the candidate is clean.
-				res, v := textResult("unrecognized config-diff response; raw result: %s", raw)
+			// Success, but not the journal shape this parser expects. Surface the
+			// raw result rather than claiming the candidate is clean.
+			if res, v, ok := rawResultFallback("panos_config_diff", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 			res, v := textResult("no pending candidate changes")
@@ -337,7 +330,7 @@ func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneLi
 		}
 		total := len(names)
 		lo, hi := clampList(in.Limit, in.Offset, total)
-		res, v := jsonResult(map[string]any{"total": total, "offset": lo, "count": hi - lo, "zones": names[lo:hi]})
+		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: hi - lo, "zones": names[lo:hi]})
 		return res, v, nil
 	}
 }
