@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"net/url"
 	"strings"
@@ -115,8 +116,8 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 	if strVal(e.Action) != "deny" {
 		t.Errorf("action = %v, want deny", e.Action)
 	}
-	if e.Description != nil || e.Disabled != nil || e.Tag != nil {
-		t.Errorf("unset optional fields must stay unset: %v %v %v", e.Description, e.Disabled, e.Tag)
+	if e.Description != nil || e.Disabled != nil || e.Tag != nil || e.Schedule != nil {
+		t.Errorf("unset optional fields must stay unset: %v %v %v %v", e.Description, e.Disabled, e.Tag, e.Schedule)
 	}
 
 	// Explicit values must suppress every default.
@@ -125,7 +126,7 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 		From: []string{"dmz"}, To: []string{"trust"},
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"web-srv"},
 		Application: []string{"ssl"}, Service: []string{"tcp-8443"},
-		Description: "d", Tags: []string{"t"}, Disabled: ptr(true),
+		Description: "d", Tags: []string{"t"}, Disabled: ptr(true), Schedule: "work-hours",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +135,7 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 		e.Destination[0] != "web-srv" || e.Application[0] != "ssl" || e.Service[0] != "tcp-8443" {
 		t.Errorf("explicit fields must not be defaulted: %+v", e)
 	}
-	if strVal(e.Description) != "d" || len(e.Tag) != 1 || e.Disabled == nil || !*e.Disabled {
+	if strVal(e.Description) != "d" || len(e.Tag) != 1 || e.Disabled == nil || !*e.Disabled || strVal(e.Schedule) != "work-hours" {
 		t.Errorf("optional fields not carried: %+v", e)
 	}
 }
@@ -170,6 +171,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 			Source: []string{"any"}, Destination: []string{"any"},
 			Application: []string{"any"}, Service: []string{"application-default"},
 			Description: ptr("old"), Tag: []string{"t1"}, Disabled: ptr(false),
+			Schedule: ptr("sched-old"),
 		}
 	}
 
@@ -178,7 +180,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 	if err := overlaySecurityRule(e, SecurityRuleInput{Name: "r1"}); err != nil {
 		t.Fatal(err)
 	}
-	if strVal(e.Action) != "allow" || e.From[0] != "any" || strVal(e.Description) != "old" || len(e.Tag) != 1 || *e.Disabled {
+	if strVal(e.Action) != "allow" || e.From[0] != "any" || strVal(e.Description) != "old" || len(e.Tag) != 1 || *e.Disabled || strVal(e.Schedule) != "sched-old" {
 		t.Fatalf("empty overlay must not change the entry: %+v", e)
 	}
 
@@ -190,7 +192,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 		From: []string{"dmz"}, To: []string{"untrust"},
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.0/24"},
 		Application: []string{"ssl"}, Service: []string{"tcp-8443"},
-		Description: "new", Tags: []string{}, Disabled: ptr(true),
+		Description: "new", Tags: []string{}, Disabled: ptr(true), Schedule: "sched-new",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,8 +201,8 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 		e.Destination[0] != "192.0.2.0/24" || e.Application[0] != "ssl" || e.Service[0] != "tcp-8443" {
 		t.Fatalf("all six match lists must replace when non-empty: %+v", e)
 	}
-	if strVal(e.Action) != "deny" || strVal(e.Description) != "new" || len(e.Tag) != 0 || !*e.Disabled {
-		t.Fatalf("action/description/tags/disabled overlay wrong: %+v", e)
+	if strVal(e.Action) != "deny" || strVal(e.Description) != "new" || len(e.Tag) != 0 || !*e.Disabled || strVal(e.Schedule) != "sched-new" {
+		t.Fatalf("action/description/tags/disabled/schedule overlay wrong: %+v", e)
 	}
 
 	// An EMPTY match list leaves the field unchanged (a rule cannot have zero
@@ -234,6 +236,12 @@ func TestSecurityRuleCreateDefaults(t *testing.T) {
 	}
 	if res.IsError {
 		t.Fatalf("create failed: %s", textContent(t, res))
+	}
+	// The create tool must return the detail projection: a create rewired to
+	// securityRuleSummary would omit rule_type, a detail-only key always emitted
+	// via strVal. This pins securityRuleCreateHandler's projection argument.
+	if body := textContent(t, res); !strings.Contains(body, `"rule_type"`) {
+		t.Fatalf("create must return the detail projection (missing rule_type): %s", body)
 	}
 	var sawSet bool
 	for _, req := range f.Requests() {
@@ -321,7 +329,7 @@ func TestSecurityRuleAPIErrorSurfaces(t *testing.T) {
 	errBody := `<response status="error" code="12"><msg><line>invalid rule</line></msg></response>`
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
 	h := getHandler[security.Location, security.Entry](d, "panos_security_rule_get",
-		newSecurityRuleService(d), securityResolve(d), securityRuleSummary)
+		newSecurityRuleService(d), securityResolve(d), securityRuleDetail)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
 	if err != nil {
@@ -347,7 +355,7 @@ func TestSecurityRuleUpdate(t *testing.T) {
 	h := updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update",
 		newSecurityRuleService(d), securityResolve(d),
 		func(in SecurityRuleInput) LocationInput { return in.Location },
-		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary)
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleDetail)
 
 	// The overlay must CHANGE something: pango skips the edit entirely when
 	// the overlaid entry SpecMatches the current one.
@@ -621,6 +629,14 @@ func TestSecurityRuleGetUpdateViaRegisteredTools(t *testing.T) {
 	if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "security/rules") {
 		t.Fatalf("registered get did not target the security rulebase: %s", joined)
 	}
+	// The registered get must return the detail projection, not the compact
+	// summary: rule_type is a detail-only key, always emitted via strVal, so its
+	// absence would mean the get tool was wired to securityRuleSummary. (log_end
+	// is unsuitable as the discriminator: detail omits it when the rule sets no
+	// <log-end>.)
+	if body := textContent(t, getRes); !strings.Contains(body, `"rule_type"`) {
+		t.Fatalf("registered get must return the detail projection (missing rule_type): %s", body)
+	}
 
 	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_security_rule_update", Arguments: map[string]any{"name": "allow-web", "action": "deny"}})
 	if err != nil {
@@ -631,6 +647,244 @@ func TestSecurityRuleGetUpdateViaRegisteredTools(t *testing.T) {
 	}
 	if el := multiConfigElement(t, f); !strings.Contains(el, "deny") || !strings.Contains(el, "allow-web") {
 		t.Fatalf("registered update did not reach the API with the new action: %s", el)
+	}
+	// Same detail-projection guard for the update tool's returned result.
+	if body := textContent(t, updRes); !strings.Contains(body, `"rule_type"`) {
+		t.Fatalf("registered update must return the detail projection (missing rule_type): %s", body)
+	}
+}
+
+//nolint:gocyclo,gocognit // exhaustive field-by-field assertions on the detail projection; each || is one field check.
+func TestSecurityRuleDetailFields(t *testing.T) {
+	full := &security.Entry{
+		Name: "r1", Action: ptr("allow"),
+		From: []string{"any"}, To: []string{"any"},
+		Source: []string{"any"}, Destination: []string{"any"},
+		Application: []string{"any"}, Service: []string{"application-default"},
+		Description:                     ptr("d"),
+		Tag:                             []string{"t1"},
+		Schedule:                        ptr("work-hours"),
+		Category:                        []string{"custom-cat"},
+		RuleType:                        ptr("intrazone"),
+		LogSetting:                      ptr("fwd-all"),
+		LogStart:                        ptr(true),
+		LogEnd:                          ptr(true), // explicit value proves the mapping reads the pointer, not a hardcoded default
+		NegateSource:                    ptr(true),
+		NegateDestination:               ptr(true),
+		DisableServerResponseInspection: ptr(true),
+		IcmpUnreachable:                 ptr(true),
+		SourceUser:                      []string{"corp\\alice"},
+		SourceHip:                       []string{"hip-src"},
+		DestinationHip:                  []string{"hip-dst"},
+		GroupTag:                        ptr("gt1"),
+		Uuid:                            ptr("uuid-123"),
+		Qos:                             &security.Qos{},
+		Target:                          &security.Target{},
+		ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{
+			Virus:            []string{"av1"},
+			Spyware:          []string{"as1"},
+			Vulnerability:    []string{"vp1"},
+			UrlFiltering:     []string{"url1"},
+			FileBlocking:     []string{"fb1"},
+			WildfireAnalysis: []string{"wf1"},
+			DataFiltering:    []string{"df1"},
+		}},
+	}
+	m := mustMap(t, securityRuleDetail(full))
+	// The summary base survives the layering (list fields still present).
+	if m["action"] != "allow" || m["service"] == nil {
+		t.Errorf("detail must keep the summary base fields: %+v", m)
+	}
+	if m["schedule"] != "work-hours" || m["rule_type"] != "intrazone" || m["log_setting"] != "fwd-all" {
+		t.Errorf("scalar advanced fields wrong: %+v", m)
+	}
+	if m["log_start"] != true || m["log_end"] != true {
+		t.Errorf("log_start/log_end must read the explicit values: %+v", m)
+	}
+	if m["negate_source"] != true || m["negate_destination"] != true ||
+		m["disable_server_response_inspection"] != true || m["icmp_unreachable"] != true {
+		t.Errorf("negate/inspection bools wrong: %+v", m)
+	}
+	if m["group_tag"] != "gt1" || m["uuid"] != "uuid-123" {
+		t.Errorf("group_tag/uuid wrong: %+v", m)
+	}
+	if m["has_qos"] != true || m["has_target"] != true {
+		t.Errorf("has_qos/has_target must reflect subtree presence: %+v", m)
+	}
+	if cat, _ := m["category"].([]string); len(cat) != 1 || cat[0] != "custom-cat" {
+		t.Errorf("category not surfaced: %+v", m["category"])
+	}
+	if su, _ := m["source_user"].([]string); len(su) != 1 || su[0] != "corp\\alice" {
+		t.Errorf("source_user not surfaced: %+v", m["source_user"])
+	}
+	if _, ok := m["source_hip"]; !ok {
+		t.Errorf("source_hip not surfaced: %+v", m)
+	}
+	if _, ok := m["destination_hip"]; !ok {
+		t.Errorf("destination_hip not surfaced: %+v", m)
+	}
+	prof, ok := m["profiles"].(map[string]any)
+	if !ok || prof["antivirus"] != "av1" || prof["anti_spyware"] != "as1" ||
+		prof["vulnerability"] != "vp1" || prof["url_filtering"] != "url1" ||
+		prof["file_blocking"] != "fb1" || prof["wildfire_analysis"] != "wf1" ||
+		prof["data_filtering"] != "df1" {
+		t.Errorf("individual profiles must expand each type to its own reference: %+v", m["profiles"])
+	}
+	if m["has_individual_profiles"] != true {
+		t.Errorf("has_individual_profiles must be true: %+v", m)
+	}
+	// No pango-internal or intentionally-omitted fields leak.
+	for _, k := range []string{"Misc", "MiscAttributes", "source_imei", "source_imsi", "gtp", "sctp"} {
+		if _, bad := m[k]; bad {
+			t.Errorf("detail must not leak %q: %+v", k, m)
+		}
+	}
+
+	// Explicit false is reported present-and-false, distinct from an absent
+	// element (which is omitted): a rule that sets <log-end>no</log-end> etc.
+	off := mustMap(t, securityRuleDetail(&security.Entry{
+		Name: "r3", Action: ptr("allow"),
+		LogStart: ptr(false), LogEnd: ptr(false), NegateSource: ptr(false), IcmpUnreachable: ptr(false),
+	}))
+	for _, k := range []string{"log_start", "log_end", "negate_source", "icmp_unreachable"} {
+		if v, present := off[k]; !present || v != false {
+			t.Errorf("explicit-false %q must be present and false, got present=%v value=%v", k, present, v)
+		}
+	}
+
+	// A zero entry: presence flags false, empty scalars, and every advanced
+	// *bool and optional list OMITTED (not a hard false / null).
+	zero := mustMap(t, securityRuleDetail(&security.Entry{Name: "r2", Action: ptr("allow")}))
+	if zero["has_qos"] != false || zero["has_target"] != false {
+		t.Errorf("presence flags must be false on the zero entry: %+v", zero)
+	}
+	if zero["schedule"] != "" || zero["rule_type"] != "" || zero["uuid"] != "" {
+		t.Errorf("absent scalar fields must be empty: %+v", zero)
+	}
+	if zero["profile_group"] != "" || zero["has_individual_profiles"] != false {
+		t.Errorf("summary base must survive on the zero entry: %+v", zero)
+	}
+	for _, k := range []string{
+		"category", "source_user", "source_hip", "destination_hip", "profiles",
+		"log_start", "log_end", "negate_source", "negate_destination",
+		"disable_server_response_inspection", "icmp_unreachable",
+	} {
+		if _, present := zero[k]; present {
+			t.Errorf("unset optional key %q must be omitted, not emitted: %+v", k, zero)
+		}
+	}
+
+	// A profile-setting subtree that exists but assigns no non-empty reference:
+	// has_individual_profiles is true (Profiles != nil) while the profiles key is
+	// omitted (securityRuleIndividualProfiles returns nil when every type is
+	// empty), so the two are not conflated.
+	empty := mustMap(t, securityRuleDetail(&security.Entry{
+		Name: "r4", Action: ptr("allow"),
+		ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{}},
+	}))
+	if empty["has_individual_profiles"] != true {
+		t.Errorf("has_individual_profiles must be true when Profiles is non-nil: %+v", empty)
+	}
+	if _, present := empty["profiles"]; present {
+		t.Errorf("profiles key must be omitted when every profile type is empty: %+v", empty)
+	}
+}
+
+// TestSecurityRuleGetReturnsDetail drives a get through RegisterSecurityRuleTools
+// and asserts the advanced detail fields round-trip from the wire, so a
+// regression that rewires get to securityRuleSummary is caught at registration.
+func TestSecurityRuleGetReturnsDetail(t *testing.T) {
+	ctx := t.Context()
+	body := `<response status="success"><result>` +
+		`<entry name="sched-rule" uuid="u-9"><action>allow</action>` +
+		`<from><member>any</member></from><to><member>any</member></to>` +
+		`<source><member>any</member></source><destination><member>any</member></destination>` +
+		`<application><member>any</member></application><service><member>application-default</member></service>` +
+		`<schedule>work-hours</schedule><rule-type>intrazone</rule-type>` +
+		`<log-start>yes</log-start><log-setting>fwd</log-setting>` +
+		`<category><member>custom-cat</member></category>` +
+		`</entry></result></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: body})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterSecurityRuleTools(srv, d)
+	cs := connectInMemory(t, srv)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_security_rule_get", Arguments: map[string]any{"name": "sched-rule"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("get failed: %s", textContent(t, res))
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(textContent(t, res)), &m); err != nil {
+		t.Fatalf("get result is not JSON: %v", err)
+	}
+	if m["schedule"] != "work-hours" || m["rule_type"] != "intrazone" || m["log_setting"] != "fwd" {
+		t.Fatalf("registered get must return the advanced detail: %+v", m)
+	}
+	if m["log_start"] != true {
+		t.Fatalf("log_start must parse from <log-start>yes: %+v", m)
+	}
+	if m["uuid"] != "u-9" {
+		t.Fatalf("uuid attribute must round-trip: %+v", m)
+	}
+	if cat, ok := m["category"].([]any); !ok || len(cat) != 1 || cat[0] != "custom-cat" {
+		t.Fatalf("category must surface: %+v", m["category"])
+	}
+}
+
+// TestSecurityRuleUpdateSetsSchedule proves the schedule input reaches the API
+// on the edited entry. The returned projection is not asserted here: pango's
+// post-edit re-read is served by the fake's fixed read body (which carries no
+// schedule), so the result round-trip is covered live, not in this hermetic test.
+func TestSecurityRuleUpdateSetsSchedule(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: ruleGetBody("allow-web")},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	h := updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update",
+		newSecurityRuleService(d), securityResolve(d),
+		func(in SecurityRuleInput) LocationInput { return in.Location },
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleDetail)
+
+	res, _, err := h(t.Context(), nil, SecurityRuleInput{Name: "allow-web", Schedule: "work-hours"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("update failed: %s", textContent(t, res))
+	}
+	// The overlaid schedule must reach the API on the edited entry. (The
+	// returned projection reflects pango's post-edit re-read of the device, so
+	// the schedule round-trip in the result is covered live, not here where the
+	// fake serves a fixed read body.)
+	if el := multiConfigElement(t, f); !strings.Contains(el, "<schedule>work-hours</schedule>") {
+		t.Fatalf("update did not set the schedule element: %s", el)
+	}
+}
+
+// TestSecurityRuleListStaysSummary guards that list keeps the compact summary
+// (issue #51): a list->detail regression would leak the detail-only keys.
+func TestSecurityRuleListStaysSummary(t *testing.T) {
+	ctx := t.Context()
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: securityRuleListBody})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterSecurityRuleTools(srv, d)
+	cs := connectInMemory(t, srv)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_security_rule_list", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("list failed: %s", textContent(t, res))
+	}
+	body := textContent(t, res)
+	for _, k := range []string{`"log_end"`, `"rule_type"`, `"schedule"`} {
+		if strings.Contains(body, k) {
+			t.Fatalf("list output must stay the compact summary, leaked %s: %s", k, body)
+		}
 	}
 }
 
@@ -1593,7 +1847,7 @@ func TestSecurityRuleUpdateSetsProfileGroup(t *testing.T) {
 	)
 	h := updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update", newSecurityRuleService(d), securityResolve(d),
 		func(in SecurityRuleInput) LocationInput { return in.Location },
-		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary)
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleDetail)
 	res, _, err := h(t.Context(), nil, SecurityRuleInput{Name: "rule-a", ProfileGroup: "pg-new"})
 	if err != nil {
 		t.Fatal(err)

@@ -159,9 +159,9 @@ A security rule references a profile group via its `profile_group` field. create
 | Tool | Mode | Description |
 |------|------|-------------|
 | `panos_security_rule_list` | read-only | List security rules in evaluation order at a location. |
-| `panos_security_rule_get` | read-only | Get one security rule by name with all fields. |
-| `panos_security_rule_create` | write | Create a security rule in the candidate config. |
-| `panos_security_rule_update` | write | Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send `["any"]` to reset a match field). |
+| `panos_security_rule_get` | read-only | Get one security rule by name with its managed fields plus the read-only advanced detail (schedule, rule type, logging, negate flags, source users, HIP profiles, category, group tag, uuid, and any individually assigned profiles). |
+| `panos_security_rule_create` | write | Create a security rule in the candidate config; an optional schedule limits when it is active. |
+| `panos_security_rule_update` | write | Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send `["any"]` to reset a match field); a provided schedule sets the rule's schedule. |
 | `panos_security_rule_delete` | write | Delete a security rule from the candidate config. |
 | `panos_security_rule_move` | write | Move a security rule within its rulebase: top, bottom, or directly before/after another rule. |
 | `panos_nat_rule_list` | read-only | List NAT rules in evaluation order at a location. |
