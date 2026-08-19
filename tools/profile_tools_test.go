@@ -391,11 +391,12 @@ func TestOverlayProfilesClearList(t *testing.T) {
 		assertClearedList(t, "inline_exception_ip_addresses", e.InlineExceptionIpAddress)
 	})
 	t.Run("spyware inline exceptions", func(t *testing.T) {
-		e := &spyware.Entry{Name: "s1", InlineExceptionEdlUrl: []string{"old"}}
-		if err := overlaySpyware(e, SpywareProfileInput{Name: "s1", InlineExceptionEdlURLs: []string{}}); err != nil {
+		e := &spyware.Entry{Name: "s1", InlineExceptionEdlUrl: []string{"old"}, InlineExceptionIpAddress: []string{"1.2.3.4"}}
+		if err := overlaySpyware(e, SpywareProfileInput{Name: "s1", InlineExceptionEdlURLs: []string{}, InlineExceptionIPAddresses: []string{}}); err != nil {
 			t.Fatal(err)
 		}
 		assertClearedList(t, "inline_exception_edl_urls", e.InlineExceptionEdlUrl)
+		assertClearedList(t, "inline_exception_ip_addresses", e.InlineExceptionIpAddress)
 	})
 	t.Run("file-blocking rules", func(t *testing.T) {
 		e := &fileblocking.Entry{Name: "fb1", Rules: []fileblocking.Rules{{Name: "old"}}}

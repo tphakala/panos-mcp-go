@@ -44,8 +44,9 @@ func portInRange(p int) bool {
 // resp (a pointer). On success it returns ok=true and the caller proceeds; on
 // failure it logs, builds an error result, and returns ok=false, so callers
 // write `if res, v, ok := communicateOp(...); !ok { return res, v, nil }`. The
-// single //nolint:bodyclose directive lives here: pango's sendRequest already
-// drained and closed the response body (client.go:1230 @ efa4357).
+// only //nolint:bodyclose directive on a Communicate call lives here (the
+// StartJob calls in device_tools.go carry their own): pango's sendRequest
+// already drained and closed the response body (client.go:1230 @ efa4357).
 func communicateOp(ctx context.Context, d *Deps, tool string, cmd *xmlapi.Op, resp any) (res *mcp.CallToolResult, anyVal any, ok bool) {
 	//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
 	if _, _, err := d.Client.Communicate(ctx, cmd, false, resp); err != nil {
