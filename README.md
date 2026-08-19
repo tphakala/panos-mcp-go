@@ -51,7 +51,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 125 tools on Panorama and 127 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 50 on Panorama, 53 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 126 tools on Panorama and 128 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 51 on Panorama, 54 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -121,7 +121,7 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_antivirus_profile_list` | read-only | List antivirus profiles at a location. |
 | `panos_antivirus_profile_get` | read-only | Get one antivirus profile by name with its managed fields (description, packet_capture, decoders). |
 | `panos_antivirus_profile_create` | write | Create an antivirus profile in the candidate config. |
-| `panos_antivirus_profile_update` | write | Update an antivirus profile: read-modify-write; a non-empty decoders list replaces the whole set. |
+| `panos_antivirus_profile_update` | write | Update an antivirus profile: read-modify-write; a provided decoders list replaces the whole set, and an explicit empty list clears it. |
 | `panos_antivirus_profile_delete` | write | Delete an antivirus profile from the candidate config. |
 | `panos_vulnerability_profile_list` | read-only | List vulnerability protection profiles at a location. |
 | `panos_vulnerability_profile_get` | read-only | Get one vulnerability protection profile by name with its managed fields; per-signature rules are not exposed. |
@@ -136,17 +136,17 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_url_filtering_profile_list` | read-only | List URL filtering profiles at a location. |
 | `panos_url_filtering_profile_get` | read-only | Get one URL filtering profile by name with its category actions. |
 | `panos_url_filtering_profile_create` | write | Create a URL filtering profile in the candidate config. |
-| `panos_url_filtering_profile_update` | write | Update a URL filtering profile: read-modify-write; a non-empty category list replaces that action's whole set. |
+| `panos_url_filtering_profile_update` | write | Update a URL filtering profile: read-modify-write; a provided category list replaces that action's whole set, and an explicit empty list clears it. |
 | `panos_url_filtering_profile_delete` | write | Delete a URL filtering profile from the candidate config. |
 | `panos_file_blocking_profile_list` | read-only | List file-blocking profiles at a location. |
 | `panos_file_blocking_profile_get` | read-only | Get one file-blocking profile by name with its rules. |
 | `panos_file_blocking_profile_create` | write | Create a file-blocking profile in the candidate config. |
-| `panos_file_blocking_profile_update` | write | Update a file-blocking profile: read-modify-write; a non-empty rules list replaces the whole set. |
+| `panos_file_blocking_profile_update` | write | Update a file-blocking profile: read-modify-write; a provided rules list replaces the whole set, and an explicit empty list clears it. |
 | `panos_file_blocking_profile_delete` | write | Delete a file-blocking profile from the candidate config. |
 | `panos_wildfire_analysis_profile_list` | read-only | List WildFire analysis profiles at a location. |
 | `panos_wildfire_analysis_profile_get` | read-only | Get one WildFire analysis profile by name with its rules. |
 | `panos_wildfire_analysis_profile_create` | write | Create a WildFire analysis profile in the candidate config. |
-| `panos_wildfire_analysis_profile_update` | write | Update a WildFire analysis profile: read-modify-write; a non-empty rules list replaces the whole set. |
+| `panos_wildfire_analysis_profile_update` | write | Update a WildFire analysis profile: read-modify-write; a provided rules list replaces the whole set, and an explicit empty list clears it. |
 | `panos_wildfire_analysis_profile_delete` | write | Delete a WildFire analysis profile from the candidate config. |
 | `panos_profile_group_list` | read-only | List security profile groups at a location. |
 | `panos_profile_group_get` | read-only | Get one security profile group by name with the profile referenced for each type. |
@@ -202,6 +202,7 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_job_status` | read-only | Poll a device job (commit, push, validate) by ID. |
 | `panos_config_diff` | read-only | List pending candidate changes (changed path, action, owner) versus the running config. |
 | `panos_zone_list` | read-only | List security zone names for use in rules. Firewall: optional vsys (a template is rejected); Panorama: template required (a vsys is rejected). |
+| `panos_zone_get` | read-only | Get one security zone's full detail (network type, interfaces, protection settings, and user/device-id flags). Firewall: optional vsys; Panorama: template required. |
 | `panos_zone_create` | write | Create a security zone; network_type is required. Firewall: vsys scope; Panorama: template required. |
 | `panos_zone_update` | write | Update a security zone: read-modify-write; a provided network_type replaces the type and its interface list. |
 | `panos_zone_delete` | write | Delete a security zone from the candidate config. |

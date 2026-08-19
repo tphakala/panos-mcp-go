@@ -18,15 +18,6 @@ const (
 	maxPort       = 65535
 )
 
-// Shared JSON result-map keys, extracted so the same literal is not repeated
-// across the handlers (goconst). The "name" key reuses tagNameKey.
-const (
-	totalKey   = "total"
-	offsetKey  = "offset"
-	countKey   = "count"
-	matchedKey = "matched"
-)
-
 // asNumberOrString returns s parsed as an int when it is a clean integer, the
 // trimmed string when it is non-empty non-numeric text, and nil when empty. It
 // keeps a numeric device field (a rule index) numeric in the JSON output while
@@ -47,6 +38,35 @@ func asNumberOrString(s string) any {
 // above maxPort is rejected before it reaches the device.
 func portInRange(p int) bool {
 	return p >= 0 && p <= maxPort
+}
+
+// communicateOp sends an operational command and decodes the <response> into
+// resp (a pointer). On success it returns ok=true and the caller proceeds; on
+// failure it logs, builds an error result, and returns ok=false, so callers
+// write `if res, v, ok := communicateOp(...); !ok { return res, v, nil }`. The
+// only //nolint:bodyclose directive on a Communicate call lives here (the
+// StartJob calls in device_tools.go carry their own): pango's sendRequest
+// already drained and closed the response body (client.go:1230 @ efa4357).
+func communicateOp(ctx context.Context, d *Deps, tool string, cmd *xmlapi.Op, resp any) (res *mcp.CallToolResult, anyVal any, ok bool) {
+	//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
+	if _, _, err := d.Client.Communicate(ctx, cmd, false, resp); err != nil {
+		d.Logger.Error("failed: "+tool, "error", err)
+		r, v := errorResult("failed: %s: %v", tool, err)
+		return r, v, false
+	}
+	return nil, nil, true
+}
+
+// rawResultFallback surfaces an unrecognized op <result> verbatim instead of
+// reporting a false-empty verdict (issue #42). When inner is non-empty it builds
+// a text result and returns ok=true; an empty inner returns ok=false so the
+// caller falls through to its normal empty/parsed handling.
+func rawResultFallback(tool, inner string) (res *mcp.CallToolResult, anyVal any, ok bool) {
+	if raw := strings.TrimSpace(inner); raw != "" {
+		r, v := textResult("unrecognized %s response; raw result: %s", tool, raw)
+		return r, v, true
+	}
+	return nil, nil, false
 }
 
 // SessionListInput filters the firewall session table. Every field is optional;
@@ -168,10 +188,7 @@ func sessionListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Ses
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: req}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_session_list", "error", err)
-			res, v := errorResult("failed: panos_session_list: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_session_list", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		entries := resp.Result.Entries
@@ -180,8 +197,7 @@ func sessionListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Ses
 		// fallback, so an unrecognized shape is surfaced rather than reported as an
 		// empty table (issue #42).
 		if len(entries) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_session_list response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_session_list", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 		}
@@ -288,16 +304,12 @@ func interfaceStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest,
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: interfaceReq{Interface: "all"}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_interface_status", "error", err)
-			res, v := errorResult("failed: panos_interface_status: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_interface_status", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		ifaces := joinInterfaces(resp.Result.HW, resp.Result.Ifnet)
 		if len(ifaces) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_interface_status response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_interface_status", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 		}
@@ -363,16 +375,12 @@ func routeListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Route
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: req}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_route_list", "error", err)
-			res, v := errorResult("failed: panos_route_list: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_route_list", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		entries := resp.Result.Entries
 		if len(entries) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_route_list response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_route_list", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 		}
@@ -403,10 +411,7 @@ func systemResourcesHandler(d *Deps) func(context.Context, *mcp.CallToolRequest,
 			Result  string   `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: sysResourcesReq{}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_system_resources", "error", err)
-			res, v := errorResult("failed: panos_system_resources: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_system_resources", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		res, v := textResult("%s", strings.TrimSpace(resp.Result))
@@ -457,10 +462,7 @@ func haStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: haStateReq{}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_ha_status", "error", err)
-			res, v := errorResult("failed: panos_ha_status: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_ha_status", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		enabled := strings.TrimSpace(resp.Result.Enabled)
@@ -468,8 +470,7 @@ func haStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct
 		// a disabled HA: surface it raw rather than a false "disabled" verdict
 		// (issue #42). An explicit "no", or a genuinely empty result, is disabled.
 		if enabled == "" {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_ha_status response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_ha_status", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 		}
@@ -490,8 +491,7 @@ func haStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, struct
 		// HA is enabled but no state field parsed: surface the raw result rather
 		// than a misleadingly empty structured response (issue #42).
 		if info.empty() {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_ha_status response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_ha_status", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 		}
@@ -562,7 +562,7 @@ func policyMatchName(nameAttr, chardata string) string {
 }
 
 // securityMatchRuleSummary projects one matched security rule to the output shape.
-func securityMatchRuleSummary(r securityMatchRule) map[string]any {
+func securityMatchRuleSummary(r *securityMatchRule) map[string]any {
 	m := map[string]any{tagNameKey: policyMatchName(r.Name, r.Chardata)}
 	if idx := asNumberOrString(r.Index); idx != nil {
 		m["index"] = idx
@@ -611,24 +611,20 @@ func securityPolicyMatchHandler(d *Deps) func(context.Context, *mcp.CallToolRequ
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: req, Vsys: in.Vsys}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_test_security_policy_match", "error", err)
-			res, v := errorResult("failed: panos_test_security_policy_match: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_test_security_policy_match", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		rules := resp.Result.Rules
 		if len(rules) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_test_security_policy_match response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_test_security_policy_match", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 			res, v := jsonResult(map[string]any{matchedKey: false, "note": "no security rule matched this flow"})
 			return res, v, nil
 		}
 		out := make([]any, 0, len(rules))
-		for _, r := range rules {
-			out = append(out, securityMatchRuleSummary(r))
+		for i := range rules {
+			out = append(out, securityMatchRuleSummary(&rules[i]))
 		}
 		res, v := jsonResult(map[string]any{matchedKey: true, "rules": out})
 		return res, v, nil
@@ -817,16 +813,12 @@ func natPolicyMatchHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, 
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: req, Vsys: in.Vsys}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_test_nat_policy_match", "error", err)
-			res, v := errorResult("failed: panos_test_nat_policy_match: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_test_nat_policy_match", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		rules := resp.Result.Rules
 		if len(rules) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				res, v := textResult("unrecognized panos_test_nat_policy_match response; raw result: %s", raw)
+			if res, v, ok := rawResultFallback("panos_test_nat_policy_match", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 			res, v := jsonResult(map[string]any{matchedKey: false, "note": "no NAT rule matched (no translation applied)"})

@@ -74,13 +74,8 @@ func buildApplicationGroupEntry(in ApplicationGroupInput) (*application_group.En
 
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayApplicationGroup(e *application_group.Entry, in ApplicationGroupInput) error {
-	if in.Members != nil && len(in.Members) == 0 {
-		return errors.New("members must have at least one entry; a group cannot be emptied in place (delete the group instead)")
-	}
-	if len(in.Members) > 0 {
-		e.Members = in.Members
-	}
-	return nil
+	return replaceListOrRejectEmpty(&e.Members, in.Members,
+		"members must have at least one entry; a group cannot be emptied in place (delete the group instead)")
 }
 
 // applicationGroupSummary reduces an entry to the view fields. Application groups
@@ -205,14 +200,14 @@ func overlayCustomURLCategory(e *customurlcategory.Entry, in CustomURLCategoryIn
 	if in.Type != "" && !validCustomURLCategoryTypes[in.Type] {
 		return fmt.Errorf("type must be one of %s, got %q", customURLCategoryTypeListStr, in.Type)
 	}
-	if in.Members != nil && len(in.Members) == 0 {
-		return errors.New("members must have at least one entry; a category cannot be emptied in place (delete it instead)")
+	// Validate (and apply) members before mutating any other field so an invalid
+	// empty list is rejected before e is touched.
+	if err := replaceListOrRejectEmpty(&e.List, in.Members,
+		"members must have at least one entry; a category cannot be emptied in place (delete it instead)"); err != nil {
+		return err
 	}
 	if in.Type != "" {
 		e.Type = ptr(in.Type)
-	}
-	if len(in.Members) > 0 {
-		e.List = in.Members
 	}
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
@@ -924,8 +919,6 @@ func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 
 // overlayEdlInBranch applies provided fields within the EDL's existing branch,
 // leaving the type unchanged. It is used only when no type is provided.
-//
-//nolint:gocognit,gocyclo // one arm per branch; each arm is a short field overlay.
 func overlayEdlInBranch(e *extdynlist.Entry, in *EdlInput) error {
 	if e.Type == nil {
 		return errors.New("this EDL has no source set; provide type to set one")
@@ -937,35 +930,13 @@ func overlayEdlInBranch(e *extdynlist.Entry, in *EdlInput) error {
 		if in.ExpandDomain != nil {
 			return errors.New("expand_domain applies to the domain type only")
 		}
-		if in.URL != "" {
-			b.Url = ptr(in.URL)
-		}
-		if in.Description != "" {
-			b.Description = ptr(in.Description)
-		}
-		if in.ExceptionList != nil {
-			b.ExceptionList = in.ExceptionList
-		}
-		if in.CertificateProfile != "" {
-			b.CertificateProfile = ptr(in.CertificateProfile)
-		}
+		edlOverlayCommon(in, &b.Url, &b.Description, &b.CertificateProfile, &b.ExceptionList)
 		if spec != nil {
 			b.Recurring = edlIPRecurring(spec)
 		}
 	case e.Type.Domain != nil:
 		b := e.Type.Domain
-		if in.URL != "" {
-			b.Url = ptr(in.URL)
-		}
-		if in.Description != "" {
-			b.Description = ptr(in.Description)
-		}
-		if in.ExceptionList != nil {
-			b.ExceptionList = in.ExceptionList
-		}
-		if in.CertificateProfile != "" {
-			b.CertificateProfile = ptr(in.CertificateProfile)
-		}
+		edlOverlayCommon(in, &b.Url, &b.Description, &b.CertificateProfile, &b.ExceptionList)
 		if in.ExpandDomain != nil {
 			b.ExpandDomain = in.ExpandDomain
 		}
@@ -977,18 +948,7 @@ func overlayEdlInBranch(e *extdynlist.Entry, in *EdlInput) error {
 		if in.ExpandDomain != nil {
 			return errors.New("expand_domain applies to the domain type only")
 		}
-		if in.URL != "" {
-			b.Url = ptr(in.URL)
-		}
-		if in.Description != "" {
-			b.Description = ptr(in.Description)
-		}
-		if in.ExceptionList != nil {
-			b.ExceptionList = in.ExceptionList
-		}
-		if in.CertificateProfile != "" {
-			b.CertificateProfile = ptr(in.CertificateProfile)
-		}
+		edlOverlayCommon(in, &b.Url, &b.Description, &b.CertificateProfile, &b.ExceptionList)
 		if spec != nil {
 			b.Recurring = edlURLRecurring(spec)
 		}
@@ -1022,6 +982,26 @@ func edlOverlayPredefined(in *EdlInput, spec *edlRecurringSpec, url, description
 		*exceptions = in.ExceptionList
 	}
 	return nil
+}
+
+// edlOverlayCommon applies the four fields the ip, domain, and url branches
+// share (url, description, exception_list, certificate_profile). recurring and
+// expand_domain differ per branch and stay inline in overlayEdlInBranch. An
+// explicit empty exception_list clears the list (the field's documented
+// contract); omitted string fields are left unchanged.
+func edlOverlayCommon(in *EdlInput, url, description, certProfile **string, exceptions *[]string) {
+	if in.URL != "" {
+		*url = ptr(in.URL)
+	}
+	if in.Description != "" {
+		*description = ptr(in.Description)
+	}
+	if in.ExceptionList != nil {
+		*exceptions = in.ExceptionList
+	}
+	if in.CertificateProfile != "" {
+		*certProfile = ptr(in.CertificateProfile)
+	}
 }
 
 // applyEdlSource validates and applies the EDL source oneof. A provided type

@@ -293,6 +293,32 @@ func errorResult(format string, args ...any) (res *mcp.CallToolResult, anyVal an
 	}, nil
 }
 
+// Shared JSON result-map keys, so the same literal is not repeated across the
+// list handlers (listHandler, zoneListHandler) and the op handlers (goconst).
+// The "name" key reuses tagNameKey.
+const (
+	totalKey   = "total"
+	offsetKey  = "offset"
+	countKey   = "count"
+	matchedKey = "matched"
+)
+
+// replaceListOrRejectEmpty applies a replace-or-keep overlay for a list field
+// where an empty list is INVALID config (group membership and the like): an
+// explicit empty list is rejected with emptyErr, a non-empty list replaces
+// *dst, and a nil (omitted) list leaves *dst untouched. Profile lists, where an
+// empty list is valid and clears the field, must NOT use this; they assign on
+// `in != nil` so an explicit empty list clears.
+func replaceListOrRejectEmpty(dst *[]string, in []string, emptyErr string) error {
+	if in != nil && len(in) == 0 {
+		return errors.New(emptyErr)
+	}
+	if len(in) > 0 {
+		*dst = in
+	}
+	return nil
+}
+
 // crudService is the five-method surface pango's CRUD config services expose;
 // the generic handler builders below are written against it.
 type crudService[L, E any] interface {
@@ -362,7 +388,7 @@ func listHandler[L, E any](
 		for _, e := range entries[lo:hi] {
 			out = append(out, summarize(e))
 		}
-		res, v := jsonResult(map[string]any{"total": total, "offset": lo, "count": len(out), "entries": out})
+		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), "entries": out})
 		return res, v, nil
 	}
 }

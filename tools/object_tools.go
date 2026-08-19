@@ -604,11 +604,8 @@ func buildServiceGroupEntry(in ServiceGroupInput) (*service_group.Entry, error) 
 //
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayServiceGroup(e *service_group.Entry, in ServiceGroupInput) error {
-	if in.Members != nil && len(in.Members) == 0 {
-		return errors.New("members must have at least one entry; a group cannot be emptied in place (delete the group instead)")
-	}
-	if len(in.Members) > 0 {
-		e.Members = in.Members
+	if err := replaceListOrRejectEmpty(&e.Members, in.Members, "members must have at least one entry; a group cannot be emptied in place (delete the group instead)"); err != nil {
+		return err
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags

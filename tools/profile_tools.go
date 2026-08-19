@@ -98,14 +98,16 @@ type AntivirusProfileInput struct {
 	Location      LocationInput           `json:"location,omitempty"`
 	Description   string                  `json:"description,omitempty"`
 	PacketCapture *bool                   `json:"packet_capture,omitempty" jsonschema:"Capture packets when a threat is detected"`
-	Decoders      []AntivirusDecoderInput `json:"decoders,omitempty" jsonschema:"Per-protocol decoder actions; a non-empty list replaces the whole decoder set"`
+	Decoders      []AntivirusDecoderInput `json:"decoders,omitempty" jsonschema:"Per-protocol decoder actions; replaces the whole decoder set when provided, an explicit empty list clears it"`
 }
 
 // buildAntivirusDecoders maps the decoder inputs onto pango decoders, requiring
 // a name on each. It returns nil for an empty input so the caller can leave the
 // entry's decoders untouched.
 func buildAntivirusDecoders(in []AntivirusDecoderInput) ([]antivirus.Decoder, error) {
-	if len(in) == 0 {
+	// nil (omitted) preserves; an explicit empty list yields an empty non-nil
+	// slice the overlay assigns, clearing the set on update (issue #61).
+	if in == nil {
 		return nil, nil
 	}
 	out := make([]antivirus.Decoder, 0, len(in))
@@ -212,7 +214,7 @@ func RegisterAntivirusProfileTools(s *mcp.Server, d *Deps) {
 	}, createHandler[antivirus.Location, antivirus.Entry, AntivirusProfileInput](d, "panos_antivirus_profile_create", svc, resolve, loc, buildAntivirusEntry, antivirusSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_antivirus_profile_update",
-		Description: "Update an antivirus profile: read-modify-write, only provided fields change; a non-empty decoders list replaces the whole set. Candidate config only; run panos_commit to apply.",
+		Description: "Update an antivirus profile: read-modify-write, only provided fields change; a provided decoders list replaces the whole set, and an explicit empty list clears it. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update antivirus profile"),
 	}, updateHandler[antivirus.Location, antivirus.Entry, AntivirusProfileInput](d, "panos_antivirus_profile_update", svc, resolve, loc,
 		func(in AntivirusProfileInput) string { return in.Name }, overlayAntivirus, antivirusSummary))
@@ -256,8 +258,8 @@ type VulnerabilityProfileInput struct {
 	Location                   LocationInput `json:"location,omitempty"`
 	Description                string        `json:"description,omitempty"`
 	CloudInlineAnalysis        *bool         `json:"cloud_inline_analysis,omitempty" jsonschema:"Enable cloud inline analysis"`
-	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; a non-empty list replaces fully"`
-	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"IP address inline-detection exceptions; a non-empty list replaces fully"`
+	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
+	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"IP address inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
@@ -265,16 +267,11 @@ func buildVulnerabilityEntry(in VulnerabilityProfileInput) (*vulnerability.Entry
 	if in.Name == "" {
 		return nil, errors.New("name is required")
 	}
-	e := &vulnerability.Entry{Name: in.Name, CloudInlineAnalysis: in.CloudInlineAnalysis}
+	e := &vulnerability.Entry{Name: in.Name}
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
-	if len(in.InlineExceptionEdlURLs) > 0 {
-		e.InlineExceptionEdlUrl = in.InlineExceptionEdlURLs
-	}
-	if len(in.InlineExceptionIPAddresses) > 0 {
-		e.InlineExceptionIpAddress = in.InlineExceptionIPAddresses
-	}
+	applyVulnerabilityInline(e, &in)
 	return e, nil
 }
 
@@ -283,16 +280,25 @@ func overlayVulnerability(e *vulnerability.Entry, in VulnerabilityProfileInput) 
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
+	applyVulnerabilityInline(e, &in)
+	return nil
+}
+
+// applyVulnerabilityInline applies the inline-detection fields that
+// buildVulnerabilityEntry and overlayVulnerability both set: cloud_inline_analysis
+// and the two inline_exception lists. Each nil (omitted) value is left unchanged;
+// an explicit empty list clears that exception set (issue #61). in is by pointer
+// to avoid copying the large input.
+func applyVulnerabilityInline(e *vulnerability.Entry, in *VulnerabilityProfileInput) {
 	if in.CloudInlineAnalysis != nil {
 		e.CloudInlineAnalysis = in.CloudInlineAnalysis
 	}
-	if len(in.InlineExceptionEdlURLs) > 0 {
+	if in.InlineExceptionEdlURLs != nil {
 		e.InlineExceptionEdlUrl = in.InlineExceptionEdlURLs
 	}
-	if len(in.InlineExceptionIPAddresses) > 0 {
+	if in.InlineExceptionIPAddresses != nil {
 		e.InlineExceptionIpAddress = in.InlineExceptionIPAddresses
 	}
-	return nil
 }
 
 func vulnerabilitySummary(e *vulnerability.Entry) any {
@@ -379,8 +385,8 @@ type SpywareProfileInput struct {
 	Location                   LocationInput `json:"location,omitempty"`
 	Description                string        `json:"description,omitempty"`
 	CloudInlineAnalysis        *bool         `json:"cloud_inline_analysis,omitempty" jsonschema:"Enable cloud inline analysis"`
-	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; a non-empty list replaces fully"`
-	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"IP address inline-detection exceptions; a non-empty list replaces fully"`
+	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
+	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"IP address inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
@@ -388,16 +394,11 @@ func buildSpywareEntry(in SpywareProfileInput) (*spyware.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
 	}
-	e := &spyware.Entry{Name: in.Name, CloudInlineAnalysis: in.CloudInlineAnalysis}
+	e := &spyware.Entry{Name: in.Name}
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
-	if len(in.InlineExceptionEdlURLs) > 0 {
-		e.InlineExceptionEdlUrl = in.InlineExceptionEdlURLs
-	}
-	if len(in.InlineExceptionIPAddresses) > 0 {
-		e.InlineExceptionIpAddress = in.InlineExceptionIPAddresses
-	}
+	applySpywareInline(e, &in)
 	return e, nil
 }
 
@@ -406,16 +407,23 @@ func overlaySpyware(e *spyware.Entry, in SpywareProfileInput) error {
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
+	applySpywareInline(e, &in)
+	return nil
+}
+
+// applySpywareInline mirrors applyVulnerabilityInline for anti-spyware profiles:
+// cloud_inline_analysis and the two inline_exception lists, nil preserves, an
+// explicit empty list clears (issue #61).
+func applySpywareInline(e *spyware.Entry, in *SpywareProfileInput) {
 	if in.CloudInlineAnalysis != nil {
 		e.CloudInlineAnalysis = in.CloudInlineAnalysis
 	}
-	if len(in.InlineExceptionEdlURLs) > 0 {
+	if in.InlineExceptionEdlURLs != nil {
 		e.InlineExceptionEdlUrl = in.InlineExceptionEdlURLs
 	}
-	if len(in.InlineExceptionIPAddresses) > 0 {
+	if in.InlineExceptionIPAddresses != nil {
 		e.InlineExceptionIpAddress = in.InlineExceptionIPAddresses
 	}
-	return nil
 }
 
 func spywareSummary(e *spyware.Entry) any {
@@ -494,11 +502,11 @@ type URLFilteringProfileInput struct {
 	Name                   string        `json:"name" jsonschema:"URL filtering profile name"`
 	Location               LocationInput `json:"location,omitempty"`
 	Description            string        `json:"description,omitempty"`
-	Alert                  []string      `json:"alert,omitempty" jsonschema:"URL categories set to alert; a non-empty list replaces fully"`
-	Allow                  []string      `json:"allow,omitempty" jsonschema:"URL categories set to allow; a non-empty list replaces fully"`
-	Block                  []string      `json:"block,omitempty" jsonschema:"URL categories set to block; a non-empty list replaces fully"`
-	Continue               []string      `json:"continue,omitempty" jsonschema:"URL categories set to continue; a non-empty list replaces fully"`
-	Override               []string      `json:"override,omitempty" jsonschema:"URL categories set to override; a non-empty list replaces fully"`
+	Alert                  []string      `json:"alert,omitempty" jsonschema:"URL categories set to alert; replaces fully when provided, an explicit empty list clears it"`
+	Allow                  []string      `json:"allow,omitempty" jsonschema:"URL categories set to allow; replaces fully when provided, an explicit empty list clears it"`
+	Block                  []string      `json:"block,omitempty" jsonschema:"URL categories set to block; replaces fully when provided, an explicit empty list clears it"`
+	Continue               []string      `json:"continue,omitempty" jsonschema:"URL categories set to continue; replaces fully when provided, an explicit empty list clears it"`
+	Override               []string      `json:"override,omitempty" jsonschema:"URL categories set to override; replaces fully when provided, an explicit empty list clears it"`
 	SafeSearchEnforcement  *bool         `json:"safe_search_enforcement,omitempty" jsonschema:"Enforce safe search"`
 	LogHTTPHeaderXFF       *bool         `json:"log_http_header_xff,omitempty" jsonschema:"Log the X-Forwarded-For HTTP header"`
 	LogHTTPHeaderUserAgent *bool         `json:"log_http_header_user_agent,omitempty" jsonschema:"Log the User-Agent HTTP header"`
@@ -524,24 +532,25 @@ func buildURLFilteringEntry(in URLFilteringProfileInput) (*urlfiltering.Entry, e
 	return e, nil
 }
 
-// applyURLFilteringCategories sets each category-action list when provided; a
-// non-empty list replaces that action's whole category set. in is by pointer to
+// applyURLFilteringCategories sets each category-action list when provided: a
+// provided list replaces that action's whole category set, and an explicit empty
+// list clears it. in is by pointer to
 // avoid copying the large input; this private helper is not bound by the generic
 // builder contract (see countValueTypes).
 func applyURLFilteringCategories(e *urlfiltering.Entry, in *URLFilteringProfileInput) {
-	if len(in.Alert) > 0 {
+	if in.Alert != nil {
 		e.Alert = in.Alert
 	}
-	if len(in.Allow) > 0 {
+	if in.Allow != nil {
 		e.Allow = in.Allow
 	}
-	if len(in.Block) > 0 {
+	if in.Block != nil {
 		e.Block = in.Block
 	}
-	if len(in.Continue) > 0 {
+	if in.Continue != nil {
 		e.Continue = in.Continue
 	}
-	if len(in.Override) > 0 {
+	if in.Override != nil {
 		e.Override = in.Override
 	}
 }
@@ -610,7 +619,7 @@ func RegisterURLFilteringProfileTools(s *mcp.Server, d *Deps) {
 	}, createHandler[urlfiltering.Location, urlfiltering.Entry, URLFilteringProfileInput](d, "panos_url_filtering_profile_create", svc, resolve, loc, buildURLFilteringEntry, urlFilteringSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_url_filtering_profile_update",
-		Description: "Update a URL filtering profile: read-modify-write, only provided fields change; a non-empty category list replaces that action's whole set. Candidate config only; run panos_commit to apply.",
+		Description: "Update a URL filtering profile: read-modify-write, only provided fields change; a provided category list replaces that action's whole set, and an explicit empty list clears it. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update URL filtering profile"),
 	}, updateHandler[urlfiltering.Location, urlfiltering.Entry, URLFilteringProfileInput](d, "panos_url_filtering_profile_update", svc, resolve, loc,
 		func(in URLFilteringProfileInput) string { return in.Name }, overlayURLFiltering, urlFilteringSummary))
@@ -663,13 +672,15 @@ type FileBlockingProfileInput struct {
 	Name        string                  `json:"name" jsonschema:"File blocking profile name"`
 	Location    LocationInput           `json:"location,omitempty"`
 	Description string                  `json:"description,omitempty"`
-	Rules       []FileBlockingRuleInput `json:"rules,omitempty" jsonschema:"File-blocking rules; a non-empty list replaces the whole rule set"`
+	Rules       []FileBlockingRuleInput `json:"rules,omitempty" jsonschema:"File-blocking rules; replaces the whole rule set when provided, an explicit empty list clears it"`
 }
 
 // buildFileBlockingRules maps the rule inputs onto pango rules, requiring a name
 // on each. It returns nil for an empty input.
 func buildFileBlockingRules(in []FileBlockingRuleInput) ([]fileblocking.Rules, error) {
-	if len(in) == 0 {
+	// nil (omitted) preserves; an explicit empty list yields an empty non-nil
+	// slice the overlay assigns, clearing the set on update (issue #61).
+	if in == nil {
 		return nil, nil
 	}
 	out := make([]fileblocking.Rules, 0, len(in))
@@ -770,7 +781,7 @@ func RegisterFileBlockingProfileTools(s *mcp.Server, d *Deps) {
 	}, createHandler[fileblocking.Location, fileblocking.Entry, FileBlockingProfileInput](d, "panos_file_blocking_profile_create", svc, resolve, loc, buildFileBlockingEntry, fileBlockingSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_file_blocking_profile_update",
-		Description: "Update a file-blocking profile: read-modify-write, only provided fields change; a non-empty rules list replaces the whole set. Candidate config only; run panos_commit to apply.",
+		Description: "Update a file-blocking profile: read-modify-write, only provided fields change; a provided rules list replaces the whole set, and an explicit empty list clears it. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update file-blocking profile"),
 	}, updateHandler[fileblocking.Location, fileblocking.Entry, FileBlockingProfileInput](d, "panos_file_blocking_profile_update", svc, resolve, loc,
 		func(in FileBlockingProfileInput) string { return in.Name }, overlayFileBlocking, fileBlockingSummary))
@@ -822,11 +833,13 @@ type WildfireAnalysisProfileInput struct {
 	Name        string                      `json:"name" jsonschema:"WildFire analysis profile name"`
 	Location    LocationInput               `json:"location,omitempty"`
 	Description string                      `json:"description,omitempty"`
-	Rules       []WildfireAnalysisRuleInput `json:"rules,omitempty" jsonschema:"WildFire analysis rules; a non-empty list replaces the whole rule set"`
+	Rules       []WildfireAnalysisRuleInput `json:"rules,omitempty" jsonschema:"WildFire analysis rules; replaces the whole rule set when provided, an explicit empty list clears it"`
 }
 
 func buildWildfireAnalysisRules(in []WildfireAnalysisRuleInput) ([]wildfireanalysis.Rules, error) {
-	if len(in) == 0 {
+	// nil (omitted) preserves; an explicit empty list yields an empty non-nil
+	// slice the overlay assigns, clearing the set on update (issue #61).
+	if in == nil {
 		return nil, nil
 	}
 	out := make([]wildfireanalysis.Rules, 0, len(in))
@@ -928,7 +941,7 @@ func RegisterWildfireAnalysisProfileTools(s *mcp.Server, d *Deps) {
 	}, createHandler[wildfireanalysis.Location, wildfireanalysis.Entry, WildfireAnalysisProfileInput](d, "panos_wildfire_analysis_profile_create", svc, resolve, loc, buildWildfireAnalysisEntry, wildfireAnalysisSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_wildfire_analysis_profile_update",
-		Description: "Update a WildFire analysis profile: read-modify-write, only provided fields change; a non-empty rules list replaces the whole set. Candidate config only; run panos_commit to apply.",
+		Description: "Update a WildFire analysis profile: read-modify-write, only provided fields change; a provided rules list replaces the whole set, and an explicit empty list clears it. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update WildFire analysis profile"),
 	}, updateHandler[wildfireanalysis.Location, wildfireanalysis.Entry, WildfireAnalysisProfileInput](d, "panos_wildfire_analysis_profile_update", svc, resolve, loc,
 		func(in WildfireAnalysisProfileInput) string { return in.Name }, overlayWildfireAnalysis, wildfireAnalysisSummary))

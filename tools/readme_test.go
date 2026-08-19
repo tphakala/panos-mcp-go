@@ -159,6 +159,19 @@ func TestReadmeToolTablesMatchRegistrations(t *testing.T) {
 	fwOnly := diffSet(fwWrite, panoWrite)
 	allTools := unionSet(panoWrite, fwWrite)
 
+	// A tool registered on both device types must be read-only-gated the same way
+	// on each; otherwise the wantMode check below (which marks a tool read-only if
+	// it is read-only on EITHER device type) would mask a tool that is write-gated
+	// on one device type but read-only on the other. Firewall-only and
+	// Panorama-only tools are exempt: an asymmetry across a device type that does
+	// not register the tool at all is expected, not a bug.
+	for _, name := range slices.Sorted(maps.Keys(allTools)) {
+		if panoWrite[name] && fwWrite[name] && panoRO[name] != fwRO[name] {
+			t.Errorf("tool %q is registered on both device types but read-only gated asymmetrically (Panorama read-only: %v, firewall read-only: %v); the single README mode column cannot represent this",
+				name, panoRO[name], fwRO[name])
+		}
+	}
+
 	b, err := os.ReadFile("../README.md")
 	if err != nil {
 		t.Fatalf("reading README.md: %v", err)

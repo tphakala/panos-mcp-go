@@ -131,10 +131,7 @@ func jobStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, JobIn
 		}
 		var job util.BasicJob
 		cmd := &xmlapi.Op{Command: jobsReq{ID: in.JobID}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &job); err != nil {
-			d.Logger.Error("failed: panos_job_status", "error", err)
-			res, v := errorResult("failed: panos_job_status: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_job_status", cmd, &job); !ok {
 			return res, v, nil
 		}
 		res, v := jsonResult(jobSummary(in.JobID, &job))
@@ -178,18 +175,14 @@ func configDiffHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, stru
 			} `xml:"result"`
 		}
 		cmd := &xmlapi.Op{Command: listChangesReq{}}
-		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		if _, _, err := d.Client.Communicate(ctx, cmd, false, &resp); err != nil {
-			d.Logger.Error("failed: panos_config_diff", "error", err)
-			res, v := errorResult("failed: panos_config_diff: %v", err)
+		if res, v, ok := communicateOp(ctx, d, "panos_config_diff", cmd, &resp); !ok {
 			return res, v, nil
 		}
 		changes := resp.Result.Changes
 		if len(changes) == 0 {
-			if raw := strings.TrimSpace(resp.Result.Inner); raw != "" {
-				// Success, but not the journal shape this parser expects. Surface the
-				// raw result rather than claiming the candidate is clean.
-				res, v := textResult("unrecognized config-diff response; raw result: %s", raw)
+			// Success, but not the journal shape this parser expects. Surface the
+			// raw result rather than claiming the candidate is clean.
+			if res, v, ok := rawResultFallback("panos_config_diff", resp.Result.Inner); ok {
 				return res, v, nil
 			}
 			res, v := textResult("no pending candidate changes")
@@ -337,7 +330,7 @@ func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneLi
 		}
 		total := len(names)
 		lo, hi := clampList(in.Limit, in.Offset, total)
-		res, v := jsonResult(map[string]any{"total": total, "offset": lo, "count": hi - lo, "zones": names[lo:hi]})
+		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: hi - lo, "zones": names[lo:hi]})
 		return res, v, nil
 	}
 }
@@ -380,8 +373,8 @@ type ZoneWriteInput struct {
 	EnableDeviceIdentification   *bool    `json:"enable_device_identification,omitempty"`
 }
 
-// ZoneNameInput is the input for panos_zone_delete: a name plus the flat zone
-// location selectors.
+// ZoneNameInput is the input for panos_zone_get and panos_zone_delete: a name
+// plus the flat zone location selectors.
 type ZoneNameInput struct {
 	Name     string `json:"name" jsonschema:"Zone name"`
 	Vsys     string `json:"vsys,omitempty" jsonschema:"Firewall vsys (default vsys1); firewall only"`
@@ -678,6 +671,37 @@ func zoneDeleteHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Zone
 	}
 }
 
+// zoneGetHandler returns one zone's full detail (network type, interfaces,
+// protection settings, and the user/device-id toggles) through zoneSummary,
+// completing the zone CRUD set that panos_zone_list (names only) leaves
+// incomplete. It uses the flat vsys/template location the other zone tools share,
+// so it cannot reuse the generic getHandler (which takes NameInput/LocationInput).
+// The Read goes through newZoneService so the raw entry name is xpath-wrapped like
+// the other zone reads. Read-only.
+func zoneGetHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneNameInput) (*mcp.CallToolResult, any, error) {
+	svc := newZoneService(d)
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in ZoneNameInput) (*mcp.CallToolResult, any, error) {
+		defer d.RLockReads()()
+		if in.Name == "" {
+			res, v := errorResult("panos_zone_get: name is required")
+			return res, v, nil
+		}
+		loc, err := resolveZoneLocation(d, in.Vsys, in.Template)
+		if err != nil {
+			res, v := errorResult("panos_zone_get: %v", err)
+			return res, v, nil
+		}
+		entry, err := svc.Read(ctx, loc, in.Name, "get")
+		if err != nil {
+			d.Logger.Error("failed: panos_zone_get", "error", err)
+			res, v := errorResult("failed: panos_zone_get: %v", err)
+			return res, v, nil
+		}
+		res, v := jsonResult(zoneSummary(entry))
+		return res, v, nil
+	}
+}
+
 // PushInput is the input for panos_push.
 type PushInput struct {
 	DeviceGroup      string `json:"device_group" jsonschema:"Device group to push to (see panos_device_group_list)"`
@@ -797,6 +821,11 @@ func RegisterDeviceTools(s *mcp.Server, d *Deps) {
 		Description: "List security zone names for use in rules. On Panorama requires template (see panos_template_list). Read-only.",
 		Annotations: readOnlyTool("List zones"),
 	}, zoneListHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_zone_get",
+		Description: "Get one security zone's full detail (network type, interfaces, zone-protection profile, log setting, packet-buffer protection, and user/device-id flags). On Panorama requires template (see panos_template_list). Read-only.",
+		Annotations: readOnlyTool("Get zone"),
+	}, zoneGetHandler(d))
 	if d.IsPanorama {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "panos_device_group_list",
