@@ -502,11 +502,11 @@ type URLFilteringProfileInput struct {
 	Name                   string        `json:"name" jsonschema:"URL filtering profile name"`
 	Location               LocationInput `json:"location,omitempty"`
 	Description            string        `json:"description,omitempty"`
-	Alert                  []string      `json:"alert,omitempty" jsonschema:"URL categories set to alert; replaces fully when provided, an explicit empty list clears it"`
-	Allow                  []string      `json:"allow,omitempty" jsonschema:"URL categories set to allow; replaces fully when provided, an explicit empty list clears it"`
-	Block                  []string      `json:"block,omitempty" jsonschema:"URL categories set to block; replaces fully when provided, an explicit empty list clears it"`
-	Continue               []string      `json:"continue,omitempty" jsonschema:"URL categories set to continue; replaces fully when provided, an explicit empty list clears it"`
-	Override               []string      `json:"override,omitempty" jsonschema:"URL categories set to override; replaces fully when provided, an explicit empty list clears it"`
+	Alert                  []string      `json:"alert,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to alert; replaces fully when provided, an explicit empty list clears it"`
+	Allow                  []string      `json:"allow,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to allow; replaces fully when provided, an explicit empty list clears it"`
+	Block                  []string      `json:"block,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to block; replaces fully when provided, an explicit empty list clears it"`
+	Continue               []string      `json:"continue,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to continue; replaces fully when provided, an explicit empty list clears it"`
+	Override               []string      `json:"override,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to override; replaces fully when provided, an explicit empty list clears it"`
 	SafeSearchEnforcement  *bool         `json:"safe_search_enforcement,omitempty" jsonschema:"Enforce safe search"`
 	LogHTTPHeaderXFF       *bool         `json:"log_http_header_xff,omitempty" jsonschema:"Log the X-Forwarded-For HTTP header"`
 	LogHTTPHeaderUserAgent *bool         `json:"log_http_header_user_agent,omitempty" jsonschema:"Log the User-Agent HTTP header"`
@@ -614,12 +614,12 @@ func RegisterURLFilteringProfileTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_url_filtering_profile_create",
-		Description: "Create a URL filtering profile in the candidate config. Set category actions via the alert/allow/block/continue/override lists. On a firewall it is created at shared. Run panos_commit to apply.",
+		Description: "Create a URL filtering profile in the candidate config. Set category actions via the alert/allow/block/continue/override lists; each list accepts built-in categories and custom URL category names (see panos_custom_url_category_create). On a firewall it is created at shared. Run panos_commit to apply.",
 		Annotations: createTool("Create URL filtering profile"),
 	}, createHandler[urlfiltering.Location, urlfiltering.Entry, URLFilteringProfileInput](d, "panos_url_filtering_profile_create", svc, resolve, loc, buildURLFilteringEntry, urlFilteringSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_url_filtering_profile_update",
-		Description: "Update a URL filtering profile: read-modify-write, only provided fields change; a provided category list replaces that action's whole set, and an explicit empty list clears it. Candidate config only; run panos_commit to apply.",
+		Description: "Update a URL filtering profile: read-modify-write, only provided fields change; a provided category list replaces that action's whole set, and an explicit empty list clears it. Each list accepts built-in categories and custom URL category names (see panos_custom_url_category_create). Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update URL filtering profile"),
 	}, updateHandler[urlfiltering.Location, urlfiltering.Entry, URLFilteringProfileInput](d, "panos_url_filtering_profile_update", svc, resolve, loc,
 		func(in URLFilteringProfileInput) string { return in.Name }, overlayURLFiltering, urlFilteringSummary))

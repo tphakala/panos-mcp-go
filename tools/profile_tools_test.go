@@ -435,6 +435,37 @@ func TestURLFilteringSummary(t *testing.T) {
 	}
 }
 
+// TestURLFilteringCustomURLCategoryNameRoundTrip pins issue #64 item 4: a custom
+// URL category (panos_custom_url_category_create) is referenced from a URL
+// filtering profile simply by its name in a category-action list, on create and
+// on update, and the name survives the summary projection.
+func TestURLFilteringCustomURLCategoryNameRoundTrip(t *testing.T) {
+	const custom = "my-custom-cat"
+	e, err := buildURLFilteringEntry(URLFilteringProfileInput{Name: "u1", Block: []string{custom, "malware"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Block) != 2 || e.Block[0] != custom {
+		t.Errorf("create must carry the custom category name into block: %+v", e.Block)
+	}
+	if got := mustStrSlice(t, mustMap(t, urlFilteringSummary(e))["block"]); len(got) != 2 || got[0] != custom {
+		t.Errorf("summary must echo the custom category name: %+v", got)
+	}
+	e2 := &urlfiltering.Entry{Name: "u1", Block: []string{"old"}}
+	if err := overlayURLFiltering(e2, URLFilteringProfileInput{Name: "u1", Block: []string{custom}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e2.Block) != 1 || e2.Block[0] != custom {
+		t.Errorf("update must replace block with the custom category name: %+v", e2.Block)
+	}
+	if got := mustStrSlice(t, mustMap(t, urlFilteringSummary(e2))["block"]); len(got) != 1 || got[0] != custom {
+		t.Errorf("update summary must echo the custom category name: %+v", got)
+	}
+	if got := mustStrSlice(t, mustMap(t, urlFilteringSummary(e2))["alert"]); got != nil {
+		t.Errorf("untouched alert list must stay nil: %+v", got)
+	}
+}
+
 // --- File blocking: unit tests ----------------------------------------------
 
 func TestBuildFileBlockingEntry(t *testing.T) {
