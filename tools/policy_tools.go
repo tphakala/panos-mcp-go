@@ -44,9 +44,11 @@ func newSecurityRuleService(d *Deps) nameFixAdapter[security.Location, security.
 }
 
 // SecurityRuleInput is the input for the security rule create and update
-// tools. It exposes the practical subset of pango's 30+ field Entry; the
-// remaining fields (profiles, QoS, HIP, schedule, log settings, ...) stay
-// SDK-only until a task needs them.
+// tools. It exposes the practical writable subset of pango's 30+ field Entry;
+// schedule is settable, and the remaining advanced fields (individual
+// profiles, QoS, HIP, log settings, negate flags, rule type, ...) are surfaced
+// read-only by securityRuleDetail but stay SDK-only on the write path until a
+// task needs them.
 type SecurityRuleInput struct {
 	Name         string        `json:"name" jsonschema:"Rule name"`
 	Location     LocationInput `json:"location,omitempty"`
@@ -61,6 +63,7 @@ type SecurityRuleInput struct {
 	Tags         []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided; an empty list clears it"`
 	Disabled     *bool         `json:"disabled,omitempty"`
 	ProfileGroup string        `json:"profile_group,omitempty" jsonschema:"Security profile group applied to matching traffic; a provided value replaces the whole profile-setting subtree (clearing any individually assigned profiles). Individual per-type profile assignment is not modelled here."`
+	Schedule     string        `json:"schedule,omitempty" jsonschema:"Schedule object name limiting when the rule is active (see panos_schedule_list); a non-empty value sets it, blank leaves it unchanged (clearing in place is not supported)"`
 	Position     string        `json:"position,omitempty" jsonschema:"Optional placement on create: top, bottom, before, after (PAN-OS appends at the bottom by default); ignored on update"`
 	RelativeTo   string        `json:"relative_to,omitempty" jsonschema:"Rule name for position before/after; ignored on update"`
 }
@@ -144,6 +147,9 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
+	if in.Schedule != "" {
+		e.Schedule = ptr(in.Schedule)
+	}
 	applyRuleProfileGroup(e, in.ProfileGroup)
 	return e, nil
 }
@@ -153,8 +159,10 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 // zero zones/addresses/applications/services (PAN-OS rejects that at
 // commit), so a reset is expressed as ["any"], and both an omitted and an
 // explicitly empty list leave the field unchanged. tags replace when
-// non-nil, so an empty list clears them. position/relative_to are ignored
-// here; the move tool owns placement.
+// non-nil, so an empty list clears them. description and schedule are
+// single-value fields: a non-empty value sets them, a blank leaves them
+// unchanged (clearing in place is not supported, matching profile_group).
+// position/relative_to are ignored here; the move tool owns placement.
 //
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
@@ -185,6 +193,9 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 	if in.Description != "" {
 		e.Description = ptr(in.Description)
 	}
+	if in.Schedule != "" {
+		e.Schedule = ptr(in.Schedule)
+	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
 	}
@@ -214,9 +225,11 @@ func securityRuleHasIndividualProfiles(ps *security.ProfileSetting) bool {
 	return ps != nil && ps.Profiles != nil
 }
 
-// securityRuleSummary reduces an entry to the list view fields on top of the
-// shared name/description/tags base.
-func securityRuleSummary(e *security.Entry) any {
+// securityRuleSummaryMap reduces an entry to the list view fields on top of the
+// shared name/description/tags base. It returns the concrete map so
+// securityRuleDetail can layer the advanced read-only fields on top without a
+// type assertion (issue #51).
+func securityRuleSummaryMap(e *security.Entry) map[string]any {
 	m := summaryBase(e.Name, e.Description, e.Tag)
 	m["action"] = strVal(e.Action)
 	m["from"] = e.From
@@ -228,6 +241,96 @@ func securityRuleSummary(e *security.Entry) any {
 	m["disabled"] = e.Disabled != nil && *e.Disabled
 	m["profile_group"] = securityRuleProfileGroup(e.ProfileSetting)
 	m["has_individual_profiles"] = securityRuleHasIndividualProfiles(e.ProfileSetting)
+	return m
+}
+
+// securityRuleSummary is the compact list-view projection; it adapts
+// securityRuleSummaryMap to the func(*E) any signature listHandler expects.
+func securityRuleSummary(e *security.Entry) any {
+	return securityRuleSummaryMap(e)
+}
+
+// securityRuleIndividualProfiles projects the security profiles a rule assigns
+// per type directly (pango's ProfileSetting.Profiles branch), one scalar
+// reference per type, including only the types that are set. It returns nil when
+// the rule assigns no individual profiles (it uses a group, or none), so a get
+// omits the key rather than emitting an empty object. gtp/sctp (mobile-core
+// protection) stay SDK-only as niche.
+func securityRuleIndividualProfiles(ps *security.ProfileSetting) map[string]any {
+	if ps == nil || ps.Profiles == nil {
+		return nil
+	}
+	p := ps.Profiles
+	out := map[string]any{}
+	set := func(key string, v []string) {
+		if m := firstMember(v); m != "" {
+			out[key] = m
+		}
+	}
+	set("antivirus", p.Virus)
+	set("anti_spyware", p.Spyware)
+	set("vulnerability", p.Vulnerability)
+	set("url_filtering", p.UrlFiltering)
+	set("file_blocking", p.FileBlocking)
+	set("wildfire_analysis", p.WildfireAnalysis)
+	set("data_filtering", p.DataFiltering)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// securityRuleDetail is the get/create/update projection for a security rule:
+// the compact list fields plus the advanced read-only fields pango carries on
+// the Entry (schedule, category, rule type, logging, negate flags, source
+// users, HIP profiles, group tag, uuid, the individually assigned profiles, and
+// presence flags for the QoS and Panorama-target subtrees this server does not
+// manage). list keeps the compact securityRuleSummary (issue #51), mirroring
+// natRuleSummary/natRuleDetail.
+func securityRuleDetail(e *security.Entry) any {
+	m := securityRuleSummaryMap(e)
+	m["schedule"] = strVal(e.Schedule)
+	m["rule_type"] = strVal(e.RuleType)
+	m["log_setting"] = strVal(e.LogSetting)
+	// setBool records an advanced *bool flag only when the rule explicitly sets
+	// the element (present-as-no -> false, present-as-yes -> true); an absent
+	// element omits the key rather than reporting a hard false, so the
+	// projection reports only what the rule states and never guesses PAN-OS's
+	// default for an unset element (MEASURED against PA-VM 12.1.7: a freshly
+	// created rule's config carries no <log-start>/<log-end>). Mirrors
+	// natRuleDetail, which omits absent translation fields.
+	setBool := func(key string, v *bool) {
+		if v != nil {
+			m[key] = *v
+		}
+	}
+	setBool("log_start", e.LogStart)
+	setBool("log_end", e.LogEnd)
+	setBool("negate_source", e.NegateSource)
+	setBool("negate_destination", e.NegateDestination)
+	setBool("disable_server_response_inspection", e.DisableServerResponseInspection)
+	setBool("icmp_unreachable", e.IcmpUnreachable)
+	m["group_tag"] = strVal(e.GroupTag)
+	m["uuid"] = strVal(e.Uuid)
+	m["has_qos"] = e.Qos != nil
+	m["has_target"] = e.Target != nil
+	// Optional scope lists: omit when empty to avoid JSON null noise, matching
+	// natRuleDetail's snat_addresses.
+	if len(e.Category) > 0 {
+		m["category"] = e.Category
+	}
+	if len(e.SourceUser) > 0 {
+		m["source_user"] = e.SourceUser
+	}
+	if len(e.SourceHip) > 0 {
+		m["source_hip"] = e.SourceHip
+	}
+	if len(e.DestinationHip) > 0 {
+		m["destination_hip"] = e.DestinationHip
+	}
+	if profiles := securityRuleIndividualProfiles(e.ProfileSetting); profiles != nil {
+		m["profiles"] = profiles
+	}
 	return m
 }
 
@@ -406,7 +509,7 @@ func securityRuleCreateHandler(d *Deps, svc *security.Service) func(context.Cont
 		func(in SecurityRuleInput) LocationInput { return in.Location },
 		func(in SecurityRuleInput) string { return in.Name },
 		func(in SecurityRuleInput) (string, string) { return in.Position, in.RelativeTo },
-		securityRuleSummary,
+		securityRuleDetail,
 	)
 }
 
@@ -426,23 +529,23 @@ func RegisterSecurityRuleTools(s *mcp.Server, d *Deps) {
 	}, listHandler[security.Location, security.Entry](d, "panos_security_rule_list", svc, resolve, name, securityRuleSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_get",
-		Description: "Get one security rule by name with the fields this server manages (match, action, tags, disabled, profile_group). Read-only.",
+		Description: "Get one security rule by name with the managed fields plus the advanced read-only detail (schedule, rule type, logging, negate flags, source users, HIP profiles, category, group tag, uuid, and any individually assigned security profiles). Read-only.",
 		Annotations: readOnlyTool("Get security rule"),
-	}, getHandler[security.Location, security.Entry](d, "panos_security_rule_get", svc, resolve, securityRuleSummary))
+	}, getHandler[security.Location, security.Entry](d, "panos_security_rule_get", svc, resolve, securityRuleDetail))
 	if d.ReadOnly {
 		return
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_create",
-		Description: "Create a security rule in the candidate config. action is required and has no default; zones, addresses and applications default to any, service to application-default. Optional position places the rule (PAN-OS default: bottom). Run panos_commit to apply.",
+		Description: "Create a security rule in the candidate config. action is required and has no default; zones, addresses and applications default to any, service to application-default. Optional schedule limits when the rule is active. Optional position places the rule (PAN-OS default: bottom). Run panos_commit to apply.",
 		Annotations: createTool("Create security rule"),
 	}, securityRuleCreateHandler(d, raw))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_update",
-		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided profile_group replaces the whole profile-setting subtree. position is ignored here; use panos_security_rule_move. Candidate config only; run panos_commit to apply.",
+		Description: "Update a security rule: read-modify-write, only provided fields change; non-empty lists replace fully (send [\"any\"] to reset a match field). A provided profile_group replaces the whole profile-setting subtree; a provided schedule sets the rule's schedule (blank leaves it unchanged). position is ignored here; use panos_security_rule_move. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update security rule"),
 	}, updateHandler[security.Location, security.Entry, SecurityRuleInput](d, "panos_security_rule_update", svc, resolve, loc,
-		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleSummary))
+		func(in SecurityRuleInput) string { return in.Name }, overlaySecurityRule, securityRuleDetail))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_security_rule_delete",
 		Description: "Delete a security rule from the candidate config. Run panos_commit to apply.",
