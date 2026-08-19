@@ -371,7 +371,7 @@ func TestZoneGet(t *testing.T) {
 
 func TestRegisterZoneWriteToolsReadOnly(t *testing.T) {
 	assertReadOnlyGating(t, RegisterDeviceTools,
-		[]string{"panos_zone_list"},
+		[]string{"panos_zone_list", "panos_zone_get"},
 		[]string{"panos_zone_create", "panos_zone_update", "panos_zone_delete"})
 }
 
