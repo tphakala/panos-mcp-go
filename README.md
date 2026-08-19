@@ -121,7 +121,7 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_antivirus_profile_list` | read-only | List antivirus profiles at a location. |
 | `panos_antivirus_profile_get` | read-only | Get one antivirus profile by name with its managed fields (description, packet_capture, decoders). |
 | `panos_antivirus_profile_create` | write | Create an antivirus profile in the candidate config. |
-| `panos_antivirus_profile_update` | write | Update an antivirus profile: read-modify-write; a non-empty decoders list replaces the whole set. |
+| `panos_antivirus_profile_update` | write | Update an antivirus profile: read-modify-write; a provided decoders list replaces the whole set, and an explicit empty list clears it. |
 | `panos_antivirus_profile_delete` | write | Delete an antivirus profile from the candidate config. |
 | `panos_vulnerability_profile_list` | read-only | List vulnerability protection profiles at a location. |
 | `panos_vulnerability_profile_get` | read-only | Get one vulnerability protection profile by name with its managed fields; per-signature rules are not exposed. |
@@ -136,17 +136,17 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_url_filtering_profile_list` | read-only | List URL filtering profiles at a location. |
 | `panos_url_filtering_profile_get` | read-only | Get one URL filtering profile by name with its category actions. |
 | `panos_url_filtering_profile_create` | write | Create a URL filtering profile in the candidate config. |
-| `panos_url_filtering_profile_update` | write | Update a URL filtering profile: read-modify-write; a non-empty category list replaces that action's whole set. |
+| `panos_url_filtering_profile_update` | write | Update a URL filtering profile: read-modify-write; a provided category list replaces that action's whole set, and an explicit empty list clears it. |
 | `panos_url_filtering_profile_delete` | write | Delete a URL filtering profile from the candidate config. |
 | `panos_file_blocking_profile_list` | read-only | List file-blocking profiles at a location. |
 | `panos_file_blocking_profile_get` | read-only | Get one file-blocking profile by name with its rules. |
 | `panos_file_blocking_profile_create` | write | Create a file-blocking profile in the candidate config. |
-| `panos_file_blocking_profile_update` | write | Update a file-blocking profile: read-modify-write; a non-empty rules list replaces the whole set. |
+| `panos_file_blocking_profile_update` | write | Update a file-blocking profile: read-modify-write; a provided rules list replaces the whole set, and an explicit empty list clears it. |
 | `panos_file_blocking_profile_delete` | write | Delete a file-blocking profile from the candidate config. |
 | `panos_wildfire_analysis_profile_list` | read-only | List WildFire analysis profiles at a location. |
 | `panos_wildfire_analysis_profile_get` | read-only | Get one WildFire analysis profile by name with its rules. |
 | `panos_wildfire_analysis_profile_create` | write | Create a WildFire analysis profile in the candidate config. |
-| `panos_wildfire_analysis_profile_update` | write | Update a WildFire analysis profile: read-modify-write; a non-empty rules list replaces the whole set. |
+| `panos_wildfire_analysis_profile_update` | write | Update a WildFire analysis profile: read-modify-write; a provided rules list replaces the whole set, and an explicit empty list clears it. |
 | `panos_wildfire_analysis_profile_delete` | write | Delete a WildFire analysis profile from the candidate config. |
 | `panos_profile_group_list` | read-only | List security profile groups at a location. |
 | `panos_profile_group_get` | read-only | Get one security profile group by name with the profile referenced for each type. |

@@ -323,20 +323,103 @@ func TestBuildURLFilteringEntry(t *testing.T) {
 }
 
 func TestOverlayURLFiltering(t *testing.T) {
-	// The bool toggles start true so an unconditional overwrite (nil) is caught
-	// by the omitted-preserve case; also exercises the log-header overlay branch.
-	e := &urlfiltering.Entry{Name: "u1", Description: ptr("old"), Block: []string{"old"}, SafeSearchEnforcement: ptr(true), LogHttpHdrXff: ptr(true)}
+	// All four bool toggles start true so an unconditional overwrite (nil) is
+	// caught by the omitted-preserve case; seeding all four guards every
+	// log/safe-search omitted-preserve branch (issue #61 follow-up), not just xff.
+	allTrue := [4]bool{true, true, true, true}
+	allFalse := [4]bool{false, false, false, false}
+	e := &urlfiltering.Entry{
+		Name: "u1", Description: ptr("old"), Block: []string{"old"},
+		SafeSearchEnforcement: ptr(true), LogHttpHdrXff: ptr(true),
+		LogHttpHdrUserAgent: ptr(true), LogHttpHdrReferer: ptr(true),
+	}
 	if err := overlayURLFiltering(e, URLFilteringProfileInput{Name: "u1"}); err != nil {
 		t.Fatal(err)
 	}
-	if strVal(e.Description) != "old" || !boolVal(e.SafeSearchEnforcement) || !boolVal(e.LogHttpHdrXff) || len(e.Block) != 1 || e.Block[0] != "old" {
+	if strVal(e.Description) != "old" || urlToggles(e) != allTrue || len(e.Block) != 1 || e.Block[0] != "old" {
 		t.Errorf("omitted fields must be preserved: %+v", e)
 	}
-	if err := overlayURLFiltering(e, URLFilteringProfileInput{Name: "u1", Block: []string{"malware"}, SafeSearchEnforcement: ptr(false), LogHTTPHeaderXFF: ptr(false)}); err != nil {
+	if err := overlayURLFiltering(e, URLFilteringProfileInput{
+		Name: "u1", Block: []string{"malware"},
+		SafeSearchEnforcement: ptr(false), LogHTTPHeaderXFF: ptr(false),
+		LogHTTPHeaderUserAgent: ptr(false), LogHTTPHeaderReferer: ptr(false),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if boolVal(e.SafeSearchEnforcement) || boolVal(e.LogHttpHdrXff) || len(e.Block) != 1 || e.Block[0] != "malware" {
+	if urlToggles(e) != allFalse || len(e.Block) != 1 || e.Block[0] != "malware" {
 		t.Errorf("provided fields must replace: %+v", e)
+	}
+}
+
+// urlToggles snapshots the four URL-filtering log/safe-search booleans in a fixed
+// order so an assertion can compare them all with one array equality.
+func urlToggles(e *urlfiltering.Entry) [4]bool {
+	return [4]bool{
+		boolVal(e.SafeSearchEnforcement),
+		boolVal(e.LogHttpHdrXff),
+		boolVal(e.LogHttpHdrUserAgent),
+		boolVal(e.LogHttpHdrReferer),
+	}
+}
+
+// TestOverlayProfilesClearList pins the issue #61 contract that an explicit
+// empty list clears a profile's list field in place. nil (omitted) still
+// preserves, which the per-resource overlay tests already cover. Each field must
+// become an empty non-nil slice so pango emits an empty container that clears the
+// node on the edit, not nil (which pango omits, preserving the old value).
+func TestOverlayProfilesClearList(t *testing.T) {
+	t.Run("url-filtering categories", func(t *testing.T) {
+		e := &urlfiltering.Entry{Name: "u1", Block: []string{"old"}}
+		if err := overlayURLFiltering(e, URLFilteringProfileInput{Name: "u1", Block: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		assertClearedList(t, "Block", e.Block)
+	})
+	t.Run("antivirus decoders", func(t *testing.T) {
+		e := &antivirus.Entry{Name: "av1", Decoder: []antivirus.Decoder{{Name: "old"}}}
+		if err := overlayAntivirus(e, AntivirusProfileInput{Name: "av1", Decoders: []AntivirusDecoderInput{}}); err != nil {
+			t.Fatal(err)
+		}
+		assertClearedList(t, "decoders", e.Decoder)
+	})
+	t.Run("vulnerability inline exceptions", func(t *testing.T) {
+		e := &vulnerability.Entry{Name: "v1", InlineExceptionEdlUrl: []string{"old"}, InlineExceptionIpAddress: []string{"1.2.3.4"}}
+		if err := overlayVulnerability(e, VulnerabilityProfileInput{Name: "v1", InlineExceptionEdlURLs: []string{}, InlineExceptionIPAddresses: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		assertClearedList(t, "inline_exception_edl_urls", e.InlineExceptionEdlUrl)
+		assertClearedList(t, "inline_exception_ip_addresses", e.InlineExceptionIpAddress)
+	})
+	t.Run("spyware inline exceptions", func(t *testing.T) {
+		e := &spyware.Entry{Name: "s1", InlineExceptionEdlUrl: []string{"old"}}
+		if err := overlaySpyware(e, SpywareProfileInput{Name: "s1", InlineExceptionEdlURLs: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		assertClearedList(t, "inline_exception_edl_urls", e.InlineExceptionEdlUrl)
+	})
+	t.Run("file-blocking rules", func(t *testing.T) {
+		e := &fileblocking.Entry{Name: "fb1", Rules: []fileblocking.Rules{{Name: "old"}}}
+		if err := overlayFileBlocking(e, FileBlockingProfileInput{Name: "fb1", Rules: []FileBlockingRuleInput{}}); err != nil {
+			t.Fatal(err)
+		}
+		assertClearedList(t, "rules", e.Rules)
+	})
+	t.Run("wildfire-analysis rules", func(t *testing.T) {
+		e := &wildfireanalysis.Entry{Name: "wf1", Rules: []wildfireanalysis.Rules{{Name: "old"}}}
+		if err := overlayWildfireAnalysis(e, WildfireAnalysisProfileInput{Name: "wf1", Rules: []WildfireAnalysisRuleInput{}}); err != nil {
+			t.Fatal(err)
+		}
+		assertClearedList(t, "rules", e.Rules)
+	})
+}
+
+// assertClearedList asserts a profile list field was cleared in place to an empty
+// non-nil slice (pango emits an empty container that clears the node on the edit),
+// the issue #61 contract, rather than left nil (which pango omits, preserving it).
+func assertClearedList[T any](t *testing.T, field string, got []T) {
+	t.Helper()
+	if got == nil || len(got) != 0 {
+		t.Errorf("explicit empty %s must clear to an empty non-nil slice, got %#v", field, got)
 	}
 }
 
