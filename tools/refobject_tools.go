@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/PaloAltoNetworks/pango/objects/application"
 	application_group "github.com/PaloAltoNetworks/pango/objects/application/group"
 	"github.com/PaloAltoNetworks/pango/objects/extdynlist"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/customurlcategory"
@@ -27,6 +28,194 @@ func ptrIfSet(s string) *string {
 		return nil
 	}
 	return new(s)
+}
+
+// --- Custom applications (objects/application) -------------------------------
+
+// applicationParts supplies custom application locations for resolveLocation.
+func applicationParts() locParts[application.Location] {
+	return locParts[application.Location]{
+		shared: func(string) application.Location {
+			return application.Location{Shared: &application.SharedLocation{}}
+		},
+		vsys: func(v string) application.Location {
+			return application.Location{Vsys: &application.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}
+		},
+		deviceGroup: func(dg, _ string) application.Location {
+			return application.Location{DeviceGroup: &application.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+func newApplicationService(d *Deps) nameFixAdapter[application.Location, application.Entry] {
+	return nameFixAdapter[application.Location, application.Entry]{
+		svc:    application.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *application.Entry) string { return e.Name },
+	}
+}
+
+// ApplicationInput is the input for custom application create and update. PAN-OS
+// requires category, subcategory, technology and risk before a custom
+// application commits; they are optional here so update can change one at a time,
+// and the device enforces completeness at commit. The Signature subtree and the
+// ICMP ident branches of default are SDK-only and preserved across update.
+type ApplicationInput struct {
+	Name                  string        `json:"name" jsonschema:"Application name"`
+	Location              LocationInput `json:"location,omitzero"`
+	Description           string        `json:"description,omitempty"`
+	Category              string        `json:"category,omitempty" jsonschema:"Application category, e.g. business-systems, collaboration; required by PAN-OS at commit"`
+	Subcategory           string        `json:"subcategory,omitempty" jsonschema:"Application subcategory, e.g. management, email; required by PAN-OS at commit"`
+	Technology            string        `json:"technology,omitempty" jsonschema:"Underlying technology: client-server, browser-based, network-protocol or peer-to-peer; required by PAN-OS at commit"`
+	Risk                  *int64        `json:"risk,omitempty" jsonschema:"Risk rating 1 (lowest) to 5 (highest); required by PAN-OS at commit"`
+	DefaultIPProtocol     string        `json:"default_ip_protocol,omitempty" jsonschema:"Identify traffic by IP protocol number. Mutually exclusive with default_ports; a value replaces the whole default identification (including any SDK-only ICMP-type ident)"`
+	DefaultPorts          []string      `json:"default_ports,omitempty" jsonschema:"Identify traffic by ports, e.g. tcp/8080, udp/dynamic. Mutually exclusive with default_ip_protocol; a non-empty list replaces the whole default identification (including any SDK-only ICMP-type ident), an explicit empty list clears it (signature-only)"`
+	Timeout               *int64        `json:"timeout,omitempty" jsonschema:"Session timeout in seconds"`
+	TCPTimeout            *int64        `json:"tcp_timeout,omitempty" jsonschema:"TCP session timeout in seconds"`
+	UDPTimeout            *int64        `json:"udp_timeout,omitempty" jsonschema:"UDP session timeout in seconds"`
+	EvasiveBehavior       *bool         `json:"evasive_behavior,omitempty" jsonschema:"Characteristic: uses evasive behavior; omit to keep the device default"`
+	HasKnownVulnerability *bool         `json:"has_known_vulnerability,omitempty" jsonschema:"Characteristic: has known vulnerabilities; omit to keep the device default"`
+	UsedByMalware         *bool         `json:"used_by_malware,omitempty" jsonschema:"Characteristic: used by malware; omit to keep the device default"`
+	AbleToTransferFile    *bool         `json:"able_to_transfer_file,omitempty" jsonschema:"Characteristic: can transfer files; omit to keep the device default"`
+	ProneToMisuse         *bool         `json:"prone_to_misuse,omitempty" jsonschema:"Characteristic: prone to misuse; omit to keep the device default"`
+	PervasiveUse          *bool         `json:"pervasive_use,omitempty" jsonschema:"Characteristic: pervasively used; omit to keep the device default"`
+	TunnelApplications    *bool         `json:"tunnel_applications,omitempty" jsonschema:"Characteristic: tunnels other applications; omit to keep the device default"`
+}
+
+// applyApplicationFields sets every provided field on the entry, leaving omitted
+// fields untouched (read-modify-write). in is by pointer; this helper is shared
+// by build and overlay and is not bound by the generic builder contract.
+//
+// The default identification methods (port, ident-by-ip-protocol, and the
+// SDK-only ICMP idents) are a PAN-OS oneof: an application identifies traffic by
+// exactly one of them. A non-empty default_ports or a default_ip_protocol
+// REPLACES the whole default subtree (clearing any sibling branch, ICMP idents
+// included), and the two are mutually exclusive. An explicit empty default_ports
+// ([]) clears the default identification entirely (signature-only). A nil
+// (omitted) default_ports with no default_ip_protocol leaves the existing
+// default subtree untouched, preserving whatever it holds.
+func applyApplicationFields(e *application.Entry, in *ApplicationInput) error {
+	if in.Risk != nil {
+		if *in.Risk < 1 || *in.Risk > 5 {
+			return fmt.Errorf("risk must be between 1 and 5, got %d", *in.Risk)
+		}
+		e.Risk = in.Risk
+	}
+	setStrPtr(&e.Description, in.Description)
+	setStrPtr(&e.Category, in.Category)
+	setStrPtr(&e.Subcategory, in.Subcategory)
+	setStrPtr(&e.Technology, in.Technology)
+	switch {
+	case in.DefaultPorts != nil && in.DefaultIPProtocol != "":
+		return errors.New("default_ports and default_ip_protocol are mutually exclusive; an application default identifies traffic by port or by IP protocol, not both")
+	case len(in.DefaultPorts) > 0:
+		e.Default = &application.Default{Port: in.DefaultPorts}
+	case in.DefaultPorts != nil:
+		// An explicit empty list clears the default identification entirely.
+		e.Default = nil
+	case in.DefaultIPProtocol != "":
+		e.Default = &application.Default{IdentByIpProtocol: new(in.DefaultIPProtocol)}
+	}
+	setPtr(&e.Timeout, in.Timeout)
+	setPtr(&e.TcpTimeout, in.TCPTimeout)
+	setPtr(&e.UdpTimeout, in.UDPTimeout)
+	setPtr(&e.EvasiveBehavior, in.EvasiveBehavior)
+	setPtr(&e.HasKnownVulnerability, in.HasKnownVulnerability)
+	setPtr(&e.UsedByMalware, in.UsedByMalware)
+	setPtr(&e.AbleToTransferFile, in.AbleToTransferFile)
+	setPtr(&e.ProneToMisuse, in.ProneToMisuse)
+	setPtr(&e.PervasiveUse, in.PervasiveUse)
+	setPtr(&e.TunnelApplications, in.TunnelApplications)
+	return nil
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildApplicationEntry(in ApplicationInput) (*application.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	e := &application.Entry{Name: in.Name}
+	if err := applyApplicationFields(e, &in); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
+func overlayApplication(e *application.Entry, in ApplicationInput) error {
+	return applyApplicationFields(e, &in)
+}
+
+func applicationSummary(e *application.Entry) any {
+	m := nameDescription(e.Name, e.Description)
+	m["category"] = strVal(e.Category)
+	m["subcategory"] = strVal(e.Subcategory)
+	m["technology"] = strVal(e.Technology)
+	putInt(m, "risk", e.Risk)
+	if d := e.Default; d != nil {
+		if d.IdentByIpProtocol != nil {
+			m["default_ip_protocol"] = *d.IdentByIpProtocol
+		}
+		if len(d.Port) > 0 {
+			m["default_ports"] = d.Port
+		}
+	}
+	// The ICMP-type default idents are SDK-only; surface their presence so a get
+	// does not silently hide an ICMP-identified application (mirrors has_signatures
+	// and the decryption summary's has_ssl_* flags).
+	m["has_icmp_ident"] = e.Default != nil && (e.Default.IdentByIcmpType != nil || e.Default.IdentByIcmp6Type != nil)
+	putInt(m, "timeout", e.Timeout)
+	putInt(m, "tcp_timeout", e.TcpTimeout)
+	putInt(m, "udp_timeout", e.UdpTimeout)
+	putBool(m, "evasive_behavior", e.EvasiveBehavior)
+	putBool(m, "has_known_vulnerability", e.HasKnownVulnerability)
+	putBool(m, "used_by_malware", e.UsedByMalware)
+	putBool(m, "able_to_transfer_file", e.AbleToTransferFile)
+	putBool(m, "prone_to_misuse", e.ProneToMisuse)
+	putBool(m, "pervasive_use", e.PervasiveUse)
+	putBool(m, "tunnel_applications", e.TunnelApplications)
+	m["has_signatures"] = len(e.Signature) > 0
+	return m
+}
+
+// RegisterApplicationTools registers the custom application object tools.
+func RegisterApplicationTools(s *mcp.Server, d *Deps) {
+	svc := newApplicationService(d)
+	resolve := func(in LocationInput) (application.Location, error) {
+		return resolveLocation(d, in, applicationParts())
+	}
+	name := svc.name
+	loc := func(in ApplicationInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_application_list",
+		Description: "List custom application objects at a location. Read-only.",
+		Annotations: readOnlyTool("List applications"),
+	}, listHandler[application.Location, application.Entry](d, "panos_application_list", svc, resolve, name, applicationSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_application_get",
+		Description: "Get one custom application by name with its classification, default ports, timeouts and characteristics. Read-only.",
+		Annotations: readOnlyTool("Get application"),
+	}, getHandler[application.Location, application.Entry](d, "panos_application_get", svc, resolve, applicationSummary))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_application_create",
+		Description: "Create a custom application object in the candidate config. PAN-OS requires category, subcategory, technology and risk before commit. Run panos_commit to apply.",
+		Annotations: createTool("Create application"),
+	}, createHandler[application.Location, application.Entry, ApplicationInput](d, "panos_application_create", svc, resolve, loc, buildApplicationEntry, applicationSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_application_update",
+		Description: "Update a custom application: read-modify-write, only provided fields change; a provided default_ports list replaces the whole list. Candidate config only; run panos_commit to apply.",
+		Annotations: updateTool("Update application"),
+	}, updateHandler[application.Location, application.Entry, ApplicationInput](d, "panos_application_update", svc, resolve, loc,
+		func(in ApplicationInput) string { return in.Name }, overlayApplication, applicationSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_application_delete",
+		Description: "Delete a custom application object from the candidate config. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete application"),
+	}, deleteHandler[application.Location, application.Entry](d, "panos_application_delete", svc, resolve))
 }
 
 // --- Application groups (objects/application/group) --------------------------

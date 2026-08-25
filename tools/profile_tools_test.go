@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/PaloAltoNetworks/pango/objects/profiles/antivirus"
+	"github.com/PaloAltoNetworks/pango/objects/profiles/decryption"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/fileblocking"
+	"github.com/PaloAltoNetworks/pango/objects/profiles/logforwarding"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/secgroup"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/urlfiltering"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/vulnerability"
@@ -955,11 +957,423 @@ func TestRegisterProfileToolsReadOnly(t *testing.T) {
 	prefixes := []string{
 		"panos_antivirus_profile", "panos_vulnerability_profile", "panos_anti_spyware_profile",
 		"panos_url_filtering_profile", "panos_file_blocking_profile", "panos_wildfire_analysis_profile",
-		"panos_profile_group",
+		"panos_profile_group", "panos_log_forwarding_profile", "panos_decryption_profile",
 	}
 	for _, p := range prefixes {
 		reads := []string{p + "_list", p + "_get"}
 		writes := []string{p + "_create", p + "_update", p + "_delete"}
 		assertReadOnlyGate(t, reads, writes)
+	}
+}
+
+// --- Log forwarding ----------------------------------------------------------
+
+func logForwardingResolve(d *Deps) func(LocationInput) (logforwarding.Location, error) {
+	return func(in LocationInput) (logforwarding.Location, error) {
+		return resolveLocation(d, in, logForwardingParts())
+	}
+}
+
+//nolint:gocyclo // exhaustive field-mapping assertions across the built match list.
+func TestBuildLogForwardingEntry(t *testing.T) {
+	e, err := buildLogForwardingEntry(LogForwardingProfileInput{
+		Name:                       "lf",
+		Description:                "d",
+		EnhancedApplicationLogging: new(true),
+		MatchLists: []LogForwardingMatchListInput{{
+			Name: "m1", LogType: "traffic", Filter: "addr.src in 10.0.0.0/8", Description: "md",
+			SendToPanorama: new(true), Quarantine: new(false), SendSyslog: []string{"sys1"},
+			SendSnmptrap: []string{"snmp1"}, SendEmail: []string{"mail1"}, SendHTTP: []string{"http1"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "lf" || strVal(e.Description) != "d" || !boolVal(e.EnhancedApplicationLogging) {
+		t.Fatalf("entry header wrong: %+v", e)
+	}
+	if len(e.MatchList) != 1 {
+		t.Fatalf("want 1 match list, got %d", len(e.MatchList))
+	}
+	ml := e.MatchList[0]
+	if ml.Name != "m1" || strVal(ml.LogType) != "traffic" || strVal(ml.Filter) != "addr.src in 10.0.0.0/8" ||
+		strVal(ml.ActionDesc) != "md" || !boolVal(ml.SendToPanorama) {
+		t.Fatalf("match list scalars mapped wrong: %+v", ml)
+	}
+	if ml.Quarantine == nil || *ml.Quarantine {
+		t.Fatalf("quarantine present-false must map to a non-nil false: %v", ml.Quarantine)
+	}
+	// Each server-profile reference list maps to its own field; a swap or dropped
+	// line turns one of these red.
+	for name, got := range map[string][]string{
+		"send_syslog": ml.SendSyslog, "send_snmptrap": ml.SendSnmptrap,
+		"send_email": ml.SendEmail, "send_http": ml.SendHttp,
+	} {
+		if len(got) != 1 {
+			t.Fatalf("%s must carry its one member, got %v", name, got)
+		}
+	}
+	if ml.SendSyslog[0] != "sys1" || ml.SendSnmptrap[0] != "snmp1" || ml.SendEmail[0] != "mail1" || ml.SendHttp[0] != "http1" {
+		t.Fatalf("server-profile reference lists mapped to the wrong fields: %+v", ml)
+	}
+}
+
+func TestBuildLogForwardingEntryRejects(t *testing.T) {
+	if _, err := buildLogForwardingEntry(LogForwardingProfileInput{}); err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("empty name must be rejected, got %v", err)
+	}
+	_, err := buildLogForwardingEntry(LogForwardingProfileInput{Name: "lf", MatchLists: []LogForwardingMatchListInput{{LogType: "traffic"}}})
+	if err == nil || !strings.Contains(err.Error(), "each match list requires a name") {
+		t.Fatalf("unnamed match list must be rejected, got %v", err)
+	}
+}
+
+func TestOverlayLogForwarding(t *testing.T) {
+	t.Run("nil match_lists preserves existing", func(t *testing.T) {
+		e := &logforwarding.Entry{Name: "lf", MatchList: []logforwarding.MatchList{{Name: "keep", Actions: []logforwarding.MatchListActions{{Name: "act"}}}}}
+		if err := overlayLogForwarding(e, LogForwardingProfileInput{Description: "d"}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.MatchList) != 1 || e.MatchList[0].Name != "keep" || len(e.MatchList[0].Actions) != 1 {
+			t.Fatalf("nil match_lists must preserve the existing list and its actions: %+v", e.MatchList)
+		}
+	})
+	t.Run("explicit empty clears", func(t *testing.T) {
+		e := &logforwarding.Entry{Name: "lf", MatchList: []logforwarding.MatchList{{Name: "old"}}}
+		if err := overlayLogForwarding(e, LogForwardingProfileInput{MatchLists: []LogForwardingMatchListInput{}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.MatchList) != 0 {
+			t.Fatalf("explicit empty match_lists must clear the set: %+v", e.MatchList)
+		}
+	})
+	t.Run("provided list replaces", func(t *testing.T) {
+		e := &logforwarding.Entry{Name: "lf", MatchList: []logforwarding.MatchList{{Name: "old"}}}
+		if err := overlayLogForwarding(e, LogForwardingProfileInput{MatchLists: []LogForwardingMatchListInput{{Name: "new"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.MatchList) != 1 || e.MatchList[0].Name != "new" {
+			t.Fatalf("provided list must replace: %+v", e.MatchList)
+		}
+	})
+	t.Run("omitted EAL preserves existing", func(t *testing.T) {
+		e := &logforwarding.Entry{Name: "lf", EnhancedApplicationLogging: new(true)}
+		if err := overlayLogForwarding(e, LogForwardingProfileInput{Description: "d"}); err != nil {
+			t.Fatal(err)
+		}
+		if !boolVal(e.EnhancedApplicationLogging) {
+			t.Fatal("omitted enhanced_application_logging must leave the existing value untouched")
+		}
+	})
+}
+
+//nolint:gocyclo,gocognit // exhaustive summary assertions across the omit and present-value scenarios.
+func TestLogForwardingSummary(t *testing.T) {
+	t.Run("nil toggles omit keys", func(t *testing.T) {
+		m := asMap(t, logForwardingSummary(&logforwarding.Entry{Name: "lf"}))
+		if _, ok := m["enhanced_application_logging"]; ok {
+			t.Fatal("a nil enhanced_application_logging must be omitted, not coerced to false")
+		}
+		mls, ok := m["match_lists"].([]any)
+		if !ok || len(mls) != 0 {
+			t.Fatalf("match_lists must be an empty list, got %v", m["match_lists"])
+		}
+	})
+	t.Run("present-false emitted, actions surfaced", func(t *testing.T) {
+		e := &logforwarding.Entry{
+			Name:                       "lf",
+			EnhancedApplicationLogging: new(false),
+			MatchList: []logforwarding.MatchList{{
+				Name: "m1", SendToPanorama: new(false), Quarantine: new(true),
+				LogType: new("traffic"), ActionDesc: new("md"),
+				SendSyslog: []string{"sys1"}, SendSnmptrap: []string{"snmp1"},
+				SendEmail: []string{"mail1"}, SendHttp: []string{"http1"},
+				Actions: []logforwarding.MatchListActions{{Name: "act"}},
+			}},
+		}
+		m := asMap(t, logForwardingSummary(e))
+		if v, ok := m["enhanced_application_logging"].(bool); !ok || v {
+			t.Fatalf("present-false enhanced_application_logging must be emitted as false: %v", m["enhanced_application_logging"])
+		}
+		mls, ok := m["match_lists"].([]any)
+		if !ok || len(mls) == 0 {
+			t.Fatalf("match_lists must carry the entry: %v", m["match_lists"])
+		}
+		ml, ok := mls[0].(map[string]any)
+		if !ok {
+			t.Fatalf("match list summary must be a map: %v", mls[0])
+		}
+		if v, ok := ml["send_to_panorama"].(bool); !ok || v {
+			t.Fatalf("present-false send_to_panorama must be emitted as false: %v", ml["send_to_panorama"])
+		}
+		if v, ok := ml["quarantine"].(bool); !ok || !v {
+			t.Fatalf("present-true quarantine must be emitted as true: %v", ml["quarantine"])
+		}
+		if ml["log_type"] != "traffic" || ml["description"] != "md" {
+			t.Fatalf("match list scalars wrong: log_type=%v description=%v", ml["log_type"], ml["description"])
+		}
+		for name, want := range map[string]string{"send_syslog": "sys1", "send_snmptrap": "snmp1", "send_email": "mail1", "send_http": "http1"} {
+			got, ok := ml[name].([]string)
+			if !ok || len(got) != 1 || got[0] != want {
+				t.Fatalf("%s summarized to the wrong field: %v", name, ml[name])
+			}
+		}
+		if v, ok := ml["has_actions"].(bool); !ok || !v {
+			t.Fatalf("has_actions must be true when actions present: %v", ml["has_actions"])
+		}
+	})
+}
+
+func TestLogForwardingProfileCreate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("lf-new")},
+	)
+	h := createHandler[logforwarding.Location, logforwarding.Entry, LogForwardingProfileInput](d, "panos_log_forwarding_profile_create", newLogForwardingService(d), logForwardingResolve(d),
+		func(in LogForwardingProfileInput) LocationInput { return in.Location }, buildLogForwardingEntry, logForwardingSummary)
+	res, _, err := h(t.Context(), nil, LogForwardingProfileInput{Name: "lf-new", MatchLists: []LogForwardingMatchListInput{{
+		Name: "m1", LogType: "traffic", SendToPanorama: new(true), SendSyslog: []string{"sys1"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create failed: %s", textContent(t, res))
+	}
+	set := strings.Join(setElements(f), " ")
+	for _, want := range []string{`<entry name="m1">`, `<log-type>traffic</log-type>`, `<send-syslog><member>sys1</member></send-syslog>`, `<send-to-panorama>yes</send-to-panorama>`, "lf-new"} {
+		if !strings.Contains(set, want) {
+			t.Fatalf("create set element missing %q: %s", want, set)
+		}
+	}
+	xs := strings.Join(getConfigXpaths(f), " ")
+	if !strings.Contains(xs, "log-settings/profiles") || !strings.Contains(xs, "/config/shared") {
+		t.Fatalf("firewall default must target shared log-settings/profiles: %s", xs)
+	}
+	if strings.Contains(xs, "vsys1") {
+		t.Fatalf("a vsys-less type must not target vsys1 on a firewall: %s", xs)
+	}
+}
+
+func TestLogForwardingProfileVsysRejected(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM")
+	h := createHandler[logforwarding.Location, logforwarding.Entry, LogForwardingProfileInput](d, "panos_log_forwarding_profile_create", newLogForwardingService(d), logForwardingResolve(d),
+		func(in LogForwardingProfileInput) LocationInput { return in.Location }, buildLogForwardingEntry, logForwardingSummary)
+	res, _, err := h(t.Context(), nil, LogForwardingProfileInput{Name: "lf", Location: LocationInput{Vsys: "vsys1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("explicit vsys on a vsys-less type must be rejected")
+	}
+	assertNoConfigWrite(t, f)
+}
+
+func TestLogForwardingProfileGetUpdateViaRegisteredTools(t *testing.T) {
+	ctx := t.Context()
+	lfEntry := `<entry name="lf-a"><enhanced-application-logging>yes</enhanced-application-logging>` +
+		`<match-list><entry name="ml1"><log-type>traffic</log-type><send-syslog><member>sys1</member></send-syslog></entry></match-list></entry>`
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result>` + lfEntry + `</result></response>`},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterLogForwardingProfileTools(srv, d)
+	cs := connectInMemory(t, srv)
+
+	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_log_forwarding_profile_get", Arguments: map[string]any{"name": "lf-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getRes.IsError {
+		t.Fatalf("registered get failed: %s", textContent(t, getRes))
+	}
+	assertSingleWrappedGet(t, f, "entry[@name='lf-a']")
+	if joined := strings.Join(getConfigXpaths(f), " "); !strings.Contains(joined, "log-settings/profiles") {
+		t.Fatalf("registered get did not target the log-forwarding node: %s", joined)
+	}
+
+	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_log_forwarding_profile_update", Arguments: map[string]any{"name": "lf-a", "description": "new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updRes.IsError {
+		t.Fatalf("registered update failed: %s", textContent(t, updRes))
+	}
+	// read-modify-write preserves the existing match list when match_lists is omitted.
+	if el := multiConfigElement(t, f); !strings.Contains(el, "new") || !strings.Contains(el, `<entry name="ml1">`) {
+		t.Fatalf("registered update did not preserve the match list: %s", el)
+	}
+}
+
+// --- Decryption profile ------------------------------------------------------
+
+func decryptionProfileResolve(d *Deps) func(LocationInput) (decryption.Location, error) {
+	return func(in LocationInput) (decryption.Location, error) {
+		return resolveLocation(d, in, decryptionProfileParts())
+	}
+}
+
+func TestBuildDecryptionProfileEntry(t *testing.T) {
+	e, err := buildDecryptionProfileEntry(DecryptionProfileInput{Name: "dp", ForwardedOnly: new(true), SslMinVersion: "tls1-2", SslMaxVersion: "max"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "dp" || !boolVal(e.ForwardedOnly) {
+		t.Fatalf("entry header wrong: %+v", e)
+	}
+	if e.SslProtocolSettings == nil || strVal(e.SslProtocolSettings.MinVersion) != "tls1-2" || strVal(e.SslProtocolSettings.MaxVersion) != "max" {
+		t.Fatalf("ssl protocol settings mapped wrong: %+v", e.SslProtocolSettings)
+	}
+	bare, err := buildDecryptionProfileEntry(DecryptionProfileInput{Name: "dp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.SslProtocolSettings != nil {
+		t.Fatal("no ssl version input must leave ssl-protocol-settings unset")
+	}
+}
+
+func TestBuildDecryptionProfileEntryRejects(t *testing.T) {
+	if _, err := buildDecryptionProfileEntry(DecryptionProfileInput{}); err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("empty name must be rejected, got %v", err)
+	}
+}
+
+func TestOverlayDecryptionProfile(t *testing.T) {
+	t.Run("version update preserves deferred toggles and proxy subtrees", func(t *testing.T) {
+		// Seed a profile whose deferred per-algorithm toggle and proxy subtree must
+		// survive a version-only update; in-place mutation of the existing struct
+		// and touching only the modeled fields is what preserves them.
+		e := &decryption.Entry{Name: "dp",
+			SslProtocolSettings: &decryption.SslProtocolSettings{EncAlgoRc4: new(false), MinVersion: new("tls1-0")},
+			SslForwardProxy:     &decryption.SslForwardProxy{BlockExpiredCertificate: new(true)},
+		}
+		if err := overlayDecryptionProfile(e, DecryptionProfileInput{SslMinVersion: "tls1-2"}); err != nil {
+			t.Fatal(err)
+		}
+		if strVal(e.SslProtocolSettings.MinVersion) != "tls1-2" {
+			t.Fatalf("min version not updated: %v", strVal(e.SslProtocolSettings.MinVersion))
+		}
+		if e.SslProtocolSettings.EncAlgoRc4 == nil || *e.SslProtocolSettings.EncAlgoRc4 {
+			t.Fatalf("deferred enc-algo toggle must survive in-place update: %+v", e.SslProtocolSettings)
+		}
+		if e.SslProtocolSettings.MaxVersion != nil {
+			t.Fatalf("untouched max version must stay nil: %v", strVal(e.SslProtocolSettings.MaxVersion))
+		}
+		if e.SslForwardProxy == nil || !boolVal(e.SslForwardProxy.BlockExpiredCertificate) {
+			t.Fatalf("deferred proxy subtree must survive a version-only update: %+v", e.SslForwardProxy)
+		}
+	})
+	t.Run("forwarded_only replaces and preserves", func(t *testing.T) {
+		e := &decryption.Entry{Name: "dp", ForwardedOnly: new(false)}
+		if err := overlayDecryptionProfile(e, DecryptionProfileInput{ForwardedOnly: new(true)}); err != nil {
+			t.Fatal(err)
+		}
+		if !boolVal(e.ForwardedOnly) {
+			t.Fatalf("provided forwarded_only must replace: %v", e.ForwardedOnly)
+		}
+		if err := overlayDecryptionProfile(e, DecryptionProfileInput{SslMinVersion: "tls1-2"}); err != nil {
+			t.Fatal(err)
+		}
+		if !boolVal(e.ForwardedOnly) {
+			t.Fatal("omitted forwarded_only must leave the existing value untouched")
+		}
+	})
+}
+
+func TestDecryptionProfileSummary(t *testing.T) {
+	m := asMap(t, decryptionProfileSummary(&decryption.Entry{Name: "dp"}))
+	if _, ok := m["description"]; ok {
+		t.Fatal("decryption profile has no description; the key must never appear")
+	}
+	if _, ok := m["forwarded_only"]; ok {
+		t.Fatal("a nil forwarded_only must be omitted")
+	}
+	if _, ok := m["ssl_min_version"]; ok {
+		t.Fatal("ssl_min_version must be absent when ssl-protocol-settings is unset")
+	}
+	for _, k := range []string{"has_ssl_forward_proxy", "has_ssl_inbound_proxy", "has_ssl_no_proxy", "has_ssh_proxy"} {
+		if v, ok := m[k].(bool); !ok || v {
+			t.Fatalf("%s must be present and false for a bare entry: %v", k, m[k])
+		}
+	}
+	full := asMap(t, decryptionProfileSummary(&decryption.Entry{
+		Name: "dp", ForwardedOnly: new(true),
+		SslProtocolSettings: &decryption.SslProtocolSettings{MinVersion: new("tls1-2")},
+		SslForwardProxy:     &decryption.SslForwardProxy{},
+	}))
+	if v, ok := full["forwarded_only"].(bool); !ok || !v {
+		t.Fatalf("present-true forwarded_only must be emitted: %v", full["forwarded_only"])
+	}
+	if full["ssl_min_version"] != "tls1-2" {
+		t.Fatalf("ssl_min_version wrong: %v", full["ssl_min_version"])
+	}
+	if v, ok := full["has_ssl_forward_proxy"].(bool); !ok || !v {
+		t.Fatalf("has_ssl_forward_proxy must be true when set: %v", full["has_ssl_forward_proxy"])
+	}
+}
+
+func TestDecryptionProfileCreate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("dp-new")},
+	)
+	h := createHandler[decryption.Location, decryption.Entry, DecryptionProfileInput](d, "panos_decryption_profile_create", newDecryptionProfileService(d), decryptionProfileResolve(d),
+		func(in DecryptionProfileInput) LocationInput { return in.Location }, buildDecryptionProfileEntry, decryptionProfileSummary)
+	res, _, err := h(t.Context(), nil, DecryptionProfileInput{Name: "dp-new", ForwardedOnly: new(true), SslMinVersion: "tls1-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create failed: %s", textContent(t, res))
+	}
+	set := strings.Join(setElements(f), " ")
+	for _, want := range []string{`<ssl-protocol-settings>`, `<min-version>tls1-2</min-version>`, `<forwarded-only>yes</forwarded-only>`, "dp-new"} {
+		if !strings.Contains(set, want) {
+			t.Fatalf("create set element missing %q: %s", want, set)
+		}
+	}
+	if xs := strings.Join(getConfigXpaths(f), " "); !strings.Contains(xs, "profiles/decryption") || !strings.Contains(xs, "vsys1") {
+		t.Fatalf("create did not target the firewall decryption node: %s", xs)
+	}
+}
+
+func TestDecryptionProfileGetUpdateViaRegisteredTools(t *testing.T) {
+	ctx := t.Context()
+	dpEntry := `<entry name="dp-a"><ssl-forward-proxy><block-expired-certificate>yes</block-expired-certificate></ssl-forward-proxy>` +
+		`<ssl-protocol-settings><enc-algo-rc4>no</enc-algo-rc4><min-version>tls1-0</min-version></ssl-protocol-settings></entry>`
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result>` + dpEntry + `</result></response>`},
+		fakeRoute{Match: configAction("multi-config"), Body: configSuccessBody},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterDecryptionProfileTools(srv, d)
+	cs := connectInMemory(t, srv)
+
+	getRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_decryption_profile_get", Arguments: map[string]any{"name": "dp-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if getRes.IsError {
+		t.Fatalf("registered get failed: %s", textContent(t, getRes))
+	}
+	assertSingleWrappedGet(t, f, "entry[@name='dp-a']")
+
+	updRes, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "panos_decryption_profile_update", Arguments: map[string]any{"name": "dp-a", "ssl_min_version": "tls1-2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updRes.IsError {
+		t.Fatalf("registered update failed: %s", textContent(t, updRes))
+	}
+	// read-modify-write preserves the deferred per-algorithm toggle AND the
+	// SDK-only proxy subtree across a version-only update.
+	el := multiConfigElement(t, f)
+	if !strings.Contains(el, "<min-version>tls1-2</min-version>") || !strings.Contains(el, "<enc-algo-rc4>no</enc-algo-rc4>") {
+		t.Fatalf("update dropped the preserved enc-algo toggle: %s", el)
+	}
+	if !strings.Contains(el, "<ssl-forward-proxy>") || !strings.Contains(el, "<block-expired-certificate>yes</block-expired-certificate>") {
+		t.Fatalf("update dropped the preserved ssl-forward-proxy subtree: %s", el)
 	}
 }

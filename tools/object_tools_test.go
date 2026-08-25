@@ -570,6 +570,8 @@ func registeredToolNames(t *testing.T, d *Deps) map[string]bool {
 	RegisterFileBlockingProfileTools(srv, d)
 	RegisterWildfireAnalysisProfileTools(srv, d)
 	RegisterProfileGroupTools(srv, d)
+	RegisterLogForwardingProfileTools(srv, d)
+	RegisterDecryptionProfileTools(srv, d)
 	RegisterSecurityRuleTools(srv, d)
 	RegisterNatRuleTools(srv, d)
 	RegisterDecryptionRuleTools(srv, d)

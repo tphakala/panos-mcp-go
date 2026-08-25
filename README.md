@@ -58,7 +58,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 126 tools on Panorama and 128 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 51 on Panorama, 54 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 141 tools on Panorama and 143 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 57 on Panorama, 60 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -92,12 +92,17 @@ The server registers 126 tools on Panorama and 128 on a firewall (the three Pano
 | `panos_tag_update` | write | Update a tag: read-modify-write, only provided fields change; an omitted color or comments keeps the current value, so neither can be cleared in place. |
 | `panos_tag_delete` | write | Delete a tag from the candidate config. |
 
-### Application groups, external dynamic lists, URL categories, and schedules
+### Applications, application groups, external dynamic lists, URL categories, and schedules
 
 These are the config objects rules and profiles commonly reference. They reuse the same generic CRUD and location model as the address, service, and tag objects.
 
 | Tool | Mode | Description |
 |------|------|-------------|
+| `panos_application_list` | read-only | List custom application objects at a location. |
+| `panos_application_get` | read-only | Get one custom application by name with its classification, default ports, timeouts and characteristics. |
+| `panos_application_create` | write | Create a custom application object in the candidate config; PAN-OS requires category, subcategory, technology and risk before commit. |
+| `panos_application_update` | write | Update a custom application: read-modify-write, only provided fields change; a provided default_ports list replaces the whole list. |
+| `panos_application_delete` | write | Delete a custom application object from the candidate config. |
 | `panos_application_group_list` | read-only | List application groups (named sets of applications, filters, and nested groups) at a location. |
 | `panos_application_group_get` | read-only | Get one application group by name with its members. |
 | `panos_application_group_create` | write | Create an application group in the candidate config; at least one member is required. |
@@ -160,6 +165,16 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_profile_group_create` | write | Create a security profile group in the candidate config, referencing one profile per type. |
 | `panos_profile_group_update` | write | Update a security profile group: read-modify-write, only provided profile references change. |
 | `panos_profile_group_delete` | write | Delete a security profile group from the candidate config. |
+| `panos_log_forwarding_profile_list` | read-only | List log-forwarding profiles at a location (managed at shared on a firewall). |
+| `panos_log_forwarding_profile_get` | read-only | Get one log-forwarding profile by name with its match lists. |
+| `panos_log_forwarding_profile_create` | write | Create a log-forwarding profile in the candidate config; match lists select which logs are forwarded to server profiles or Panorama. |
+| `panos_log_forwarding_profile_update` | write | Update a log-forwarding profile: read-modify-write; a provided match_lists list replaces the whole set. |
+| `panos_log_forwarding_profile_delete` | write | Delete a log-forwarding profile from the candidate config. |
+| `panos_decryption_profile_list` | read-only | List decryption profiles at a location. |
+| `panos_decryption_profile_get` | read-only | Get one decryption profile by name with its managed fields and presence flags for the SDK-only proxy subtrees. |
+| `panos_decryption_profile_create` | write | Create a decryption profile in the candidate config. |
+| `panos_decryption_profile_update` | write | Update a decryption profile: read-modify-write; the SDK-only proxy subtrees and per-algorithm toggles are preserved. |
+| `panos_decryption_profile_delete` | write | Delete a decryption profile from the candidate config. |
 
 ### Security and NAT policy
 

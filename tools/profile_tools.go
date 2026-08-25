@@ -4,7 +4,9 @@ import (
 	"errors"
 
 	"github.com/PaloAltoNetworks/pango/objects/profiles/antivirus"
+	"github.com/PaloAltoNetworks/pango/objects/profiles/decryption"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/fileblocking"
+	"github.com/PaloAltoNetworks/pango/objects/profiles/logforwarding"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/secgroup"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/urlfiltering"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/vulnerability"
@@ -32,6 +34,23 @@ import (
 // boolVal dereferences b, mapping nil to false. Profile summaries surface the
 // optional PAN-OS toggles as plain booleans.
 func boolVal(b *bool) bool { return b != nil && *b }
+
+// putBool emits key only when v is non-nil. A PAN-OS *bool is tri-state
+// (present-true / present-false / absent-inherits-default); coercing absent to
+// false would misreport the device default, so a summary omits the key entirely
+// when the toggle is unset (issue #67).
+func putBool(m map[string]any, key string, v *bool) {
+	if v != nil {
+		m[key] = *v
+	}
+}
+
+// putInt emits key only when v is non-nil, same tri-state reasoning as putBool.
+func putInt(m map[string]any, key string, v *int64) {
+	if v != nil {
+		m[key] = *v
+	}
+}
 
 // firstMember returns the first element of a single-member list, or "". pango
 // models several single-value references (a profile group's per-type profile, a
@@ -1075,4 +1094,336 @@ func RegisterProfileGroupTools(s *mcp.Server, d *Deps) {
 		Description: "Delete a security profile group from the candidate config. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete profile group"),
 	}, deleteHandler[secgroup.Location, secgroup.Entry](d, "panos_profile_group_delete", svc, resolve))
+}
+
+// --- Log forwarding ----------------------------------------------------------
+
+// logForwardingParts supplies log-forwarding profile locations. pango generates
+// no vsys location for this type; on a firewall it is managed at shared
+// (resolveLocation's nil-vsys fallback), mirroring the profile group.
+func logForwardingParts() locParts[logforwarding.Location] {
+	return locParts[logforwarding.Location]{
+		shared: func(string) logforwarding.Location {
+			return logforwarding.Location{Shared: &logforwarding.SharedLocation{}}
+		},
+		deviceGroup: func(dg, _ string) logforwarding.Location {
+			return logforwarding.Location{DeviceGroup: &logforwarding.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+func newLogForwardingService(d *Deps) nameFixAdapter[logforwarding.Location, logforwarding.Entry] {
+	return nameFixAdapter[logforwarding.Location, logforwarding.Entry]{
+		svc:    logforwarding.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *logforwarding.Entry) string { return e.Name },
+	}
+}
+
+// LogForwardingMatchListInput is one match list in a log-forwarding profile.
+// log_type passes through to PAN-OS unchanged (traffic, threat, url, wildfire,
+// data, tunnel, auth, decryption, ...); the device validates it. The per-match-
+// list built-in actions subtree (tagging/quarantine integration) is SDK-only
+// and is dropped when a match list is replaced through this tool.
+type LogForwardingMatchListInput struct {
+	Name           string   `json:"name" jsonschema:"Match list name"`
+	LogType        string   `json:"log_type,omitempty" jsonschema:"Log type this list matches, e.g. traffic, threat, url, wildfire; device-validated"`
+	Filter         string   `json:"filter,omitempty" jsonschema:"Log filter query; omit for All Logs"`
+	Description    string   `json:"description,omitempty" jsonschema:"Match list description"`
+	SendToPanorama *bool    `json:"send_to_panorama,omitempty" jsonschema:"Forward matching logs to Panorama; omit to keep the device default"`
+	Quarantine     *bool    `json:"quarantine,omitempty" jsonschema:"Quarantine the source device on match; omit to keep the device default"`
+	SendSyslog     []string `json:"send_syslog,omitempty" jsonschema:"Syslog server profile names to forward to"`
+	SendSnmptrap   []string `json:"send_snmptrap,omitempty" jsonschema:"SNMP trap server profile names to forward to"`
+	SendEmail      []string `json:"send_email,omitempty" jsonschema:"Email server profile names to forward to"`
+	SendHTTP       []string `json:"send_http,omitempty" jsonschema:"HTTP server profile names to forward to"`
+}
+
+// LogForwardingProfileInput is the input for log-forwarding profile create and
+// update.
+type LogForwardingProfileInput struct {
+	Name                       string                        `json:"name" jsonschema:"Log forwarding profile name"`
+	Location                   LocationInput                 `json:"location,omitzero"`
+	Description                string                        `json:"description,omitempty"`
+	EnhancedApplicationLogging *bool                         `json:"enhanced_application_logging,omitempty" jsonschema:"Enable enhanced application logging to the Palo Alto cloud; omit to keep the device default"`
+	MatchLists                 []LogForwardingMatchListInput `json:"match_lists,omitempty" jsonschema:"Match lists; replaces the whole set when provided, an explicit empty list clears it. Any built-in actions on replaced match lists are not preserved."`
+}
+
+// buildLogForwardingMatchLists maps match-list inputs onto pango match lists,
+// requiring a name on each. nil (omitted) preserves; an explicit empty list
+// yields an empty non-nil slice the overlay assigns, clearing the set on update
+// (same replace semantics as file-blocking rules, issue #61). The Actions
+// subtree of a replaced match list is dropped: whole-set replacement cannot
+// carry per-list unknowns, the same accepted tradeoff as the file-blocking
+// rules' Misc.
+func buildLogForwardingMatchLists(in []LogForwardingMatchListInput) ([]logforwarding.MatchList, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := make([]logforwarding.MatchList, 0, len(in))
+	for i := range in {
+		ml := &in[i]
+		if ml.Name == "" {
+			return nil, errors.New("each match list requires a name")
+		}
+		m := logforwarding.MatchList{
+			Name:         ml.Name,
+			SendSyslog:   ml.SendSyslog,
+			SendSnmptrap: ml.SendSnmptrap,
+			SendEmail:    ml.SendEmail,
+			SendHttp:     ml.SendHTTP,
+		}
+		setStrPtr(&m.LogType, ml.LogType)
+		setStrPtr(&m.Filter, ml.Filter)
+		setStrPtr(&m.ActionDesc, ml.Description)
+		setPtr(&m.SendToPanorama, ml.SendToPanorama)
+		setPtr(&m.Quarantine, ml.Quarantine)
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildLogForwardingEntry(in LogForwardingProfileInput) (*logforwarding.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	mls, err := buildLogForwardingMatchLists(in.MatchLists)
+	if err != nil {
+		return nil, err
+	}
+	e := &logforwarding.Entry{Name: in.Name, MatchList: mls}
+	if in.Description != "" {
+		e.Description = new(in.Description)
+	}
+	if in.EnhancedApplicationLogging != nil {
+		e.EnhancedApplicationLogging = in.EnhancedApplicationLogging
+	}
+	return e, nil
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
+func overlayLogForwarding(e *logforwarding.Entry, in LogForwardingProfileInput) error {
+	if in.Description != "" {
+		e.Description = new(in.Description)
+	}
+	if in.EnhancedApplicationLogging != nil {
+		e.EnhancedApplicationLogging = in.EnhancedApplicationLogging
+	}
+	mls, err := buildLogForwardingMatchLists(in.MatchLists)
+	if err != nil {
+		return err
+	}
+	if mls != nil {
+		e.MatchList = mls
+	}
+	return nil
+}
+
+func logForwardingMatchListSummaries(mls []logforwarding.MatchList) []any {
+	out := make([]any, 0, len(mls))
+	for i := range mls {
+		ml := &mls[i]
+		m := map[string]any{
+			tagNameKey:      ml.Name,
+			"log_type":      strVal(ml.LogType),
+			"filter":        strVal(ml.Filter),
+			descriptionKey:  strVal(ml.ActionDesc),
+			"send_syslog":   ml.SendSyslog,
+			"send_snmptrap": ml.SendSnmptrap,
+			"send_email":    ml.SendEmail,
+			"send_http":     ml.SendHttp,
+			// The built-in actions subtree is SDK-only; surface its presence so a
+			// get does not silently hide it.
+			"has_actions": len(ml.Actions) > 0,
+		}
+		putBool(m, "send_to_panorama", ml.SendToPanorama)
+		putBool(m, "quarantine", ml.Quarantine)
+		out = append(out, m)
+	}
+	return out
+}
+
+func logForwardingSummary(e *logforwarding.Entry) any {
+	m := nameDescription(e.Name, e.Description)
+	putBool(m, "enhanced_application_logging", e.EnhancedApplicationLogging)
+	m["match_lists"] = logForwardingMatchListSummaries(e.MatchList)
+	return m
+}
+
+// RegisterLogForwardingProfileTools registers the log-forwarding profile tools.
+func RegisterLogForwardingProfileTools(s *mcp.Server, d *Deps) {
+	svc := newLogForwardingService(d)
+	resolve := func(in LocationInput) (logforwarding.Location, error) {
+		return resolveLocation(d, in, logForwardingParts())
+	}
+	name := svc.name
+	loc := func(in LogForwardingProfileInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_log_forwarding_profile_list",
+		Description: "List log-forwarding profiles at a location. On a firewall these are managed at shared (pango exposes no vsys location for them), so any vsys-scoped log-forwarding profiles created directly on the device are not visible here. Read-only.",
+		Annotations: readOnlyTool("List log-forwarding profiles"),
+	}, listHandler[logforwarding.Location, logforwarding.Entry](d, "panos_log_forwarding_profile_list", svc, resolve, name, logForwardingSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_log_forwarding_profile_get",
+		Description: "Get one log-forwarding profile by name with its match lists. Read-only.",
+		Annotations: readOnlyTool("Get log-forwarding profile"),
+	}, getHandler[logforwarding.Location, logforwarding.Entry](d, "panos_log_forwarding_profile_get", svc, resolve, logForwardingSummary))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_log_forwarding_profile_create",
+		Description: "Create a log-forwarding profile in the candidate config. Match lists select which logs are forwarded to the listed syslog/SNMP/email/HTTP server profiles or Panorama; a security rule attaches the profile via its log_setting field. Run panos_commit to apply.",
+		Annotations: createTool("Create log-forwarding profile"),
+	}, createHandler[logforwarding.Location, logforwarding.Entry, LogForwardingProfileInput](d, "panos_log_forwarding_profile_create", svc, resolve, loc, buildLogForwardingEntry, logForwardingSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_log_forwarding_profile_update",
+		Description: "Update a log-forwarding profile: read-modify-write, only provided fields change; a provided match_lists list replaces the whole set (an explicit empty list clears it), and any built-in actions on replaced match lists are not preserved. Candidate config only; run panos_commit to apply.",
+		Annotations: updateTool("Update log-forwarding profile"),
+	}, updateHandler[logforwarding.Location, logforwarding.Entry, LogForwardingProfileInput](d, "panos_log_forwarding_profile_update", svc, resolve, loc,
+		func(in LogForwardingProfileInput) string { return in.Name }, overlayLogForwarding, logForwardingSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_log_forwarding_profile_delete",
+		Description: "Delete a log-forwarding profile from the candidate config. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete log-forwarding profile"),
+	}, deleteHandler[logforwarding.Location, logforwarding.Entry](d, "panos_log_forwarding_profile_delete", svc, resolve))
+}
+
+// --- Decryption profile ------------------------------------------------------
+
+// decryptionProfileParts supplies decryption profile locations. The name uses
+// the DecryptionProfile infix throughout to avoid colliding with the decryption
+// *rule* symbols in rulebase_tools.go.
+func decryptionProfileParts() locParts[decryption.Location] {
+	return locParts[decryption.Location]{
+		shared: func(string) decryption.Location {
+			return decryption.Location{Shared: &decryption.SharedLocation{}}
+		},
+		vsys: func(v string) decryption.Location {
+			return decryption.Location{Vsys: &decryption.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}
+		},
+		deviceGroup: func(dg, _ string) decryption.Location {
+			return decryption.Location{DeviceGroup: &decryption.DeviceGroupLocation{PanoramaDevice: defaultPanoramaDevice, DeviceGroup: dg}}
+		},
+	}
+}
+
+func newDecryptionProfileService(d *Deps) nameFixAdapter[decryption.Location, decryption.Entry] {
+	return nameFixAdapter[decryption.Location, decryption.Entry]{
+		svc:    decryption.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *decryption.Entry) string { return e.Name },
+	}
+}
+
+// DecryptionProfileInput is the input for decryption profile create and update.
+// pango's decryption.Entry has no description field. The per-mode proxy subtrees
+// (ssl-forward-proxy, ssl-inbound-proxy, ssl-no-proxy, ssh-proxy) and the
+// per-algorithm SSL protocol toggles are SDK-only; read-modify-write preserves
+// them across updates.
+type DecryptionProfileInput struct {
+	Name          string        `json:"name" jsonschema:"Decryption profile name"`
+	Location      LocationInput `json:"location,omitzero"`
+	ForwardedOnly *bool         `json:"forwarded_only,omitempty" jsonschema:"Decryption port mirroring: mirror decrypted traffic to the decrypt-mirror interface only after security policy enforcement (allowed traffic only), rather than before policy lookup; omit to keep the device default"`
+	SslMinVersion string        `json:"ssl_min_version,omitempty" jsonschema:"Minimum SSL/TLS protocol version, e.g. tls1-0, tls1-1, tls1-2, tls1-3; device-validated. Blank leaves it unchanged"`
+	SslMaxVersion string        `json:"ssl_max_version,omitempty" jsonschema:"Maximum SSL/TLS protocol version, e.g. tls1-2, tls1-3, max; device-validated. Blank leaves it unchanged"`
+}
+
+// applyDecryptionProfileSslVersions sets the protocol min/max on the EXISTING
+// SslProtocolSettings, allocating only when absent: rebuilding the struct would
+// drop the per-algorithm toggles this server defers to the SDK.
+func applyDecryptionProfileSslVersions(e *decryption.Entry, in *DecryptionProfileInput) {
+	if in.SslMinVersion == "" && in.SslMaxVersion == "" {
+		return
+	}
+	ps := e.SslProtocolSettings
+	if ps == nil {
+		ps = &decryption.SslProtocolSettings{}
+		e.SslProtocolSettings = ps
+	}
+	if in.SslMinVersion != "" {
+		ps.MinVersion = new(in.SslMinVersion)
+	}
+	if in.SslMaxVersion != "" {
+		ps.MaxVersion = new(in.SslMaxVersion)
+	}
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
+func buildDecryptionProfileEntry(in DecryptionProfileInput) (*decryption.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	e := &decryption.Entry{Name: in.Name}
+	if in.ForwardedOnly != nil {
+		e.ForwardedOnly = in.ForwardedOnly
+	}
+	applyDecryptionProfileSslVersions(e, &in)
+	return e, nil
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
+func overlayDecryptionProfile(e *decryption.Entry, in DecryptionProfileInput) error {
+	if in.ForwardedOnly != nil {
+		e.ForwardedOnly = in.ForwardedOnly
+	}
+	applyDecryptionProfileSslVersions(e, &in)
+	return nil
+}
+
+func decryptionProfileSummary(e *decryption.Entry) any {
+	m := map[string]any{tagNameKey: e.Name}
+	putBool(m, "forwarded_only", e.ForwardedOnly)
+	if ps := e.SslProtocolSettings; ps != nil {
+		m["ssl_min_version"] = strVal(ps.MinVersion)
+		m["ssl_max_version"] = strVal(ps.MaxVersion)
+	}
+	m["has_ssl_forward_proxy"] = e.SslForwardProxy != nil
+	m["has_ssl_inbound_proxy"] = e.SslInboundProxy != nil
+	m["has_ssl_no_proxy"] = e.SslNoProxy != nil
+	m["has_ssh_proxy"] = e.SshProxy != nil
+	return m
+}
+
+// RegisterDecryptionProfileTools registers the decryption profile tools. This is
+// the profile at objects/profiles/decryption, distinct from the decryption
+// rulebase tools.
+func RegisterDecryptionProfileTools(s *mcp.Server, d *Deps) {
+	svc := newDecryptionProfileService(d)
+	resolve := func(in LocationInput) (decryption.Location, error) {
+		return resolveLocation(d, in, decryptionProfileParts())
+	}
+	name := svc.name
+	loc := func(in DecryptionProfileInput) LocationInput { return in.Location }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_decryption_profile_list",
+		Description: "List decryption profiles at a location. Read-only.",
+		Annotations: readOnlyTool("List decryption profiles"),
+	}, listHandler[decryption.Location, decryption.Entry](d, "panos_decryption_profile_list", svc, resolve, name, decryptionProfileSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_decryption_profile_get",
+		Description: "Get one decryption profile by name with its managed fields (forwarded_only, SSL protocol version bounds) plus presence flags for the SDK-only proxy subtrees. Read-only.",
+		Annotations: readOnlyTool("Get decryption profile"),
+	}, getHandler[decryption.Location, decryption.Entry](d, "panos_decryption_profile_get", svc, resolve, decryptionProfileSummary))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_decryption_profile_create",
+		Description: "Create a decryption profile in the candidate config. A decryption rule applies it; the per-mode proxy settings beyond the SSL protocol version bounds are device defaults. Run panos_commit to apply.",
+		Annotations: createTool("Create decryption profile"),
+	}, createHandler[decryption.Location, decryption.Entry, DecryptionProfileInput](d, "panos_decryption_profile_create", svc, resolve, loc, buildDecryptionProfileEntry, decryptionProfileSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_decryption_profile_update",
+		Description: "Update a decryption profile: read-modify-write, only provided fields change; the SDK-only proxy subtrees and per-algorithm toggles are preserved. Candidate config only; run panos_commit to apply.",
+		Annotations: updateTool("Update decryption profile"),
+	}, updateHandler[decryption.Location, decryption.Entry, DecryptionProfileInput](d, "panos_decryption_profile_update", svc, resolve, loc,
+		func(in DecryptionProfileInput) string { return in.Name }, overlayDecryptionProfile, decryptionProfileSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_decryption_profile_delete",
+		Description: "Delete a decryption profile from the candidate config. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete decryption profile"),
+	}, deleteHandler[decryption.Location, decryption.Entry](d, "panos_decryption_profile_delete", svc, resolve))
 }
