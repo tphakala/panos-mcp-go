@@ -95,7 +95,7 @@ type AntivirusDecoderInput struct {
 // exception subtrees are SDK-only for now.
 type AntivirusProfileInput struct {
 	Name          string                  `json:"name" jsonschema:"Antivirus profile name"`
-	Location      LocationInput           `json:"location,omitempty"`
+	Location      LocationInput           `json:"location,omitzero"`
 	Description   string                  `json:"description,omitempty"`
 	PacketCapture *bool                   `json:"packet_capture,omitempty" jsonschema:"Capture packets when a threat is detected"`
 	Decoders      []AntivirusDecoderInput `json:"decoders,omitempty" jsonschema:"Per-protocol decoder actions; replaces the whole decoder set when provided, an explicit empty list clears it"`
@@ -117,13 +117,13 @@ func buildAntivirusDecoders(in []AntivirusDecoderInput) ([]antivirus.Decoder, er
 		}
 		d := antivirus.Decoder{Name: dec.Name}
 		if dec.Action != "" {
-			d.Action = ptr(dec.Action)
+			d.Action = new(dec.Action)
 		}
 		if dec.WildfireAction != "" {
-			d.WildfireAction = ptr(dec.WildfireAction)
+			d.WildfireAction = new(dec.WildfireAction)
 		}
 		if dec.MlavAction != "" {
-			d.MlavAction = ptr(dec.MlavAction)
+			d.MlavAction = new(dec.MlavAction)
 		}
 		out = append(out, d)
 	}
@@ -141,7 +141,7 @@ func buildAntivirusEntry(in AntivirusProfileInput) (*antivirus.Entry, error) {
 	}
 	e := &antivirus.Entry{Name: in.Name, PacketCapture: in.PacketCapture, Decoder: decoders}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -149,7 +149,7 @@ func buildAntivirusEntry(in AntivirusProfileInput) (*antivirus.Entry, error) {
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayAntivirus(e *antivirus.Entry, in AntivirusProfileInput) error {
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.PacketCapture != nil {
 		e.PacketCapture = in.PacketCapture
@@ -255,7 +255,7 @@ func newVulnerabilityService(d *Deps) nameFixAdapter[vulnerability.Location, vul
 // inline-inspection controls are modelled.
 type VulnerabilityProfileInput struct {
 	Name                       string        `json:"name" jsonschema:"Vulnerability protection profile name"`
-	Location                   LocationInput `json:"location,omitempty"`
+	Location                   LocationInput `json:"location,omitzero"`
 	Description                string        `json:"description,omitempty"`
 	CloudInlineAnalysis        *bool         `json:"cloud_inline_analysis,omitempty" jsonschema:"Enable cloud inline analysis"`
 	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
@@ -269,7 +269,7 @@ func buildVulnerabilityEntry(in VulnerabilityProfileInput) (*vulnerability.Entry
 	}
 	e := &vulnerability.Entry{Name: in.Name}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	applyVulnerabilityInline(e, &in)
 	return e, nil
@@ -278,7 +278,7 @@ func buildVulnerabilityEntry(in VulnerabilityProfileInput) (*vulnerability.Entry
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayVulnerability(e *vulnerability.Entry, in VulnerabilityProfileInput) error {
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	applyVulnerabilityInline(e, &in)
 	return nil
@@ -388,7 +388,7 @@ func newSpywareService(d *Deps) nameFixAdapter[spyware.Location, spyware.Entry] 
 // the practical top-level inline-inspection controls are modelled.
 type SpywareProfileInput struct {
 	Name                       string        `json:"name" jsonschema:"Anti-spyware profile name"`
-	Location                   LocationInput `json:"location,omitempty"`
+	Location                   LocationInput `json:"location,omitzero"`
 	Description                string        `json:"description,omitempty"`
 	CloudInlineAnalysis        *bool         `json:"cloud_inline_analysis,omitempty" jsonschema:"Enable cloud inline analysis"`
 	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
@@ -402,7 +402,7 @@ func buildSpywareEntry(in SpywareProfileInput) (*spyware.Entry, error) {
 	}
 	e := &spyware.Entry{Name: in.Name}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	applySpywareInline(e, &in)
 	return e, nil
@@ -411,7 +411,7 @@ func buildSpywareEntry(in SpywareProfileInput) (*spyware.Entry, error) {
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlaySpyware(e *spyware.Entry, in SpywareProfileInput) error {
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	applySpywareInline(e, &in)
 	return nil
@@ -506,7 +506,7 @@ func newURLFilteringService(d *Deps) nameFixAdapter[urlfiltering.Location, urlfi
 // credential-enforcement and http-header-insertion subtrees are SDK-only.
 type URLFilteringProfileInput struct {
 	Name                   string        `json:"name" jsonschema:"URL filtering profile name"`
-	Location               LocationInput `json:"location,omitempty"`
+	Location               LocationInput `json:"location,omitzero"`
 	Description            string        `json:"description,omitempty"`
 	Alert                  []string      `json:"alert,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to alert; replaces fully when provided, an explicit empty list clears it"`
 	Allow                  []string      `json:"allow,omitempty" jsonschema:"Built-in URL categories or custom URL category names set to allow; replaces fully when provided, an explicit empty list clears it"`
@@ -532,7 +532,7 @@ func buildURLFilteringEntry(in URLFilteringProfileInput) (*urlfiltering.Entry, e
 		LogHttpHdrReferer:     in.LogHTTPHeaderReferer,
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	applyURLFilteringCategories(e, &in)
 	return e, nil
@@ -564,7 +564,7 @@ func applyURLFilteringCategories(e *urlfiltering.Entry, in *URLFilteringProfileI
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayURLFiltering(e *urlfiltering.Entry, in URLFilteringProfileInput) error {
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.SafeSearchEnforcement != nil {
 		e.SafeSearchEnforcement = in.SafeSearchEnforcement
@@ -676,7 +676,7 @@ type FileBlockingRuleInput struct {
 // update.
 type FileBlockingProfileInput struct {
 	Name        string                  `json:"name" jsonschema:"File blocking profile name"`
-	Location    LocationInput           `json:"location,omitempty"`
+	Location    LocationInput           `json:"location,omitzero"`
 	Description string                  `json:"description,omitempty"`
 	Rules       []FileBlockingRuleInput `json:"rules,omitempty" jsonschema:"File-blocking rules; replaces the whole rule set when provided, an explicit empty list clears it"`
 }
@@ -696,10 +696,10 @@ func buildFileBlockingRules(in []FileBlockingRuleInput) ([]fileblocking.Rules, e
 		}
 		rule := fileblocking.Rules{Name: r.Name, Application: r.Applications, FileType: r.FileTypes}
 		if r.Direction != "" {
-			rule.Direction = ptr(r.Direction)
+			rule.Direction = new(r.Direction)
 		}
 		if r.Action != "" {
-			rule.Action = ptr(r.Action)
+			rule.Action = new(r.Action)
 		}
 		out = append(out, rule)
 	}
@@ -717,7 +717,7 @@ func buildFileBlockingEntry(in FileBlockingProfileInput) (*fileblocking.Entry, e
 	}
 	e := &fileblocking.Entry{Name: in.Name, Rules: rules}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -725,7 +725,7 @@ func buildFileBlockingEntry(in FileBlockingProfileInput) (*fileblocking.Entry, e
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayFileBlocking(e *fileblocking.Entry, in FileBlockingProfileInput) error {
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	rules, err := buildFileBlockingRules(in.Rules)
 	if err != nil {
@@ -837,7 +837,7 @@ type WildfireAnalysisRuleInput struct {
 // and update.
 type WildfireAnalysisProfileInput struct {
 	Name        string                      `json:"name" jsonschema:"WildFire analysis profile name"`
-	Location    LocationInput               `json:"location,omitempty"`
+	Location    LocationInput               `json:"location,omitzero"`
 	Description string                      `json:"description,omitempty"`
 	Rules       []WildfireAnalysisRuleInput `json:"rules,omitempty" jsonschema:"WildFire analysis rules; replaces the whole rule set when provided, an explicit empty list clears it"`
 }
@@ -855,10 +855,10 @@ func buildWildfireAnalysisRules(in []WildfireAnalysisRuleInput) ([]wildfireanaly
 		}
 		rule := wildfireanalysis.Rules{Name: r.Name, Application: r.Applications, FileType: r.FileTypes}
 		if r.Direction != "" {
-			rule.Direction = ptr(r.Direction)
+			rule.Direction = new(r.Direction)
 		}
 		if r.Analysis != "" {
-			rule.Analysis = ptr(r.Analysis)
+			rule.Analysis = new(r.Analysis)
 		}
 		out = append(out, rule)
 	}
@@ -876,7 +876,7 @@ func buildWildfireAnalysisEntry(in WildfireAnalysisProfileInput) (*wildfireanaly
 	}
 	e := &wildfireanalysis.Entry{Name: in.Name, Rules: rules}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -884,7 +884,7 @@ func buildWildfireAnalysisEntry(in WildfireAnalysisProfileInput) (*wildfireanaly
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayWildfireAnalysis(e *wildfireanalysis.Entry, in WildfireAnalysisProfileInput) error {
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	rules, err := buildWildfireAnalysisRules(in.Rules)
 	if err != nil {
@@ -986,7 +986,7 @@ func newProfileGroupService(d *Deps) nameFixAdapter[secgroup.Location, secgroup.
 // profile name (the mobile-network GTP/SCTP profiles are not modelled here).
 type ProfileGroupInput struct {
 	Name             string        `json:"name" jsonschema:"Security profile group name"`
-	Location         LocationInput `json:"location,omitempty"`
+	Location         LocationInput `json:"location,omitzero"`
 	Antivirus        string        `json:"antivirus,omitempty" jsonschema:"Antivirus profile to include"`
 	AntiSpyware      string        `json:"anti_spyware,omitempty" jsonschema:"Anti-spyware profile to include"`
 	Vulnerability    string        `json:"vulnerability,omitempty" jsonschema:"Vulnerability protection profile to include"`

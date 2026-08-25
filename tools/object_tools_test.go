@@ -361,7 +361,7 @@ func TestOverlayAddressValueTypes(t *testing.T) {
 			// range and fqdn branches clear a stale sibling type; the wildcard proves
 			// they clear it too. Otherwise the read-modify-write emits a dual-valued
 			// (invalid) entry.
-			e := &address.Entry{Name: "web-1", IpNetmask: ptr("10.0.0.10/32"), IpWildcard: ptr("10.0.0.0/0.0.0.255")}
+			e := &address.Entry{Name: "web-1", IpNetmask: new("10.0.0.10/32"), IpWildcard: new("10.0.0.0/0.0.0.255")}
 			err := overlayAddress(e, tc.in)
 			if tc.wantErr {
 				if err == nil {
@@ -432,7 +432,7 @@ func TestBuildAddressEntry(t *testing.T) {
 // omitted description or nil tags leave the existing values unchanged, while a
 // non-nil empty tags slice clears the tags.
 func TestOverlayAddressDescriptionAndTags(t *testing.T) {
-	e := &address.Entry{Name: "web-1", IpNetmask: ptr("10.0.0.10/32"), Description: ptr("old"), Tag: []string{"a"}}
+	e := &address.Entry{Name: "web-1", IpNetmask: new("10.0.0.10/32"), Description: new("old"), Tag: []string{"a"}}
 
 	if err := overlayAddress(e, AddressInput{Description: "new"}); err != nil {
 		t.Fatal(err)
@@ -699,7 +699,7 @@ func TestBuildAddressGroupEntry(t *testing.T) {
 // providing both is rejected.
 func TestOverlayAddressGroupMembership(t *testing.T) {
 	t.Run("static replaces and clears dynamic", func(t *testing.T) {
-		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Dynamic: &address_group.Dynamic{Filter: ptr("'old'")}}
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Dynamic: &address_group.Dynamic{Filter: new("'old'")}}
 		if err := overlayAddressGroup(e, AddressGroupInput{Static: []string{"app-1", "app-2"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -761,7 +761,7 @@ func TestOverlayAddressGroupFields(t *testing.T) {
 		}
 	})
 	t.Run("omitted fields unchanged", func(t *testing.T) {
-		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Description: ptr("old"), Tag: []string{"a"}}
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Description: new("old"), Tag: []string{"a"}}
 		if err := overlayAddressGroup(e, AddressGroupInput{}); err != nil {
 			t.Fatal(err)
 		}
@@ -770,7 +770,7 @@ func TestOverlayAddressGroupFields(t *testing.T) {
 		}
 	})
 	t.Run("description updates when provided", func(t *testing.T) {
-		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Description: ptr("old")}
+		e := &address_group.Entry{Name: "g", Static: []string{"web-1"}, Description: new("old")}
 		if err := overlayAddressGroup(e, AddressGroupInput{Description: "new"}); err != nil {
 			t.Fatal(err)
 		}
@@ -1255,7 +1255,7 @@ func TestBuildServiceEntryRejects(t *testing.T) {
 // clears a pre-existing one, and providing only one of protocol/port is rejected.
 func TestOverlayServiceProtocol(t *testing.T) {
 	t.Run("switch tcp to udp clears tcp", func(t *testing.T) {
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080")}}}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("8080")}}}
 		if err := overlayService(e, ServiceInput{Protocol: "udp", Port: "53"}); err != nil {
 			t.Fatal(err)
 		}
@@ -1264,7 +1264,7 @@ func TestOverlayServiceProtocol(t *testing.T) {
 		}
 	})
 	t.Run("replacing tcp clears a pre-existing source port", func(t *testing.T) {
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080"), SourcePort: ptr("1024")}}}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("8080"), SourcePort: new("1024")}}}
 		if err := overlayService(e, ServiceInput{Protocol: "tcp", Port: "9090"}); err != nil {
 			t.Fatal(err)
 		}
@@ -1282,7 +1282,7 @@ func TestOverlayServiceProtocol(t *testing.T) {
 	}
 	for name, in := range bad {
 		t.Run(name, func(t *testing.T) {
-			e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080")}}}
+			e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("8080")}}}
 			if err := overlayService(e, in); err == nil {
 				t.Fatalf("%s: changing ports requires protocol and port together", name)
 			}
@@ -1297,7 +1297,7 @@ func TestOverlayServiceProtocol(t *testing.T) {
 func TestOverlayServicePreservesOverride(t *testing.T) {
 	t.Run("same protocol keeps override", func(t *testing.T) {
 		ov := &service.ProtocolTcpOverride{}
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080"), Override: ov}}}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("8080"), Override: ov}}}
 		if err := overlayService(e, ServiceInput{Protocol: "tcp", Port: "9090"}); err != nil {
 			t.Fatal(err)
 		}
@@ -1309,7 +1309,7 @@ func TestOverlayServicePreservesOverride(t *testing.T) {
 		}
 	})
 	t.Run("protocol switch drops the old override", func(t *testing.T) {
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("8080"), Override: &service.ProtocolTcpOverride{}}}}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("8080"), Override: &service.ProtocolTcpOverride{}}}}
 		if err := overlayService(e, ServiceInput{Protocol: "udp", Port: "53"}); err != nil {
 			t.Fatal(err)
 		}
@@ -1328,7 +1328,7 @@ func TestOverlayServicePreservesOverride(t *testing.T) {
 // block rebuild.
 func TestOverlayServiceUDPKeepsOverride(t *testing.T) {
 	ov := &service.ProtocolUdpOverride{}
-	e := &service.Entry{Name: "s", Protocol: &service.Protocol{Udp: &service.ProtocolUdp{Port: ptr("53"), Override: ov}}}
+	e := &service.Entry{Name: "s", Protocol: &service.Protocol{Udp: &service.ProtocolUdp{Port: new("53"), Override: ov}}}
 	if err := overlayService(e, ServiceInput{Protocol: "udp", Port: "5353", SourcePort: "1024"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1359,7 +1359,7 @@ func TestOverlayServiceNilProtocol(t *testing.T) {
 // values unchanged, and a non-nil empty tags slice clears the tags.
 func TestOverlayServiceFields(t *testing.T) {
 	t.Run("description updates when provided", func(t *testing.T) {
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("80")}}, Description: ptr("old")}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("80")}}, Description: new("old")}
 		if err := overlayService(e, ServiceInput{Description: "new"}); err != nil {
 			t.Fatal(err)
 		}
@@ -1368,7 +1368,7 @@ func TestOverlayServiceFields(t *testing.T) {
 		}
 	})
 	t.Run("omitted fields unchanged", func(t *testing.T) {
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("80")}}, Description: ptr("old"), Tag: []string{"a"}}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("80")}}, Description: new("old"), Tag: []string{"a"}}
 		if err := overlayService(e, ServiceInput{}); err != nil {
 			t.Fatal(err)
 		}
@@ -1377,7 +1377,7 @@ func TestOverlayServiceFields(t *testing.T) {
 		}
 	})
 	t.Run("tags replace when non-nil and clear when empty", func(t *testing.T) {
-		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: ptr("80")}}, Tag: []string{"a"}}
+		e := &service.Entry{Name: "s", Protocol: &service.Protocol{Tcp: &service.ProtocolTcp{Port: new("80")}}, Tag: []string{"a"}}
 		if err := overlayService(e, ServiceInput{Tags: []string{"b", "c"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -2294,7 +2294,7 @@ func TestBuildTagEntryRejects(t *testing.T) {
 // sibling overlays treat their description fields.
 func TestOverlayTagFields(t *testing.T) {
 	t.Run("color replaces when non-empty", func(t *testing.T) {
-		e := &admintag.Entry{Name: "t", Color: ptr("color13")}
+		e := &admintag.Entry{Name: "t", Color: new("color13")}
 		if err := overlayTag(e, TagInput{Color: "color20"}); err != nil {
 			t.Fatal(err)
 		}
@@ -2303,7 +2303,7 @@ func TestOverlayTagFields(t *testing.T) {
 		}
 	})
 	t.Run("comments replace when non-empty", func(t *testing.T) {
-		e := &admintag.Entry{Name: "t", Comments: ptr("old note")}
+		e := &admintag.Entry{Name: "t", Comments: new("old note")}
 		if err := overlayTag(e, TagInput{Comments: "new note"}); err != nil {
 			t.Fatal(err)
 		}
@@ -2312,7 +2312,7 @@ func TestOverlayTagFields(t *testing.T) {
 		}
 	})
 	t.Run("empty overlay leaves entry unchanged", func(t *testing.T) {
-		e := &admintag.Entry{Name: "t", Color: ptr("color13"), Comments: ptr("old note")}
+		e := &admintag.Entry{Name: "t", Color: new("color13"), Comments: new("old note")}
 		if err := overlayTag(e, TagInput{}); err != nil {
 			t.Fatal(err)
 		}
@@ -2321,7 +2321,7 @@ func TestOverlayTagFields(t *testing.T) {
 		}
 	})
 	t.Run("disable-override passes through untouched", func(t *testing.T) {
-		e := &admintag.Entry{Name: "t", Color: ptr("color13"), DisableOverride: ptr("yes")}
+		e := &admintag.Entry{Name: "t", Color: new("color13"), DisableOverride: new("yes")}
 		if err := overlayTag(e, TagInput{Color: "color20"}); err != nil {
 			t.Fatal(err)
 		}

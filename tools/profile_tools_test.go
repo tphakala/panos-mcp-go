@@ -140,7 +140,7 @@ func TestResolveLocationNilVsys(t *testing.T) {
 
 func TestBuildAntivirusEntry(t *testing.T) {
 	e, err := buildAntivirusEntry(AntivirusProfileInput{
-		Name: "av1", Description: "d", PacketCapture: ptr(true),
+		Name: "av1", Description: "d", PacketCapture: new(true),
 		Decoders: []AntivirusDecoderInput{{Name: "http", Action: "drop", WildfireAction: "reset-both", MlavAction: "alert"}},
 	})
 	if err != nil {
@@ -167,14 +167,14 @@ func TestBuildAntivirusEntryRejects(t *testing.T) {
 func TestOverlayAntivirus(t *testing.T) {
 	// Start packet_capture true so the omitted-preserve case would catch an
 	// unconditional overwrite (which nils it): boolVal(nil) is false, not true.
-	e := &antivirus.Entry{Name: "av1", Description: ptr("old"), PacketCapture: ptr(true), Decoder: []antivirus.Decoder{{Name: "old"}}}
+	e := &antivirus.Entry{Name: "av1", Description: new("old"), PacketCapture: new(true), Decoder: []antivirus.Decoder{{Name: "old"}}}
 	if err := overlayAntivirus(e, AntivirusProfileInput{Name: "av1"}); err != nil {
 		t.Fatal(err)
 	}
 	if strVal(e.Description) != "old" || !boolVal(e.PacketCapture) || len(e.Decoder) != 1 || e.Decoder[0].Name != "old" {
 		t.Errorf("omitted fields must be preserved: %+v", e)
 	}
-	if err := overlayAntivirus(e, AntivirusProfileInput{Name: "av1", Description: "new", PacketCapture: ptr(false), Decoders: []AntivirusDecoderInput{{Name: "http"}}}); err != nil {
+	if err := overlayAntivirus(e, AntivirusProfileInput{Name: "av1", Description: "new", PacketCapture: new(false), Decoders: []AntivirusDecoderInput{{Name: "http"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if strVal(e.Description) != "new" || boolVal(e.PacketCapture) || len(e.Decoder) != 1 || e.Decoder[0].Name != "http" {
@@ -183,8 +183,8 @@ func TestOverlayAntivirus(t *testing.T) {
 }
 
 func TestAntivirusSummary(t *testing.T) {
-	e := &antivirus.Entry{Name: "av1", Description: ptr("d"), PacketCapture: ptr(true),
-		Decoder: []antivirus.Decoder{{Name: "http", Action: ptr("drop"), WildfireAction: ptr("reset-both"), MlavAction: ptr("alert")}}}
+	e := &antivirus.Entry{Name: "av1", Description: new("d"), PacketCapture: new(true),
+		Decoder: []antivirus.Decoder{{Name: "http", Action: new("drop"), WildfireAction: new("reset-both"), MlavAction: new("alert")}}}
 	m := mustMap(t, antivirusSummary(e))
 	if m[tagNameKey] != "av1" || m[descriptionKey] != "d" || m["packet_capture"] != true {
 		t.Errorf("summary base: %+v", m)
@@ -203,7 +203,7 @@ func TestAntivirusSummary(t *testing.T) {
 
 func TestBuildVulnerabilityEntry(t *testing.T) {
 	e, err := buildVulnerabilityEntry(VulnerabilityProfileInput{
-		Name: "v1", Description: "d", CloudInlineAnalysis: ptr(true),
+		Name: "v1", Description: "d", CloudInlineAnalysis: new(true),
 		InlineExceptionEdlURLs: []string{"edl1"}, InlineExceptionIPAddresses: []string{"ip-edl-1"},
 	})
 	if err != nil {
@@ -223,14 +223,14 @@ func TestBuildVulnerabilityEntry(t *testing.T) {
 
 func TestOverlayVulnerability(t *testing.T) {
 	// cloud_inline_analysis starts true so an unconditional overwrite (nil) is caught.
-	e := &vulnerability.Entry{Name: "v1", Description: ptr("old"), CloudInlineAnalysis: ptr(true), InlineExceptionEdlUrl: []string{"old"}}
+	e := &vulnerability.Entry{Name: "v1", Description: new("old"), CloudInlineAnalysis: new(true), InlineExceptionEdlUrl: []string{"old"}}
 	if err := overlayVulnerability(e, VulnerabilityProfileInput{Name: "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	if strVal(e.Description) != "old" || !boolVal(e.CloudInlineAnalysis) || len(e.InlineExceptionEdlUrl) != 1 || e.InlineExceptionEdlUrl[0] != "old" {
 		t.Errorf("omitted fields must be preserved: %+v", e)
 	}
-	if err := overlayVulnerability(e, VulnerabilityProfileInput{Name: "v1", Description: "new", CloudInlineAnalysis: ptr(false), InlineExceptionEdlURLs: []string{"new"}}); err != nil {
+	if err := overlayVulnerability(e, VulnerabilityProfileInput{Name: "v1", Description: "new", CloudInlineAnalysis: new(false), InlineExceptionEdlURLs: []string{"new"}}); err != nil {
 		t.Fatal(err)
 	}
 	if strVal(e.Description) != "new" || boolVal(e.CloudInlineAnalysis) || len(e.InlineExceptionEdlUrl) != 1 || e.InlineExceptionEdlUrl[0] != "new" {
@@ -239,7 +239,7 @@ func TestOverlayVulnerability(t *testing.T) {
 }
 
 func TestVulnerabilitySummary(t *testing.T) {
-	e := &vulnerability.Entry{Name: "v1", Description: ptr("d"), CloudInlineAnalysis: ptr(true),
+	e := &vulnerability.Entry{Name: "v1", Description: new("d"), CloudInlineAnalysis: new(true),
 		InlineExceptionEdlUrl: []string{"edl1"}, InlineExceptionIpAddress: []string{"ip-edl-1"}}
 	m := mustMap(t, vulnerabilitySummary(e))
 	if m[tagNameKey] != "v1" || m[descriptionKey] != "d" || m["cloud_inline_analysis"] != true {
@@ -257,7 +257,7 @@ func TestVulnerabilitySummary(t *testing.T) {
 
 func TestBuildSpywareEntry(t *testing.T) {
 	e, err := buildSpywareEntry(SpywareProfileInput{
-		Name: "s1", Description: "d", CloudInlineAnalysis: ptr(true),
+		Name: "s1", Description: "d", CloudInlineAnalysis: new(true),
 		InlineExceptionEdlURLs: []string{"edl1"}, InlineExceptionIPAddresses: []string{"ip-edl-1"},
 	})
 	if err != nil {
@@ -274,14 +274,14 @@ func TestBuildSpywareEntry(t *testing.T) {
 
 func TestOverlaySpyware(t *testing.T) {
 	// cloud_inline_analysis starts true so an unconditional overwrite (nil) is caught.
-	e := &spyware.Entry{Name: "s1", Description: ptr("old"), CloudInlineAnalysis: ptr(true), InlineExceptionIpAddress: []string{"old"}}
+	e := &spyware.Entry{Name: "s1", Description: new("old"), CloudInlineAnalysis: new(true), InlineExceptionIpAddress: []string{"old"}}
 	if err := overlaySpyware(e, SpywareProfileInput{Name: "s1"}); err != nil {
 		t.Fatal(err)
 	}
 	if strVal(e.Description) != "old" || !boolVal(e.CloudInlineAnalysis) || len(e.InlineExceptionIpAddress) != 1 || e.InlineExceptionIpAddress[0] != "old" {
 		t.Errorf("omitted fields must be preserved: %+v", e)
 	}
-	if err := overlaySpyware(e, SpywareProfileInput{Name: "s1", Description: "new", CloudInlineAnalysis: ptr(false), InlineExceptionIPAddresses: []string{"new"}}); err != nil {
+	if err := overlaySpyware(e, SpywareProfileInput{Name: "s1", Description: "new", CloudInlineAnalysis: new(false), InlineExceptionIPAddresses: []string{"new"}}); err != nil {
 		t.Fatal(err)
 	}
 	if strVal(e.Description) != "new" || boolVal(e.CloudInlineAnalysis) || len(e.InlineExceptionIpAddress) != 1 || e.InlineExceptionIpAddress[0] != "new" {
@@ -290,7 +290,7 @@ func TestOverlaySpyware(t *testing.T) {
 }
 
 func TestSpywareSummary(t *testing.T) {
-	e := &spyware.Entry{Name: "s1", Description: ptr("d"), CloudInlineAnalysis: ptr(true), InlineExceptionIpAddress: []string{"ip-edl-1"}}
+	e := &spyware.Entry{Name: "s1", Description: new("d"), CloudInlineAnalysis: new(true), InlineExceptionIpAddress: []string{"ip-edl-1"}}
 	m := mustMap(t, spywareSummary(e))
 	if m[tagNameKey] != "s1" || m[descriptionKey] != "d" || m["cloud_inline_analysis"] != true {
 		t.Errorf("summary: %+v", m)
@@ -306,7 +306,7 @@ func TestBuildURLFilteringEntry(t *testing.T) {
 	e, err := buildURLFilteringEntry(URLFilteringProfileInput{
 		Name: "u1", Description: "d",
 		Alert: []string{"c1"}, Allow: []string{"c2"}, Block: []string{"c3"}, Continue: []string{"c4"}, Override: []string{"c5"},
-		SafeSearchEnforcement: ptr(true), LogHTTPHeaderXFF: ptr(true),
+		SafeSearchEnforcement: new(true), LogHTTPHeaderXFF: new(true),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -329,9 +329,9 @@ func TestOverlayURLFiltering(t *testing.T) {
 	allTrue := [4]bool{true, true, true, true}
 	allFalse := [4]bool{false, false, false, false}
 	e := &urlfiltering.Entry{
-		Name: "u1", Description: ptr("old"), Block: []string{"old"},
-		SafeSearchEnforcement: ptr(true), LogHttpHdrXff: ptr(true),
-		LogHttpHdrUserAgent: ptr(true), LogHttpHdrReferer: ptr(true),
+		Name: "u1", Description: new("old"), Block: []string{"old"},
+		SafeSearchEnforcement: new(true), LogHttpHdrXff: new(true),
+		LogHttpHdrUserAgent: new(true), LogHttpHdrReferer: new(true),
 	}
 	if err := overlayURLFiltering(e, URLFilteringProfileInput{Name: "u1"}); err != nil {
 		t.Fatal(err)
@@ -341,8 +341,8 @@ func TestOverlayURLFiltering(t *testing.T) {
 	}
 	if err := overlayURLFiltering(e, URLFilteringProfileInput{
 		Name: "u1", Block: []string{"malware"},
-		SafeSearchEnforcement: ptr(false), LogHTTPHeaderXFF: ptr(false),
-		LogHTTPHeaderUserAgent: ptr(false), LogHTTPHeaderReferer: ptr(false),
+		SafeSearchEnforcement: new(false), LogHTTPHeaderXFF: new(false),
+		LogHTTPHeaderUserAgent: new(false), LogHTTPHeaderReferer: new(false),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func assertClearedList[T any](t *testing.T, field string, got []T) {
 }
 
 func TestURLFilteringSummary(t *testing.T) {
-	e := &urlfiltering.Entry{Name: "u1", Description: ptr("d"), Block: []string{"malware"}, SafeSearchEnforcement: ptr(true), LogHttpHdrReferer: ptr(true)}
+	e := &urlfiltering.Entry{Name: "u1", Description: new("d"), Block: []string{"malware"}, SafeSearchEnforcement: new(true), LogHttpHdrReferer: new(true)}
 	m := mustMap(t, urlFilteringSummary(e))
 	if m[tagNameKey] != "u1" || m[descriptionKey] != "d" || m["safe_search_enforcement"] != true || m["log_http_header_referer"] != true {
 		t.Errorf("summary: %+v", m)
@@ -495,7 +495,7 @@ func TestBuildFileBlockingEntryRejects(t *testing.T) {
 }
 
 func TestOverlayFileBlocking(t *testing.T) {
-	e := &fileblocking.Entry{Name: "fb1", Description: ptr("old"), Rules: []fileblocking.Rules{{Name: "old"}}}
+	e := &fileblocking.Entry{Name: "fb1", Description: new("old"), Rules: []fileblocking.Rules{{Name: "old"}}}
 	if err := overlayFileBlocking(e, FileBlockingProfileInput{Name: "fb1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -511,8 +511,8 @@ func TestOverlayFileBlocking(t *testing.T) {
 }
 
 func TestFileBlockingSummary(t *testing.T) {
-	e := &fileblocking.Entry{Name: "fb1", Description: ptr("d"),
-		Rules: []fileblocking.Rules{{Name: "r1", Application: []string{"any"}, FileType: []string{"exe"}, Direction: ptr("both"), Action: ptr("block")}}}
+	e := &fileblocking.Entry{Name: "fb1", Description: new("d"),
+		Rules: []fileblocking.Rules{{Name: "r1", Application: []string{"any"}, FileType: []string{"exe"}, Direction: new("both"), Action: new("block")}}}
 	m := mustMap(t, fileBlockingSummary(e))
 	if m[tagNameKey] != "fb1" || m[descriptionKey] != "d" {
 		t.Errorf("summary base: %+v", m)
@@ -550,7 +550,7 @@ func TestBuildWildfireAnalysisEntry(t *testing.T) {
 }
 
 func TestOverlayWildfireAnalysis(t *testing.T) {
-	e := &wildfireanalysis.Entry{Name: "wf1", Description: ptr("old"), Rules: []wildfireanalysis.Rules{{Name: "old"}}}
+	e := &wildfireanalysis.Entry{Name: "wf1", Description: new("old"), Rules: []wildfireanalysis.Rules{{Name: "old"}}}
 	if err := overlayWildfireAnalysis(e, WildfireAnalysisProfileInput{Name: "wf1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -566,8 +566,8 @@ func TestOverlayWildfireAnalysis(t *testing.T) {
 }
 
 func TestWildfireAnalysisSummary(t *testing.T) {
-	e := &wildfireanalysis.Entry{Name: "wf1", Description: ptr("d"),
-		Rules: []wildfireanalysis.Rules{{Name: "r1", Direction: ptr("upload"), Analysis: ptr("public-cloud")}}}
+	e := &wildfireanalysis.Entry{Name: "wf1", Description: new("d"),
+		Rules: []wildfireanalysis.Rules{{Name: "r1", Direction: new("upload"), Analysis: new("public-cloud")}}}
 	m := mustMap(t, wildfireAnalysisSummary(e))
 	rules := mustAnySlice(t, m["rules"])
 	if len(rules) != 1 {
@@ -637,7 +637,7 @@ func TestAntivirusProfileCreate(t *testing.T) {
 	)
 	h := createHandler[antivirus.Location, antivirus.Entry, AntivirusProfileInput](d, "panos_antivirus_profile_create", newAntivirusService(d), antivirusResolve(d),
 		func(in AntivirusProfileInput) LocationInput { return in.Location }, buildAntivirusEntry, antivirusSummary)
-	res, _, err := h(t.Context(), nil, AntivirusProfileInput{Name: "av-new", Description: "d", PacketCapture: ptr(true),
+	res, _, err := h(t.Context(), nil, AntivirusProfileInput{Name: "av-new", Description: "d", PacketCapture: new(true),
 		Decoders: []AntivirusDecoderInput{{Name: "http", Action: "drop"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -874,7 +874,7 @@ func TestVulnerabilityProfileCreate(t *testing.T) {
 	)
 	h := createHandler[vulnerability.Location, vulnerability.Entry, VulnerabilityProfileInput](d, "panos_vulnerability_profile_create", newVulnerabilityService(d), vulnerabilityResolve(d),
 		func(in VulnerabilityProfileInput) LocationInput { return in.Location }, buildVulnerabilityEntry, vulnerabilitySummary)
-	res, _, err := h(t.Context(), nil, VulnerabilityProfileInput{Name: "v-new", CloudInlineAnalysis: ptr(true), InlineExceptionIPAddresses: []string{"ip-edl-1"}})
+	res, _, err := h(t.Context(), nil, VulnerabilityProfileInput{Name: "v-new", CloudInlineAnalysis: new(true), InlineExceptionIPAddresses: []string{"ip-edl-1"}})
 	if err != nil {
 		t.Fatal(err)
 	}

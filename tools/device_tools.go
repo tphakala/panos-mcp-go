@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -282,10 +283,7 @@ func resolveZoneLocation(d *Deps, vsys, tmpl string) (zone.Location, error) {
 	if tmpl != "" {
 		return zone.Location{}, errors.New("template requires a Panorama connection")
 	}
-	v := vsys
-	if v == "" {
-		v = defaultVsys
-	}
+	v := cmp.Or(vsys, defaultVsys)
 	return zone.Location{Vsys: &zone.VsysLocation{NgfwDevice: defaultNgfwDevice, Vsys: v}}, nil
 }
 
@@ -480,10 +478,10 @@ func applyZoneNetwork(e *zone.Entry, in *ZoneWriteInput) error {
 		e.Network = n
 	}
 	if in.ZoneProtectionProfile != "" {
-		n.ZoneProtectionProfile = ptr(in.ZoneProtectionProfile)
+		n.ZoneProtectionProfile = new(in.ZoneProtectionProfile)
 	}
 	if in.LogSetting != "" {
-		n.LogSetting = ptr(in.LogSetting)
+		n.LogSetting = new(in.LogSetting)
 	}
 	if in.EnablePacketBufferProtection != nil {
 		n.EnablePacketBufferProtection = in.EnablePacketBufferProtection

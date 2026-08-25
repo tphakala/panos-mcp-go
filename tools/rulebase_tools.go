@@ -61,7 +61,7 @@ func newDecryptionRuleService(d *Deps) nameFixAdapter[decryption.Location, decry
 // needs them.
 type DecryptionRuleInput struct {
 	Name           string        `json:"name" jsonschema:"Rule name"`
-	Location       LocationInput `json:"location,omitempty"`
+	Location       LocationInput `json:"location,omitzero"`
 	Action         string        `json:"action,omitempty" jsonschema:"decrypt or no-decrypt; required on create, no default"`
 	DecryptionType string        `json:"decryption_type,omitempty" jsonschema:"ssh-proxy, ssl-forward-proxy or ssl-inbound-inspection; a provided value replaces the whole type choice on update"`
 	Certificates   []string      `json:"certificates,omitempty" jsonschema:"Certificates for ssl-inbound-inspection; requires decryption_type ssl-inbound-inspection"`
@@ -147,7 +147,7 @@ func buildDecryptionRuleEntry(in DecryptionRuleInput) (*decryption.Entry, error)
 	}
 	e := &decryption.Entry{
 		Name:        in.Name,
-		Action:      ptr(in.Action),
+		Action:      new(in.Action),
 		From:        orAny(in.From),
 		To:          orAny(in.To),
 		Source:      orAny(in.Source),
@@ -157,7 +157,7 @@ func buildDecryptionRuleEntry(in DecryptionRuleInput) (*decryption.Entry, error)
 		Disabled:    in.Disabled,
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if err := applyDecryptionType(e, in); err != nil {
 		return nil, err
@@ -179,7 +179,7 @@ func overlayDecryptionRule(e *decryption.Entry, in DecryptionRuleInput) error {
 		if !validDecryptionActions[in.Action] {
 			return fmt.Errorf("action must be one of %s; got %q", decryptionActionList, in.Action)
 		}
-		e.Action = ptr(in.Action)
+		e.Action = new(in.Action)
 	}
 	if len(in.From) > 0 {
 		e.From = in.From
@@ -197,7 +197,7 @@ func overlayDecryptionRule(e *decryption.Entry, in DecryptionRuleInput) error {
 		e.Service = in.Service
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
@@ -341,7 +341,7 @@ func newAuthenticationRuleService(d *Deps) nameFixAdapter[authentication.Locatio
 // log_setting, target, uuid) stay SDK-only until a task needs them.
 type AuthenticationRuleInput struct {
 	Name                      string        `json:"name" jsonschema:"Rule name"`
-	Location                  LocationInput `json:"location,omitempty"`
+	Location                  LocationInput `json:"location,omitzero"`
 	AuthenticationEnforcement string        `json:"authentication_enforcement,omitempty" jsonschema:"Authentication enforcement object applied to matching traffic"`
 	Timeout                   *int64        `json:"timeout,omitempty" jsonschema:"Authentication session timeout in minutes, at least 1; the device enforces its own upper bound"`
 	From                      []string      `json:"from,omitempty" jsonschema:"Source zones (create default: any); a non-empty list replaces fully"`
@@ -381,13 +381,13 @@ func buildAuthenticationRuleEntry(in AuthenticationRuleInput) (*authentication.E
 		Disabled:    in.Disabled,
 	}
 	if in.AuthenticationEnforcement != "" {
-		e.AuthenticationEnforcement = ptr(in.AuthenticationEnforcement)
+		e.AuthenticationEnforcement = new(in.AuthenticationEnforcement)
 	}
 	if in.Timeout != nil {
 		e.Timeout = in.Timeout
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -402,7 +402,7 @@ func overlayAuthenticationRule(e *authentication.Entry, in AuthenticationRuleInp
 		return fmt.Errorf("timeout must be at least 1 minute; got %d", *in.Timeout)
 	}
 	if in.AuthenticationEnforcement != "" {
-		e.AuthenticationEnforcement = ptr(in.AuthenticationEnforcement)
+		e.AuthenticationEnforcement = new(in.AuthenticationEnforcement)
 	}
 	if in.Timeout != nil {
 		e.Timeout = in.Timeout
@@ -423,7 +423,7 @@ func overlayAuthenticationRule(e *authentication.Entry, in AuthenticationRuleInp
 		e.Service = in.Service
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
@@ -553,7 +553,7 @@ func newPbfRuleService(d *Deps) nameFixAdapter[pbf.Location, pbf.Entry] {
 // there is deliberately no to field.
 type PbfRuleInput struct {
 	Name            string        `json:"name" jsonschema:"Rule name"`
-	Location        LocationInput `json:"location,omitempty"`
+	Location        LocationInput `json:"location,omitzero"`
 	Action          string        `json:"action,omitempty" jsonschema:"forward, forward-to-vsys, discard or no-pbf; required on create, no default; a provided value replaces the whole action choice on update"`
 	EgressInterface string        `json:"egress_interface,omitempty" jsonschema:"Egress interface for action forward (required with forward)"`
 	NexthopIP       string        `json:"nexthop_ip,omitempty" jsonschema:"Next-hop IP address for action forward; mutually exclusive with nexthop_fqdn"`
@@ -642,7 +642,7 @@ func buildPbfAction(in PbfRuleInput) (*pbf.Action, error) {
 		if in.ForwardVsys == "" {
 			return nil, fmt.Errorf("action %s requires forward_vsys", pbfActionForwardToVsys)
 		}
-		return &pbf.Action{ForwardToVsys: ptr(in.ForwardVsys)}, nil
+		return &pbf.Action{ForwardToVsys: new(in.ForwardVsys)}, nil
 	case pbfActionDiscard:
 		return &pbf.Action{Discard: &pbf.ActionDiscard{}}, nil
 	default: // no-pbf; validPbfActions already gated the value in applyPbfAction
@@ -661,12 +661,12 @@ func buildPbfForwardAction(in PbfRuleInput) (*pbf.Action, error) {
 	if in.NexthopIP != "" && in.NexthopFQDN != "" {
 		return nil, errors.New("provide nexthop_ip or nexthop_fqdn, not both")
 	}
-	fwd := &pbf.ActionForward{EgressInterface: ptr(in.EgressInterface)}
+	fwd := &pbf.ActionForward{EgressInterface: new(in.EgressInterface)}
 	switch {
 	case in.NexthopIP != "":
-		fwd.Nexthop = &pbf.ActionForwardNexthop{IpAddress: ptr(in.NexthopIP)}
+		fwd.Nexthop = &pbf.ActionForwardNexthop{IpAddress: new(in.NexthopIP)}
 	case in.NexthopFQDN != "":
-		fwd.Nexthop = &pbf.ActionForwardNexthop{Fqdn: ptr(in.NexthopFQDN)}
+		fwd.Nexthop = &pbf.ActionForwardNexthop{Fqdn: new(in.NexthopFQDN)}
 	}
 	return &pbf.Action{Forward: fwd}, nil
 }
@@ -700,7 +700,7 @@ func buildPbfRuleEntry(in PbfRuleInput) (*pbf.Entry, error) {
 		Disabled:    in.Disabled,
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if err := applyPbfAction(e, in); err != nil {
 		return nil, err
@@ -733,7 +733,7 @@ func overlayPbfRule(e *pbf.Entry, in PbfRuleInput) error {
 		e.Application = in.Application
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags

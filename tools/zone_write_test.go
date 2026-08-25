@@ -64,7 +64,7 @@ func TestResolveZoneLocation(t *testing.T) {
 func TestBuildZoneEntry(t *testing.T) {
 	t.Run("layer3 with interfaces and toggles", func(t *testing.T) {
 		e, err := buildZoneEntry(&ZoneWriteInput{Name: "z", NetworkType: "layer3", Interfaces: []string{"ethernet1/1"},
-			ZoneProtectionProfile: "zpp", EnableUserIdentification: ptr(true)})
+			ZoneProtectionProfile: "zpp", EnableUserIdentification: new(true)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func TestBuildZoneEntryRejects(t *testing.T) {
 func TestOverlayZoneTypeSwitchPreservesProtection(t *testing.T) {
 	e := &zone.Entry{Name: "z", Network: &zone.Network{
 		Layer3:                []string{"ethernet1/1"},
-		ZoneProtectionProfile: ptr("zpp"),
+		ZoneProtectionProfile: new("zpp"),
 		MiscAttributes:        []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
 	}}
 	if err := overlayZone(e, &ZoneWriteInput{NetworkType: "layer2", Interfaces: []string{"ethernet1/2"}}); err != nil {
@@ -172,8 +172,8 @@ func TestOverlayZoneInterfacesWithinType(t *testing.T) {
 
 func TestZoneSummary(t *testing.T) {
 	t.Run("external branch and bools", func(t *testing.T) {
-		e := &zone.Entry{Name: "z", EnableUserIdentification: ptr(true), Network: &zone.Network{
-			External: []string{"ext-zone-1"}, LogSetting: ptr("lf"),
+		e := &zone.Entry{Name: "z", EnableUserIdentification: new(true), Network: &zone.Network{
+			External: []string{"ext-zone-1"}, LogSetting: new("lf"),
 		}}
 		m := asMap(t, zoneSummary(e))
 		if m["network_type"] != "external" {
@@ -402,9 +402,9 @@ func TestBuildZoneEntryAllInterfaceTypes(t *testing.T) {
 func TestBuildZoneEntryToggles(t *testing.T) {
 	e, err := buildZoneEntry(&ZoneWriteInput{
 		Name: "z", NetworkType: "layer3", LogSetting: "lf",
-		EnablePacketBufferProtection: ptr(true),
-		EnableDeviceIdentification:   ptr(true),
-		EnableUserIdentification:     ptr(false),
+		EnablePacketBufferProtection: new(true),
+		EnableDeviceIdentification:   new(true),
+		EnableUserIdentification:     new(false),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -164,7 +164,7 @@ func TestResultHelpers(t *testing.T) {
 }
 
 func TestPtrAndStrVal(t *testing.T) {
-	if p := ptr(42); p == nil || *p != 42 {
+	if p := new(42); p == nil || *p != 42 {
 		t.Fatalf("ptr: got %v", p)
 	}
 	if strVal(nil) != "" {
@@ -296,7 +296,7 @@ func TestListHandler(t *testing.T) {
 	}
 
 	// A service error is surfaced as an error result, not a Go error.
-	errSvc := &fakeSvc{listErr: fmt.Errorf("boom")}
+	errSvc := &fakeSvc{listErr: errors.New("boom")}
 	h = listHandler[fakeLoc, fakeEntry](handlerDeps(), "panos_list", errSvc, okResolve, entryName, entrySummary)
 	res, _, err = h(t.Context(), nil, ListInput{})
 	if err != nil || !res.IsError {
@@ -342,7 +342,7 @@ func TestCreateHandler(t *testing.T) {
 	svc := &fakeSvc{}
 	build := func(in NameInput) (*fakeEntry, error) {
 		if in.Name == "bad" {
-			return nil, fmt.Errorf("bad input")
+			return nil, errors.New("bad input")
 		}
 		return &fakeEntry{Name: in.Name}, nil
 	}
@@ -386,7 +386,7 @@ func TestUpdateHandler(t *testing.T) {
 	}
 }
 
-func errResolve(LocationInput) (fakeLoc, error) { return fakeLoc{}, fmt.Errorf("bad location") }
+func errResolve(LocationInput) (fakeLoc, error) { return fakeLoc{}, errors.New("bad location") }
 
 // TestHandlerErrorPaths pins that resolve failures, service failures, and an
 // overlay failure all become error results (IsError set) rather than a Go error
@@ -409,7 +409,7 @@ func TestHandlerErrorPaths(t *testing.T) {
 	// not reach the service. The get case sets readErr so a bypassed resolve would
 	// surface the service message instead of "bad location"; the delete and update
 	// cases assert the service recorded no call.
-	getSvc := &fakeSvc{readErr: fmt.Errorf("read must not run")}
+	getSvc := &fakeSvc{readErr: errors.New("read must not run")}
 	gh := getHandler[fakeLoc, fakeEntry](d, "g", getSvc, errResolve, entrySummary)
 	if res, _, err := gh(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError || !strings.Contains(textContent(t, res), "bad location") {
 		t.Fatalf("get resolve error: err=%v isErr=%v body=%s", err, res.IsError, textContent(t, res))
@@ -434,30 +434,30 @@ func TestHandlerErrorPaths(t *testing.T) {
 		t.Fatalf("update must not reach the service when resolve fails: %v", updSvc.updated)
 	}
 
-	del := deleteHandler[fakeLoc, fakeEntry](d, "d", &fakeSvc{deleteErr: fmt.Errorf("x")}, okResolve)
+	del := deleteHandler[fakeLoc, fakeEntry](d, "d", &fakeSvc{deleteErr: errors.New("x")}, okResolve)
 	if res, _, err := del(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("delete svc error: err=%v isErr=%v", err, res.IsError)
 	}
 
 	build := func(NameInput) (*fakeEntry, error) { return &fakeEntry{Name: "a"}, nil }
-	cr := createHandler[fakeLoc, fakeEntry, NameInput](d, "c", &fakeSvc{createErr: fmt.Errorf("x")}, okResolve, loc, build, entrySummary)
+	cr := createHandler[fakeLoc, fakeEntry, NameInput](d, "c", &fakeSvc{createErr: errors.New("x")}, okResolve, loc, build, entrySummary)
 	if res, _, err := cr(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("create svc error: err=%v isErr=%v", err, res.IsError)
 	}
 
-	upRead := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{readErr: fmt.Errorf("x")}, okResolve, loc, name,
+	upRead := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{readErr: errors.New("x")}, okResolve, loc, name,
 		func(*fakeEntry, NameInput) error { return nil }, entrySummary)
 	if res, _, err := upRead(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("update read error: err=%v isErr=%v", err, res.IsError)
 	}
 
 	upOverlay := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{entries: []*fakeEntry{{Name: "a"}}}, okResolve, loc, name,
-		func(*fakeEntry, NameInput) error { return fmt.Errorf("overlay bad") }, entrySummary)
+		func(*fakeEntry, NameInput) error { return errors.New("overlay bad") }, entrySummary)
 	if res, _, err := upOverlay(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("update overlay error: err=%v isErr=%v", err, res.IsError)
 	}
 
-	upSvc := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{entries: []*fakeEntry{{Name: "a"}}, updateErr: fmt.Errorf("x")}, okResolve, loc, name,
+	upSvc := updateHandler[fakeLoc, fakeEntry, NameInput](d, "u", &fakeSvc{entries: []*fakeEntry{{Name: "a"}}, updateErr: errors.New("x")}, okResolve, loc, name,
 		func(*fakeEntry, NameInput) error { return nil }, entrySummary)
 	if res, _, err := upSvc(t.Context(), nil, NameInput{Name: "a"}); err != nil || !res.IsError {
 		t.Fatalf("update service error: err=%v isErr=%v", err, res.IsError)

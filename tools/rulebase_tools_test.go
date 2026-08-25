@@ -241,7 +241,7 @@ func TestOverlayDecryptionRuleType(t *testing.T) {
 
 func TestBuildAuthenticationRuleEntry(t *testing.T) {
 	e, err := buildAuthenticationRuleEntry(AuthenticationRuleInput{
-		Name: "auth", AuthenticationEnforcement: "default-web-form", Timeout: ptr(int64(60)),
+		Name: "auth", AuthenticationEnforcement: "default-web-form", Timeout: new(int64(60)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -266,8 +266,8 @@ func TestBuildAuthenticationRuleEntryRejects(t *testing.T) {
 		wantErr string
 	}{
 		{"no name", AuthenticationRuleInput{}, "name is required"},
-		{"timeout zero", AuthenticationRuleInput{Name: "a", Timeout: ptr(int64(0))}, "timeout must be at least 1"},
-		{"timeout negative", AuthenticationRuleInput{Name: "a", Timeout: ptr(int64(-5))}, "timeout must be at least 1"},
+		{"timeout zero", AuthenticationRuleInput{Name: "a", Timeout: new(int64(0))}, "timeout must be at least 1"},
+		{"timeout negative", AuthenticationRuleInput{Name: "a", Timeout: new(int64(-5))}, "timeout must be at least 1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestBuildAuthenticationRuleEntryRejects(t *testing.T) {
 
 func TestOverlayAuthenticationRuleFields(t *testing.T) {
 	base := func() *authentication.Entry {
-		e, err := buildAuthenticationRuleEntry(AuthenticationRuleInput{Name: "a", AuthenticationEnforcement: "default-web-form", Timeout: ptr(int64(60))})
+		e, err := buildAuthenticationRuleEntry(AuthenticationRuleInput{Name: "a", AuthenticationEnforcement: "default-web-form", Timeout: new(int64(60))})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +297,7 @@ func TestOverlayAuthenticationRuleFields(t *testing.T) {
 	}
 
 	e = base()
-	if err := overlayAuthenticationRule(e, AuthenticationRuleInput{AuthenticationEnforcement: "cert-auth", Timeout: ptr(int64(30))}); err != nil {
+	if err := overlayAuthenticationRule(e, AuthenticationRuleInput{AuthenticationEnforcement: "cert-auth", Timeout: new(int64(30))}); err != nil {
 		t.Fatal(err)
 	}
 	if *e.AuthenticationEnforcement != "cert-auth" || *e.Timeout != 30 {
@@ -312,7 +312,7 @@ func TestOverlayAuthenticationRuleFields(t *testing.T) {
 		t.Errorf("source overlay = %v", e.Source)
 	}
 
-	if err := overlayAuthenticationRule(base(), AuthenticationRuleInput{Timeout: ptr(int64(0))}); err == nil {
+	if err := overlayAuthenticationRule(base(), AuthenticationRuleInput{Timeout: new(int64(0))}); err == nil {
 		t.Error("timeout 0 must be rejected on update")
 	}
 }

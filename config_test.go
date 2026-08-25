@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -431,9 +432,7 @@ func TestLoadConfigAcceptsMaxJobWait(t *testing.T) {
 func TestLoadConfigRejectsBadValues(t *testing.T) {
 	base := func(extra map[string]string) map[string]string {
 		env := map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k"}
-		for k, v := range extra {
-			env[k] = v
-		}
+		maps.Copy(env, extra)
 		return env
 	}
 	// wantErr binds each case to the variable it is meant to exercise, so a case
@@ -686,9 +685,7 @@ func TestLoadConfigHTTPTokenRequiredWhenNonLoopback(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k"}
-			for k, v := range tc.env {
-				env[k] = v
-			}
+			maps.Copy(env, tc.env)
 			setEnv(t, env)
 			_, err := LoadConfig()
 			if tc.wantErr == "" {

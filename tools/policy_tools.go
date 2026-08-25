@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -51,7 +52,7 @@ func newSecurityRuleService(d *Deps) nameFixAdapter[security.Location, security.
 // task needs them.
 type SecurityRuleInput struct {
 	Name         string        `json:"name" jsonschema:"Rule name"`
-	Location     LocationInput `json:"location,omitempty"`
+	Location     LocationInput `json:"location,omitzero"`
 	Action       string        `json:"action,omitempty" jsonschema:"allow, deny, drop, reset-client, reset-server or reset-both; required on create, no default"`
 	From         []string      `json:"from,omitempty" jsonschema:"Source zones (create default: any); a non-empty list replaces fully"`
 	To           []string      `json:"to,omitempty" jsonschema:"Destination zones (create default: any); a non-empty list replaces fully"`
@@ -134,7 +135,7 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 	}
 	e := &security.Entry{
 		Name:        in.Name,
-		Action:      ptr(in.Action),
+		Action:      new(in.Action),
 		From:        orAny(in.From),
 		To:          orAny(in.To),
 		Source:      orAny(in.Source),
@@ -145,10 +146,10 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 		Disabled:    in.Disabled,
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Schedule != "" {
-		e.Schedule = ptr(in.Schedule)
+		e.Schedule = new(in.Schedule)
 	}
 	applyRuleProfileGroup(e, in.ProfileGroup)
 	return e, nil
@@ -170,7 +171,7 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 		if !validRuleActions[in.Action] {
 			return fmt.Errorf("action must be one of %s; got %q", securityActionList, in.Action)
 		}
-		e.Action = ptr(in.Action)
+		e.Action = new(in.Action)
 	}
 	if len(in.From) > 0 {
 		e.From = in.From
@@ -191,10 +192,10 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 		e.Service = in.Service
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Schedule != "" {
-		e.Schedule = ptr(in.Schedule)
+		e.Schedule = new(in.Schedule)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
@@ -371,7 +372,7 @@ func movePosition(position, relativeTo string) (movement.Position, error) {
 // MoveInput is the input for the rule move tools.
 type MoveInput struct {
 	Name       string        `json:"name" jsonschema:"Rule name to move"`
-	Location   LocationInput `json:"location,omitempty"`
+	Location   LocationInput `json:"location,omitzero"`
 	Position   string        `json:"position" jsonschema:"top, bottom, before or after"`
 	RelativeTo string        `json:"relative_to,omitempty" jsonschema:"Rule name for position before/after"`
 }
@@ -598,7 +599,7 @@ func newNatRuleService(d *Deps) nameFixAdapter[nat.Location, nat.Entry] {
 // port, is not expressible here.
 type NatRuleInput struct {
 	Name          string        `json:"name" jsonschema:"Rule name"`
-	Location      LocationInput `json:"location,omitempty"`
+	Location      LocationInput `json:"location,omitzero"`
 	From          []string      `json:"from,omitempty" jsonschema:"Source zones (create default: any); a non-empty list replaces fully"`
 	To            []string      `json:"to,omitempty" jsonschema:"Destination zones (create default: any); a non-empty list replaces fully"`
 	Source        []string      `json:"source,omitempty" jsonschema:"Source addresses (create default: any); a non-empty list replaces fully"`
@@ -657,7 +658,7 @@ func applyNatTranslations(e *nat.Entry, in NatRuleInput) error {
 		e.SourceTranslation = &nat.SourceTranslation{
 			DynamicIpAndPort: &nat.SourceTranslationDynamicIpAndPort{
 				InterfaceAddress: &nat.SourceTranslationDynamicIpAndPortInterfaceAddress{
-					Interface: ptr(in.SNATInterface),
+					Interface: new(in.SNATInterface),
 				},
 			},
 		}
@@ -684,9 +685,9 @@ func applyNatTranslations(e *nat.Entry, in NatRuleInput) error {
 		if dt == nil {
 			dt = &nat.DestinationTranslation{}
 		}
-		dt.TranslatedAddress = ptr(in.DNATAddress)
+		dt.TranslatedAddress = new(in.DNATAddress)
 		if in.DNATPort != nil {
-			dt.TranslatedPort = ptr(*in.DNATPort)
+			dt.TranslatedPort = new(*in.DNATPort)
 		}
 		e.DestinationTranslation = dt
 	}
@@ -709,28 +710,25 @@ func buildNatRuleEntry(in NatRuleInput) (*nat.Entry, error) {
 	if in.NatType != "" && !validNatTypes[in.NatType] {
 		return nil, fmt.Errorf("nat_type must be one of %s; got %q", natTypeList, in.NatType)
 	}
-	svc := in.Service
-	if svc == "" {
-		svc = "any"
-	}
+	svc := cmp.Or(in.Service, "any")
 	e := &nat.Entry{
 		Name:        in.Name,
 		From:        orAny(in.From),
 		To:          orAny(in.To),
 		Source:      orAny(in.Source),
 		Destination: orAny(in.Destination),
-		Service:     ptr(svc),
+		Service:     new(svc),
 		Tag:         in.Tags,
 		Disabled:    in.Disabled,
 	}
 	if in.NatType != "" {
-		e.NatType = ptr(in.NatType)
+		e.NatType = new(in.NatType)
 	}
 	if in.ToInterface != "" {
-		e.ToInterface = ptr(in.ToInterface)
+		e.ToInterface = new(in.ToInterface)
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if err := applyNatTranslations(e, in); err != nil {
 		return nil, err
@@ -753,7 +751,7 @@ func overlayNatRule(e *nat.Entry, in NatRuleInput) error {
 		if !validNatTypes[in.NatType] {
 			return fmt.Errorf("nat_type must be one of %s; got %q", natTypeList, in.NatType)
 		}
-		e.NatType = ptr(in.NatType)
+		e.NatType = new(in.NatType)
 	}
 	if len(in.From) > 0 {
 		e.From = in.From
@@ -768,13 +766,13 @@ func overlayNatRule(e *nat.Entry, in NatRuleInput) error {
 		e.Destination = in.Destination
 	}
 	if in.Service != "" {
-		e.Service = ptr(in.Service)
+		e.Service = new(in.Service)
 	}
 	if in.ToInterface != "" {
-		e.ToInterface = ptr(in.ToInterface)
+		e.ToInterface = new(in.ToInterface)
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags

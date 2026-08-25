@@ -44,6 +44,7 @@ linters:
     - nilnil
     - noctx
     #- nolintlint
+    - perfsprint
     - prealloc
     - predeclared
     - recvcheck

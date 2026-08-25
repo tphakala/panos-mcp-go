@@ -26,7 +26,7 @@ func ptrIfSet(s string) *string {
 	if s == "" {
 		return nil
 	}
-	return ptr(s)
+	return new(s)
 }
 
 // --- Application groups (objects/application/group) --------------------------
@@ -57,7 +57,7 @@ func newApplicationGroupService(d *Deps) nameFixAdapter[application_group.Locati
 // ApplicationGroupInput is the input for application group create and update.
 type ApplicationGroupInput struct {
 	Name     string        `json:"name" jsonschema:"Application group name"`
-	Location LocationInput `json:"location,omitempty"`
+	Location LocationInput `json:"location,omitzero"`
 	Members  []string      `json:"members,omitempty" jsonschema:"Applications, application filters, or nested application groups; replaces the full member list when provided"`
 }
 
@@ -168,7 +168,7 @@ func newCustomURLCategoryService(d *Deps) nameFixAdapter[customurlcategory.Locat
 // CustomURLCategoryInput is the input for custom URL category create and update.
 type CustomURLCategoryInput struct {
 	Name        string        `json:"name" jsonschema:"Custom URL category name"`
-	Location    LocationInput `json:"location,omitempty"`
+	Location    LocationInput `json:"location,omitzero"`
 	Type        string        `json:"type,omitempty" jsonschema:"Category kind: 'URL List' (members are URLs) or 'Category Match' (members are built-in category names). Required on create; exact spelling and capitalization"`
 	Members     []string      `json:"members,omitempty" jsonschema:"Category members (URLs or built-in category names per type); replaces the full list when provided"`
 	Description string        `json:"description,omitempty"`
@@ -188,9 +188,9 @@ func buildCustomURLCategoryEntry(in CustomURLCategoryInput) (*customurlcategory.
 	if len(in.Members) == 0 {
 		return nil, errors.New("members must have at least one entry")
 	}
-	e := &customurlcategory.Entry{Name: in.Name, Type: ptr(in.Type), List: in.Members}
+	e := &customurlcategory.Entry{Name: in.Name, Type: new(in.Type), List: in.Members}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -207,10 +207,10 @@ func overlayCustomURLCategory(e *customurlcategory.Entry, in CustomURLCategoryIn
 		return err
 	}
 	if in.Type != "" {
-		e.Type = ptr(in.Type)
+		e.Type = new(in.Type)
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return nil
 }
@@ -305,7 +305,7 @@ func newScheduleService(d *Deps) nameFixAdapter[schedules.Location, schedules.En
 // time_ranges; weekly uses the per-day lists.
 type ScheduleInput struct {
 	Name         string        `json:"name" jsonschema:"Schedule name"`
-	Location     LocationInput `json:"location,omitempty"`
+	Location     LocationInput `json:"location,omitzero"`
 	ScheduleType string        `json:"schedule_type,omitempty" jsonschema:"non-recurring, daily, or weekly. Required on create; on update a provided value replaces the whole schedule definition"`
 	TimeRanges   []string      `json:"time_ranges,omitempty" jsonschema:"non-recurring: 'YYYY/MM/DD@HH:MM-YYYY/MM/DD@HH:MM' ranges; daily: 'HH:MM-HH:MM' ranges. Replaces fully when provided. Device-validated format"`
 	Monday       []string      `json:"monday,omitempty" jsonschema:"Weekly 'HH:MM-HH:MM' ranges for Monday"`
@@ -669,7 +669,7 @@ func newEdlService(d *Deps) nameFixAdapter[extdynlist.Location, extdynlist.Entry
 // selected by type; a provided type replaces the whole source definition.
 type EdlInput struct {
 	Name                string        `json:"name" jsonschema:"External dynamic list name"`
-	Location            LocationInput `json:"location,omitempty"`
+	Location            LocationInput `json:"location,omitzero"`
 	Type                string        `json:"type,omitempty" jsonschema:"List type: ip, domain, url, predefined-ip, predefined-url. Required on create; on update a provided type replaces the whole source definition. imei/imsi are reported by get but not settable"`
 	URL                 string        `json:"url,omitempty" jsonschema:"Source URL; for predefined-ip/predefined-url the built-in list name. Required on create and when switching type"`
 	Description         string        `json:"description,omitempty"`
@@ -887,7 +887,7 @@ func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 	switch in.Type {
 	case edlTypeIP:
 		return &extdynlist.Type{Ip: &extdynlist.TypeIp{
-			Url:                ptr(in.URL),
+			Url:                new(in.URL),
 			Description:        ptrIfSet(in.Description),
 			ExceptionList:      in.ExceptionList,
 			CertificateProfile: ptrIfSet(in.CertificateProfile),
@@ -895,7 +895,7 @@ func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 		}}, nil
 	case edlTypeDomain:
 		return &extdynlist.Type{Domain: &extdynlist.TypeDomain{
-			Url:                ptr(in.URL),
+			Url:                new(in.URL),
 			Description:        ptrIfSet(in.Description),
 			ExceptionList:      in.ExceptionList,
 			CertificateProfile: ptrIfSet(in.CertificateProfile),
@@ -904,7 +904,7 @@ func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 		}}, nil
 	case edlTypeURL:
 		return &extdynlist.Type{Url: &extdynlist.TypeUrl{
-			Url:                ptr(in.URL),
+			Url:                new(in.URL),
 			Description:        ptrIfSet(in.Description),
 			ExceptionList:      in.ExceptionList,
 			CertificateProfile: ptrIfSet(in.CertificateProfile),
@@ -912,13 +912,13 @@ func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 		}}, nil
 	case edlTypePredefinedIP:
 		return &extdynlist.Type{PredefinedIp: &extdynlist.TypePredefinedIp{
-			Url:           ptr(in.URL),
+			Url:           new(in.URL),
 			Description:   ptrIfSet(in.Description),
 			ExceptionList: in.ExceptionList,
 		}}, nil
 	case edlTypePredefinedURL:
 		return &extdynlist.Type{PredefinedUrl: &extdynlist.TypePredefinedUrl{
-			Url:           ptr(in.URL),
+			Url:           new(in.URL),
 			Description:   ptrIfSet(in.Description),
 			ExceptionList: in.ExceptionList,
 		}}, nil
@@ -983,10 +983,10 @@ func edlOverlayPredefined(in *EdlInput, spec *edlRecurringSpec, url, description
 		return errors.New("predefined lists have no recurring, certificate_profile, or expand_domain to update")
 	}
 	if in.URL != "" {
-		*url = ptr(in.URL)
+		*url = new(in.URL)
 	}
 	if in.Description != "" {
-		*description = ptr(in.Description)
+		*description = new(in.Description)
 	}
 	if in.ExceptionList != nil {
 		*exceptions = in.ExceptionList
@@ -1001,16 +1001,16 @@ func edlOverlayPredefined(in *EdlInput, spec *edlRecurringSpec, url, description
 // contract); omitted string fields are left unchanged.
 func edlOverlayCommon(in *EdlInput, url, description, certProfile **string, exceptions *[]string) {
 	if in.URL != "" {
-		*url = ptr(in.URL)
+		*url = new(in.URL)
 	}
 	if in.Description != "" {
-		*description = ptr(in.Description)
+		*description = new(in.Description)
 	}
 	if in.ExceptionList != nil {
 		*exceptions = in.ExceptionList
 	}
 	if in.CertificateProfile != "" {
-		*certProfile = ptr(in.CertificateProfile)
+		*certProfile = new(in.CertificateProfile)
 	}
 }
 
