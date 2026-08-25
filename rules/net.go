@@ -185,17 +185,19 @@ func URLValuesClone(m dsl.Matcher) {
 // limit, where the automatic drain gives up and the connection is dropped, so
 // this is advisory: keep the copy only when a large unread body is expected and
 // connection reuse is worth reading it. Only a copy immediately followed by
-// Close is matched; a drain that reads to EOF for another reason (trailers,
-// surfacing a read error, a non-transport body) is left alone.
+// Close is matched, and not when the rest of the block reads resp.Trailer:
+// trailers are populated only once the body reaches EOF, which the bounded
+// automatic drain does not guarantee. A drain that reads to EOF for another
+// reason (surfacing a read error, a non-transport body) is also left alone.
 //
 // See: https://go.dev/doc/go1.27#nethttp
 func ResponseBodyDrain(m dsl.Matcher) {
 	m.Match(
-		`io.Copy(io.Discard, $resp.Body); $resp.Body.Close()`,
-		`io.Copy(io.Discard, $resp.Body); _ = $resp.Body.Close()`,
-		`_, _ = io.Copy(io.Discard, $resp.Body); $resp.Body.Close()`,
-		`_, _ = io.Copy(io.Discard, $resp.Body); _ = $resp.Body.Close()`,
+		`io.Copy(io.Discard, $resp.Body); $resp.Body.Close(); $*rest`,
+		`io.Copy(io.Discard, $resp.Body); _ = $resp.Body.Close(); $*rest`,
+		`_, _ = io.Copy(io.Discard, $resp.Body); $resp.Body.Close(); $*rest`,
+		`_, _ = io.Copy(io.Discard, $resp.Body); _ = $resp.Body.Close(); $*rest`,
 	).
-		Where(m["resp"].Type.Is("*http.Response")).
-		Report("Go 1.27's HTTP/1 transport drains an unread response body on Close (up to a conservative limit); the io.Copy(io.Discard, $resp.Body) before Close is redundant unless a large unread body is expected")
+		Where(m["resp"].Type.Is("*http.Response") && !m["rest"].Contains(`$resp.Trailer`)).
+		Report("Go 1.27's HTTP/1 transport drains an unread response body on Close (up to a conservative limit); the io.Copy(io.Discard, $resp.Body) before Close is redundant unless a large unread body is expected or $resp.Trailer is read")
 }

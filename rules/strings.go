@@ -170,7 +170,9 @@ func StringsFieldsFuncIteration(m dsl.Matcher) {
 // s[:LastIndex] panics on -1, and s[LastIndex+1:] yields the whole string. Check
 // the found result when the not-found case matters.
 //
-// The index-check forms fire only when the guarded code slices s at the index
+// The +1 slicing form fires only for a one-character literal separator, since
+// with a longer separator it keeps part of it and CutLast would not. The
+// index-check forms fire only when the guarded code slices s at the index
 // (s[:i], s[i:], s[i+n:]); an index used for anything else is not a CutLast
 // candidate.
 //
@@ -181,15 +183,27 @@ func StringsCutLast(m dsl.Matcher) {
 	m.Match(
 		`$s[:strings.LastIndex($s, $sep)]`,
 		`$s[strings.LastIndex($s, $sep)+len($sep):]`,
-		`$s[strings.LastIndex($s, $sep)+1:]`,
 	).
 		Report("use before, after, found := strings.CutLast($s, $sep) instead of slicing around strings.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == \"\", so check found")
 
 	m.Match(
 		`$s[:bytes.LastIndex($s, $sep)]`,
 		`$s[bytes.LastIndex($s, $sep)+len($sep):]`,
+	).
+		Report("use before, after, found := bytes.CutLast($s, $sep) instead of slicing around bytes.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == nil, so check found")
+
+	// The +1 form skips exactly one byte, so it is a CutLast candidate only when
+	// the separator is a one-character literal; with "::" it would keep a ":".
+	m.Match(
+		`$s[strings.LastIndex($s, $sep)+1:]`,
+	).
+		Where(m["sep"].Text.Matches(`^"(\\.|[^"\\])"$`)).
+		Report("use before, after, found := strings.CutLast($s, $sep) instead of slicing around strings.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == \"\", so check found")
+
+	m.Match(
 		`$s[bytes.LastIndex($s, $sep)+1:]`,
 	).
+		Where(m["sep"].Text.Matches(`^\[\]byte\("(\\.|[^"\\])"\)$`) || m["sep"].Text.Matches(`^\[\]byte\{'(\\.|[^'\\])'\}$`)).
 		Report("use before, after, found := bytes.CutLast($s, $sep) instead of slicing around bytes.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == nil, so check found")
 
 	// Index check followed by manual slicing in the body.

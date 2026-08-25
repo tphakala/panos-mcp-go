@@ -177,8 +177,8 @@ func SynctestSleep(m dsl.Matcher) {
 		Suggest("synctest.Sleep($d)")
 }
 
-// HttptestNewTestServer detects httptest.NewServer in a test file that uses
-// testing/synctest and suggests httptest.NewTestServer, added in Go 1.27.
+// HttptestNewTestServer detects httptest.NewServer started inside a synctest
+// bubble and suggests httptest.NewTestServer, added in Go 1.27.
 //
 // Old pattern:
 //
@@ -194,16 +194,18 @@ func SynctestSleep(m dsl.Matcher) {
 // goroutines outside the bubble, so the bubble never reaches a durably blocked
 // state. The httptest.Server docs now say most tests should use NewTestServer,
 // but the in-memory network only serves requests sent through srv.Client(), so
-// this rule is limited to files that import testing/synctest, where the real
-// network is an actual problem rather than a style choice. NewTLSServer is not
-// matched: NewTestServer's URL is plain http://example.com, so a TLS test
+// this rule fires only on a synctest.Test call whose closure body starts an
+// httptest.NewServer, where the real network is an actual problem rather than
+// a style choice; a NewServer elsewhere in the same file is left alone, and a
+// NewServer started by a helper the closure calls is not seen. NewTLSServer is
+// not matched: NewTestServer's URL is plain http://example.com, so a TLS test
 // needs its own HTTPS URL and is not a mechanical swap.
 //
 // See: https://pkg.go.dev/net/http/httptest#NewTestServer
 func HttptestNewTestServer(m dsl.Matcher) {
 	m.Match(
-		`httptest.NewServer($h)`,
+		`synctest.Test($_, func($*_) { $*body })`,
 	).
-		Where(m.File().Imports("testing/synctest")).
-		Report("use httptest.NewTestServer(t, $h) inside synctest tests: it serves over an in-memory network that stays inside the bubble, reachable only through srv.Client() (Go 1.27+)")
+		Where(m["body"].Contains(`httptest.NewServer($_)`)).
+		Report("this synctest bubble starts an httptest.NewServer on a real listener; use httptest.NewTestServer(t, handler), which serves over an in-memory network that stays inside the bubble, reachable only through srv.Client() (Go 1.27+)")
 }
