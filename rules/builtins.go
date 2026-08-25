@@ -231,12 +231,12 @@ func EmbeddedFieldLiteral(m dsl.Matcher) {
 		`$T{$*_, $emb: $embT{$k: $v, $*_}, $*_}`,
 	).
 		Where(m["emb"].Text == m["embT"].Text).
-		Report("initialize the promoted field directly: $T{$k: $v, ...} instead of $emb: $embT{$k: $v, ...} (Go 1.27+); not applicable if $k is shadowed or ambiguous in $T")
+		Report("initialize the promoted field directly: $T{$k: $v, ...} instead of $emb: $embT{$k: $v, ...} (Go 1.27+); not applicable if $k is shadowed or ambiguous in $T, or if $emb is a regular field named after its type")
 
 	// Embedded type from another package: field name is the bare type name.
 	m.Match(
 		`$T{$*_, $emb: $pkg.$embT{$k: $v, $*_}, $*_}`,
 	).
 		Where(m["emb"].Text == m["embT"].Text).
-		Report("initialize the promoted field directly: $T{$k: $v, ...} instead of $emb: $pkg.$embT{$k: $v, ...} (Go 1.27+); not applicable if $k is shadowed or ambiguous in $T")
+		Report("initialize the promoted field directly: $T{$k: $v, ...} instead of $emb: $pkg.$embT{$k: $v, ...} (Go 1.27+); not applicable if $k is shadowed or ambiguous in $T, or if $emb is a regular field named after its type")
 }

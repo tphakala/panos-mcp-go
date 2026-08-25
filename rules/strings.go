@@ -170,6 +170,10 @@ func StringsFieldsFuncIteration(m dsl.Matcher) {
 // s[:LastIndex] panics on -1, and s[LastIndex+1:] yields the whole string. Check
 // the found result when the not-found case matters.
 //
+// The index-check forms fire only when the guarded code slices s at the index
+// (s[:i], s[i:], s[i+n:]); an index used for anything else is not a CutLast
+// candidate.
+//
 // See: https://pkg.go.dev/strings#CutLast
 // See: https://pkg.go.dev/bytes#CutLast
 func StringsCutLast(m dsl.Matcher) {
@@ -179,37 +183,31 @@ func StringsCutLast(m dsl.Matcher) {
 		`$s[strings.LastIndex($s, $sep)+len($sep):]`,
 		`$s[strings.LastIndex($s, $sep)+1:]`,
 	).
-		Report("use before, after, found := strings.CutLast($s, $sep) instead of slicing around strings.LastIndex (Go 1.27+); note CutLast returns after == \"\" when $sep is absent")
+		Report("use before, after, found := strings.CutLast($s, $sep) instead of slicing around strings.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == \"\", so check found")
 
 	m.Match(
 		`$s[:bytes.LastIndex($s, $sep)]`,
 		`$s[bytes.LastIndex($s, $sep)+len($sep):]`,
 		`$s[bytes.LastIndex($s, $sep)+1:]`,
 	).
-		Report("use before, after, found := bytes.CutLast($s, $sep) instead of slicing around bytes.LastIndex (Go 1.27+); note CutLast returns after == nil when $sep is absent")
+		Report("use before, after, found := bytes.CutLast($s, $sep) instead of slicing around bytes.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == nil, so check found")
 
 	// Index check followed by manual slicing in the body.
 	m.Match(
-		`if $i := strings.LastIndex($s, $sep); $i >= 0 { $*_ }`,
-		`if $i := strings.LastIndex($s, $sep); $i != -1 { $*_ }`,
-		`if $i := strings.LastIndex($s, $sep); $i < 0 { $*_ }`,
-		`if $i := strings.LastIndex($s, $sep); $i == -1 { $*_ }`,
-		`$i := strings.LastIndex($s, $sep); if $i >= 0 { $*_ }`,
-		`$i := strings.LastIndex($s, $sep); if $i != -1 { $*_ }`,
-		`$i := strings.LastIndex($s, $sep); if $i < 0 { $*_ }`,
-		`$i := strings.LastIndex($s, $sep); if $i == -1 { $*_ }`,
+		`if $i := strings.LastIndex($s, $sep); $i >= 0 { $*body }`,
+		`if $i := strings.LastIndex($s, $sep); $i != -1 { $*body }`,
+		`$i := strings.LastIndex($s, $sep); if $i < 0 { $*_ }; $*body`,
+		`$i := strings.LastIndex($s, $sep); if $i == -1 { $*_ }; $*body`,
 	).
+		Where(m["body"].Contains(`$s[:$i]`) || m["body"].Contains(`$s[$i:]`) || m["body"].Contains(`$s[$i+$_:]`)).
 		Report("use before, after, found := strings.CutLast($s, $sep) instead of checking strings.LastIndex and slicing by hand (Go 1.27+)")
 
 	m.Match(
-		`if $i := bytes.LastIndex($s, $sep); $i >= 0 { $*_ }`,
-		`if $i := bytes.LastIndex($s, $sep); $i != -1 { $*_ }`,
-		`if $i := bytes.LastIndex($s, $sep); $i < 0 { $*_ }`,
-		`if $i := bytes.LastIndex($s, $sep); $i == -1 { $*_ }`,
-		`$i := bytes.LastIndex($s, $sep); if $i >= 0 { $*_ }`,
-		`$i := bytes.LastIndex($s, $sep); if $i != -1 { $*_ }`,
-		`$i := bytes.LastIndex($s, $sep); if $i < 0 { $*_ }`,
-		`$i := bytes.LastIndex($s, $sep); if $i == -1 { $*_ }`,
+		`if $i := bytes.LastIndex($s, $sep); $i >= 0 { $*body }`,
+		`if $i := bytes.LastIndex($s, $sep); $i != -1 { $*body }`,
+		`$i := bytes.LastIndex($s, $sep); if $i < 0 { $*_ }; $*body`,
+		`$i := bytes.LastIndex($s, $sep); if $i == -1 { $*_ }; $*body`,
 	).
+		Where(m["body"].Contains(`$s[:$i]`) || m["body"].Contains(`$s[$i:]`) || m["body"].Contains(`$s[$i+$_:]`)).
 		Report("use before, after, found := bytes.CutLast($s, $sep) instead of checking bytes.LastIndex and slicing by hand (Go 1.27+)")
 }

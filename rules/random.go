@@ -90,9 +90,10 @@ func RandV2Migration(m dsl.Matcher) {
 // Rand.N mirrors the top-level rand.N function: the type parameter is inferred
 // from the argument, so the two conversions disappear. The rule fires only when
 // the outer call is a conversion to the argument's own type, so r.N($n) yields
-// exactly the type the old expression produced and the suggestion is a safe
-// rewrite. Ordinary function calls wrapping IntN, and conversions to some other
-// type, are left alone. It does not fire on the global functions (rand.Int64N)
+// exactly the type the old expression produced. Ordinary function calls
+// wrapping IntN, and conversions to some other type, are left alone. There is
+// no auto-fix on purpose: int64(r.Int32N(int32(n))) with an int64 n matches,
+// and r.N(n) would use the untruncated bound. It does not fire on the global functions (rand.Int64N)
 // because rand.N has covered those since Go 1.22.
 //
 // m.Import is required: ruleguard resolves the package name in a type pattern
@@ -115,6 +116,5 @@ func RandMethodN(m dsl.Matcher) {
 		`$T($r.UintN(uint($n)))`,
 	).
 		Where(m["r"].Type.Is("*rand.Rand") && m["T"].Type.IdenticalTo(m["n"])).
-		Report("use $r.N($n) instead of converting through a fixed-width bounded method; Rand.N infers the integer type from $n (Go 1.27+)").
-		Suggest("$r.N($n)")
+		Report("use $r.N($n) instead of converting through a fixed-width bounded method; Rand.N infers the integer type from $n (Go 1.27+); not a drop-in if the inner conversion truncated $n")
 }

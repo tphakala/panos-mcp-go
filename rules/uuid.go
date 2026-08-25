@@ -40,5 +40,5 @@ func StdlibUUID(m dsl.Matcher) {
 		`uuid.Max`,
 	).
 		Where(m.File().Imports("github.com/google/uuid")).
-		Report("the standard library uuid package (Go 1.27+) covers New/NewV4/NewV7/Parse/MustParse/Nil/Max; consider dropping github.com/google/uuid")
+		Report("the standard library uuid package (Go 1.27+) covers New/NewV4/NewV7/Parse/MustParse/Nil/Max; consider dropping github.com/google/uuid (its NewRandom/NewV7 lose the error return, and Nil/Max become functions)")
 }

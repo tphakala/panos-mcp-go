@@ -81,7 +81,7 @@ func AtomicTypes(m dsl.Matcher) {
 		`atomic.$fn(&$x, $*_)`,
 	).
 		Where(m["fn"].Text.Matches(`^(Add|Load|Store|Swap|CompareAndSwap|And|Or)(Int32|Int64|Uint32|Uint64|Uintptr)$`)).
-		Report("declare $x as the matching atomic type (atomic.Int64, atomic.Uint32, ...) and call its methods instead of the atomic.$fn function on &$x; typed atomics forbid non-atomic access and fix 32-bit alignment")
+		Report("declare $x as the matching atomic type (atomic.Int64, atomic.Uint32, ...) and call its methods instead of the atomic.$fn function on &$x; typed atomics forbid non-atomic access and fix 32-bit alignment; not applicable if $x is marshaled or crosses an ABI boundary")
 
 	m.Match(
 		`atomic.$fn(&$x, $*_)`,

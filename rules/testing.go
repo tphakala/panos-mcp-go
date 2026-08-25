@@ -195,14 +195,15 @@ func SynctestSleep(m dsl.Matcher) {
 // state. The httptest.Server docs now say most tests should use NewTestServer,
 // but the in-memory network only serves requests sent through srv.Client(), so
 // this rule is limited to files that import testing/synctest, where the real
-// network is an actual problem rather than a style choice.
+// network is an actual problem rather than a style choice. NewTLSServer is not
+// matched: NewTestServer's URL is plain http://example.com, so a TLS test
+// needs its own HTTPS URL and is not a mechanical swap.
 //
 // See: https://pkg.go.dev/net/http/httptest#NewTestServer
 func HttptestNewTestServer(m dsl.Matcher) {
 	m.Match(
 		`httptest.NewServer($h)`,
-		`httptest.NewTLSServer($h)`,
 	).
 		Where(m.File().Imports("testing/synctest")).
-		Report("use httptest.NewTestServer(t, $h) inside synctest tests: it serves over an in-memory network that stays inside the bubble (Go 1.27+)")
+		Report("use httptest.NewTestServer(t, $h) inside synctest tests: it serves over an in-memory network that stays inside the bubble, reachable only through srv.Client() (Go 1.27+)")
 }
