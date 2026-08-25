@@ -36,7 +36,7 @@ linters:
     - makezero
     - misspell
     - mnd
-    #- modernize  # disabled - using ruleguard for Go 1.24+/1.25+ modernization instead
+    #- modernize  # disabled: rules/*.go (ruleguard) carry the Go 1.20 through Go 1.27 modernization patterns instead
     - musttag
     - nakedret
     - nilerr

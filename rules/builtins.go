@@ -197,3 +197,46 @@ func NewWithExpression(m dsl.Matcher) {
 		Report("use new($val) instead of &[]$typ{$val}[0] (Go 1.26+)").
 		Suggest("new($val)")
 }
+
+// EmbeddedFieldLiteral detects a struct literal that initializes a promoted
+// field through a nested literal of the embedded type, and suggests keying the
+// promoted field directly, which Go 1.27 allows.
+//
+// Old pattern:
+//
+//	type Base struct{ Name string }
+//	type Config struct {
+//	    Base
+//	    Port int
+//	}
+//	cfg := Config{Base: Base{Name: "x"}, Port: 80}
+//
+// New pattern (Go 1.27+):
+//
+//	cfg := Config{Name: "x", Port: 80}
+//
+// The spec now allows a struct literal key to be any valid field selector for
+// a (possibly promoted) field of the struct, as long as no embedded field on the
+// path is a pointer. This mirrors the embedlit modernizer in go fix.
+//
+// The rule only fires when the key and the nested literal's type share the same
+// name, which is what an embedded value field looks like in a literal. A regular
+// field that happens to be named after its type (Base Base) also matches, and a
+// promoted name that is shadowed or ambiguous in the outer struct cannot be
+// keyed directly, so this is a report rather than a rewrite.
+//
+// See: https://go.dev/doc/go1.27#language
+func EmbeddedFieldLiteral(m dsl.Matcher) {
+	m.Match(
+		`$T{$*_, $emb: $embT{$k: $v, $*_}, $*_}`,
+	).
+		Where(m["emb"].Text == m["embT"].Text).
+		Report("initialize the promoted field directly: $T{$k: $v, ...} instead of $emb: $embT{$k: $v, ...} (Go 1.27+); not applicable if $k is shadowed or ambiguous in $T")
+
+	// Embedded type from another package: field name is the bare type name.
+	m.Match(
+		`$T{$*_, $emb: $pkg.$embT{$k: $v, $*_}, $*_}`,
+	).
+		Where(m["emb"].Text == m["embT"].Text).
+		Report("initialize the promoted field directly: $T{$k: $v, ...} instead of $emb: $pkg.$embT{$k: $v, ...} (Go 1.27+); not applicable if $k is shadowed or ambiguous in $T")
+}

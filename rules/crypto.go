@@ -175,3 +175,39 @@ func DeprecatedPKCS1v15(m dsl.Matcher) {
 	).
 		Report("rsa.DecryptPKCS1v15SessionKey is deprecated in Go 1.26: PKCS#1 v1.5 encryption is vulnerable to Bleichenbacher attacks; use OAEP-based encryption instead")
 }
+
+// DeprecatedTLSConfigRand detects tls.Config.Rand, deprecated in Go 1.27.
+//
+// Deprecated pattern:
+//
+//	cfg := &tls.Config{Rand: myReader}
+//	cfg.Rand = myReader
+//
+// Recommended alternatives:
+//
+//	// Production: leave Rand nil so crypto/rand is used.
+//	cfg := &tls.Config{}
+//
+//	// Deterministic tests (Go 1.27+):
+//	cryptotest.SetGlobalRandom(t, seed)
+//
+// The field is deprecated because not every TLS configuration is guaranteed to
+// consult it, so a custom Rand is an incomplete override. Test code that wants
+// reproducible randomness should use testing/cryptotest.SetGlobalRandom, which
+// affects crypto/rand and every implicit randomness source in crypto/... for the
+// duration of the test.
+//
+// See: https://pkg.go.dev/crypto/tls#Config
+// See: https://pkg.go.dev/testing/cryptotest#SetGlobalRandom
+func DeprecatedTLSConfigRand(m dsl.Matcher) {
+	m.Match(
+		`tls.Config{$*_, Rand: $_, $*_}`,
+	).
+		Report("tls.Config.Rand is deprecated in Go 1.27: leave it nil in production; for deterministic tests use testing/cryptotest.SetGlobalRandom")
+
+	m.Match(
+		`$cfg.Rand = $_`,
+	).
+		Where(m["cfg"].Type.Is("*tls.Config") || m["cfg"].Type.Is("tls.Config")).
+		Report("tls.Config.Rand is deprecated in Go 1.27: leave it nil in production; for deterministic tests use testing/cryptotest.SetGlobalRandom")
+}

@@ -139,3 +139,64 @@ func ErrorBeforeUse(m dsl.Matcher) {
 	).
 		Report("potential nil pointer: $f may be nil if $err != nil; check error before using $f.$method()")
 }
+
+// URLClone detects shallow copies of url.URL and url.Values and suggests the
+// Clone methods added in Go 1.27.
+//
+// Old patterns:
+//
+//	u2 := *u               // shares u.User (*Userinfo)
+//	v2 := maps.Clone(v)    // shares each []string value
+//
+// New patterns (Go 1.27+):
+//
+//	u2 := u.Clone()
+//	v2 := v.Clone()
+//
+// *u copies the struct but keeps pointing at the same Userinfo, and maps.Clone
+// copies the map but keeps the same backing arrays for every value slice, so a
+// later Add or Set on the copy can mutate the original. The Clone methods are
+// deep copies. The *u form is reported as advisory only: a shallow copy is fine
+// when the copy never touches User.
+//
+// See: https://pkg.go.dev/net/url#URL.Clone
+// See: https://pkg.go.dev/net/url#Values.Clone
+func URLClone(m dsl.Matcher) {
+	m.Match(
+		`maps.Clone($v)`,
+	).
+		Where(m["v"].Type.Is("url.Values")).
+		Report("use $v.Clone() instead of maps.Clone($v): maps.Clone shares the []string values, Values.Clone is a deep copy (Go 1.27+)").
+		Suggest("$v.Clone()")
+
+	m.Match(
+		`$dst := *$u`,
+		`$dst = *$u`,
+	).
+		Where(m["u"].Type.Is("*url.URL")).
+		Report("consider $u.Clone() instead of *$u: the struct copy shares $u.User; Clone is a deep copy (Go 1.27+)")
+}
+
+// ResponseBodyDrain detects an explicit drain of an HTTP response body before
+// Close, which Go 1.27 does automatically for HTTP/1 connections.
+//
+// Old pattern:
+//
+//	io.Copy(io.Discard, resp.Body)
+//	resp.Body.Close()
+//
+// Since Go 1.27, closing an HTTP/1 Response.Body drains any unread content up to
+// a conservative limit, so that the connection can be reused. The explicit copy
+// is redundant for small bodies. It still matters for bodies larger than that
+// limit, where the automatic drain gives up and the connection is dropped, so
+// this is advisory: keep the copy only when a large unread body is expected and
+// connection reuse is worth reading it.
+//
+// See: https://go.dev/doc/go1.27#nethttp
+func ResponseBodyDrain(m dsl.Matcher) {
+	m.Match(
+		`io.Copy(io.Discard, $resp.Body)`,
+	).
+		Where(m["resp"].Type.Is("*http.Response")).
+		Report("Go 1.27 drains an unread HTTP/1 response body on Close (up to a conservative limit); io.Copy(io.Discard, $resp.Body) is redundant unless a large unread body is expected")
+}

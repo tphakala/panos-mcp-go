@@ -150,3 +150,59 @@ func TestingArtifactDir(m dsl.Matcher) {
 		Where(m.File().Name.Matches(`_test\.go$`)).
 		Report("in tests, consider t.ArtifactDir() for test output files instead of os.MkdirTemp (Go 1.26+); use t.TempDir() for scratch space that should be cleaned up")
 }
+
+// SynctestSleep detects time.Sleep immediately followed by synctest.Wait and
+// suggests the synctest.Sleep helper added in Go 1.27.
+//
+// Old pattern:
+//
+//	time.Sleep(d)
+//	synctest.Wait()
+//
+// New pattern (Go 1.27+):
+//
+//	synctest.Sleep(d)
+//
+// synctest.Sleep is documented as exactly equivalent to the two-call sequence:
+// it advances the bubble's fake clock by d and then waits for every other
+// goroutine in the bubble to be durably blocked, so the system under test has
+// settled before the test continues.
+//
+// See: https://pkg.go.dev/testing/synctest#Sleep
+func SynctestSleep(m dsl.Matcher) {
+	m.Match(
+		`time.Sleep($d); synctest.Wait()`,
+	).
+		Report("use synctest.Sleep($d) instead of time.Sleep($d) followed by synctest.Wait() (Go 1.27+)").
+		Suggest("synctest.Sleep($d)")
+}
+
+// HttptestNewTestServer detects httptest.NewServer in a test file that uses
+// testing/synctest and suggests httptest.NewTestServer, added in Go 1.27.
+//
+// Old pattern:
+//
+//	srv := httptest.NewServer(handler)
+//	defer srv.Close()
+//
+// New pattern (Go 1.27+):
+//
+//	srv := httptest.NewTestServer(t, handler)
+//
+// NewTestServer takes a testing.TB and serves over an in-memory network by
+// default, which is what a synctest bubble needs: a real loopback listener has
+// goroutines outside the bubble, so the bubble never reaches a durably blocked
+// state. The httptest.Server docs now say most tests should use NewTestServer,
+// but the in-memory network only serves requests sent through srv.Client(), so
+// this rule is limited to files that import testing/synctest, where the real
+// network is an actual problem rather than a style choice.
+//
+// See: https://pkg.go.dev/net/http/httptest#NewTestServer
+func HttptestNewTestServer(m dsl.Matcher) {
+	m.Match(
+		`httptest.NewServer($h)`,
+		`httptest.NewTLSServer($h)`,
+	).
+		Where(m.File().Imports("testing/synctest")).
+		Report("use httptest.NewTestServer(t, $h) inside synctest tests: it serves over an in-memory network that stays inside the bubble (Go 1.27+)")
+}
