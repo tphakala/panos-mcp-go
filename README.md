@@ -1,5 +1,10 @@
 # panos-mcp-go
 
+[![CI](https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml/badge.svg)](https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/tphakala/panos-mcp-go)](go.mod)
+[![Go Reference](https://pkg.go.dev/badge/github.com/tphakala/panos-mcp-go.svg)](https://pkg.go.dev/github.com/tphakala/panos-mcp-go)
+[![License](https://img.shields.io/github/license/tphakala/panos-mcp-go)](LICENSE)
+
 An MCP server for Palo Alto Networks PAN-OS firewalls and Panorama, written in Go on top of the [pango](https://github.com/PaloAltoNetworks/pango) SDK. It gives an MCP client (an AI assistant, for example) configuration management of a single device: address and service objects, groups and tags, security, NAT, decryption, authentication and policy-based forwarding policy, and the candidate commit lifecycle. One server instance talks to one device.
 
 ## Safety model
@@ -249,7 +254,7 @@ Add `"PANOS_ALLOW_WRITES": "true"` to the `env` block to register the write tool
 
 ## Building
 
-Requires Go 1.26, [Task](https://taskfile.dev) and [golangci-lint](https://golangci-lint.run) 2.x.
+Requires Go 1.27, [Task](https://taskfile.dev) and [golangci-lint](https://golangci-lint.run) 2.x.
 
 ```bash
 task check     # format check, tidy check, vet, lint and test, without modifying files

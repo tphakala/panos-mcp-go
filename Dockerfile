@@ -1,5 +1,5 @@
 # Build stage.
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /app
 
 # Download modules first so the layer caches until go.mod or go.sum changes.

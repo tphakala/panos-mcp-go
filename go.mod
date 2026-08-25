@@ -1,6 +1,6 @@
 module github.com/tphakala/panos-mcp-go
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/PaloAltoNetworks/pango v0.10.3-0.20260731153743-efa43570c367

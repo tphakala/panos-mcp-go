@@ -65,7 +65,7 @@ tasks:
   # gocritic reads rules/*.go through linters.settings.gocritic.settings.ruleguard
   # in .golangci.yaml, not through the Go build, so the //go:build ruleguard tag on
   # those files does not keep them out and --build-tags=ruleguard does not affect
-  # whether they load. Verified with golangci-lint 2.12.2 by "task go:lint:selftest".
+  # whether they load. Verified with golangci-lint 2.13.1 by "task go:lint:selftest".
   go:lint:
     desc: Run golangci-lint
     cmds:

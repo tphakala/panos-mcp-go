@@ -20,7 +20,7 @@ func TestGoVersionCoordinated(t *testing.T) {
 		path    string
 		pattern string
 	}{
-		{"go.mod", `(?m)^go (\d+\.\d+)`}, // reference: "go 1.26.0" -> "1.26"
+		{"go.mod", `(?m)^go (\d+\.\d+)`}, // reference: "go 1.27.0" -> "1.27"
 		{"Dockerfile", `golang:(\d+\.\d+)`},
 		{".github/workflows/ci.yml", `go-version:\s*"(\d+\.\d+)`},
 		{".github/workflows/release.yml", `go-version:\s*"(\d+\.\d+)`},
