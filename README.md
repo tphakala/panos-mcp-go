@@ -1,6 +1,8 @@
 # panos-mcp-go
 
 [![CI](https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml/badge.svg)](https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tphakala/panos-mcp-go/actions/workflows/codeql.yml/badge.svg)](https://github.com/tphakala/panos-mcp-go/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/tphakala/panos-mcp-go?sort=semver)](https://github.com/tphakala/panos-mcp-go/releases/latest)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/tphakala/panos-mcp-go)](go.mod)
 [![Go Reference](https://pkg.go.dev/badge/github.com/tphakala/panos-mcp-go.svg)](https://pkg.go.dev/github.com/tphakala/panos-mcp-go)
 [![License](https://img.shields.io/github/license/tphakala/panos-mcp-go)](LICENSE)

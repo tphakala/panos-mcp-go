@@ -4,48 +4,47 @@ on:
   push:
     tags:
       - "v*"
+  # Manual runs must be dispatched on a tag ref; GoReleaser refuses to release an
+  # untagged commit.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  goreleaser:
+    name: GoReleaser
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # fetch-depth: 0 so the tag is present; persist-credentials: false keeps the
-      # GITHUB_TOKEN out of .git/config. Asset upload below uses the token from the
-      # job environment, not the checkout credential, so dropping it is safe.
+      # fetch-depth: 0 so the tag and full history are present for the changelog.
+      # persist-credentials: false keeps GITHUB_TOKEN out of .git/config: GoReleaser
+      # reads the token from the job environment for the GitHub release, and the tap
+      # push uses the deploy key over SSH, so the checkout credential is never used.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      # Hardcoded to match ci.yml and the go.mod version that
+      # repo_hygiene_test.go's TestGoVersionCoordinated keeps in lockstep.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
 
-      # Cross-compile static binaries. CGO is off so the linux binaries are fully
-      # static and every target builds without a C toolchain. main.version is
-      # stamped from the tag via -X main.version, the same key task go:build
-      # uses; release additionally passes -s -w -trimpath for smaller binaries.
-      - name: Build binaries
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: |
-          LDFLAGS="-s -w -X main.version=${VERSION}"
+      # Gate the release on the race suite, the same bar CI enforces.
+      - name: Test before release
+        run: go test ./... -race
 
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o panos-mcp-go-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o panos-mcp-go-linux-arm64 .
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o panos-mcp-go-darwin-amd64 .
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o panos-mcp-go-darwin-arm64 .
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o panos-mcp-go-windows-amd64.exe .
-
-      - name: Create release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+      # SHA-pinned: this job holds contents: write, so a moving tag on a third-party
+      # action is a supply-chain risk. Bump the pin by hand (Dependabot also updates
+      # it). GoReleaser config lives in .goreleaser.yaml.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          generate_release_notes: true
-          # Glob the built binaries rather than relisting them, so a new target
-          # in the build step above ships without a second edit here. A fresh
-          # checkout has no other panos-mcp-go-* files.
-          files: panos-mcp-go-*
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Scoped write deploy key for tphakala/homebrew-tap; GoReleaser's brews
+          # step pushes the regenerated formula over SSH with it (no PAT needed).
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}

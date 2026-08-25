@@ -1,0 +1,61 @@
+version: 2
+project_name: panos-mcp-go
+builds:
+  - main: .
+    binary: panos-mcp-go
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    # main.version is the only stamped symbol (see main.go); keep -s -w for smaller
+    # binaries, matching what the previous hand-rolled release job produced.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+checksum:
+  name_template: checksums.txt
+changelog:
+  use: github
+  filters:
+    exclude:
+      - '^ci:'
+      - '^docs?:'
+      - '^README'
+# Homebrew tap: on every tagged release, GoReleaser regenerates the formula in
+# tphakala/homebrew-tap and pushes it, so the tap stays current with no manual
+# steps. Auth is a scoped write deploy key (secret HOMEBREW_TAP_DEPLOY_KEY) pushed
+# over SSH, not a personal access token, so its reach is limited to that one repo.
+#
+# Kept as a formula (`brews`), not a cask (`homebrew_casks`): Homebrew casks are
+# macOS-only and panos-mcp-go ships Linux binaries too, so a formula's
+# on_macos/on_linux blocks let `brew install` work on both. GoReleaser deprecated
+# `brews` but it stays functional in v2, and the release job runs `release`, not
+# `check`, so the deprecation only warns. Revisit if GoReleaser removes `brews` in
+# a future major.
+#
+# No `test` block: the binary parses no flags and LoadConfig requires PANOS_* env
+# to be set, so it exits non-zero with none present. There is no side-effect-free
+# smoke command to assert on, so a formula test would only ever fail.
+brews:
+  - repository:
+      owner: tphakala
+      name: homebrew-tap
+      branch: main
+      git:
+        url: "git@github.com:tphakala/homebrew-tap.git"
+        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
+    directory: Formula
+    homepage: "https://github.com/tphakala/panos-mcp-go"
+    description: "Model Context Protocol (MCP) server for Palo Alto Networks PAN-OS and Panorama"
+    license: "Apache-2.0"
