@@ -204,7 +204,7 @@ func TestAntivirusSummary(t *testing.T) {
 func TestBuildVulnerabilityEntry(t *testing.T) {
 	e, err := buildVulnerabilityEntry(VulnerabilityProfileInput{
 		Name: "v1", Description: "d", CloudInlineAnalysis: ptr(true),
-		InlineExceptionEdlURLs: []string{"edl1"}, InlineExceptionIPAddresses: []string{"1.2.3.4"},
+		InlineExceptionEdlURLs: []string{"edl1"}, InlineExceptionIPAddresses: []string{"ip-edl-1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestBuildVulnerabilityEntry(t *testing.T) {
 		t.Errorf("base fields: %+v", e)
 	}
 	if len(e.InlineExceptionEdlUrl) != 1 || e.InlineExceptionEdlUrl[0] != "edl1" ||
-		len(e.InlineExceptionIpAddress) != 1 || e.InlineExceptionIpAddress[0] != "1.2.3.4" {
+		len(e.InlineExceptionIpAddress) != 1 || e.InlineExceptionIpAddress[0] != "ip-edl-1" {
 		t.Errorf("inline exceptions: %+v", e)
 	}
 	if _, err := buildVulnerabilityEntry(VulnerabilityProfileInput{}); err == nil {
@@ -240,7 +240,7 @@ func TestOverlayVulnerability(t *testing.T) {
 
 func TestVulnerabilitySummary(t *testing.T) {
 	e := &vulnerability.Entry{Name: "v1", Description: ptr("d"), CloudInlineAnalysis: ptr(true),
-		InlineExceptionEdlUrl: []string{"edl1"}, InlineExceptionIpAddress: []string{"1.2.3.4"}}
+		InlineExceptionEdlUrl: []string{"edl1"}, InlineExceptionIpAddress: []string{"ip-edl-1"}}
 	m := mustMap(t, vulnerabilitySummary(e))
 	if m[tagNameKey] != "v1" || m[descriptionKey] != "d" || m["cloud_inline_analysis"] != true {
 		t.Errorf("summary base: %+v", m)
@@ -248,7 +248,7 @@ func TestVulnerabilitySummary(t *testing.T) {
 	if got := mustStrSlice(t, m["inline_exception_edl_urls"]); len(got) != 1 || got[0] != "edl1" {
 		t.Errorf("edl exceptions: %+v", got)
 	}
-	if got := mustStrSlice(t, m["inline_exception_ip_addresses"]); len(got) != 1 || got[0] != "1.2.3.4" {
+	if got := mustStrSlice(t, m["inline_exception_ip_addresses"]); len(got) != 1 || got[0] != "ip-edl-1" {
 		t.Errorf("ip exceptions: %+v", got)
 	}
 }
@@ -258,7 +258,7 @@ func TestVulnerabilitySummary(t *testing.T) {
 func TestBuildSpywareEntry(t *testing.T) {
 	e, err := buildSpywareEntry(SpywareProfileInput{
 		Name: "s1", Description: "d", CloudInlineAnalysis: ptr(true),
-		InlineExceptionEdlURLs: []string{"edl1"}, InlineExceptionIPAddresses: []string{"1.2.3.4"},
+		InlineExceptionEdlURLs: []string{"edl1"}, InlineExceptionIPAddresses: []string{"ip-edl-1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -290,12 +290,12 @@ func TestOverlaySpyware(t *testing.T) {
 }
 
 func TestSpywareSummary(t *testing.T) {
-	e := &spyware.Entry{Name: "s1", Description: ptr("d"), CloudInlineAnalysis: ptr(true), InlineExceptionIpAddress: []string{"1.2.3.4"}}
+	e := &spyware.Entry{Name: "s1", Description: ptr("d"), CloudInlineAnalysis: ptr(true), InlineExceptionIpAddress: []string{"ip-edl-1"}}
 	m := mustMap(t, spywareSummary(e))
 	if m[tagNameKey] != "s1" || m[descriptionKey] != "d" || m["cloud_inline_analysis"] != true {
 		t.Errorf("summary: %+v", m)
 	}
-	if got := mustStrSlice(t, m["inline_exception_ip_addresses"]); len(got) != 1 || got[0] != "1.2.3.4" {
+	if got := mustStrSlice(t, m["inline_exception_ip_addresses"]); len(got) != 1 || got[0] != "ip-edl-1" {
 		t.Errorf("ip exceptions: %+v", got)
 	}
 }
@@ -383,7 +383,7 @@ func TestOverlayProfilesClearList(t *testing.T) {
 		assertClearedList(t, "decoders", e.Decoder)
 	})
 	t.Run("vulnerability inline exceptions", func(t *testing.T) {
-		e := &vulnerability.Entry{Name: "v1", InlineExceptionEdlUrl: []string{"old"}, InlineExceptionIpAddress: []string{"1.2.3.4"}}
+		e := &vulnerability.Entry{Name: "v1", InlineExceptionEdlUrl: []string{"old"}, InlineExceptionIpAddress: []string{"ip-edl-1"}}
 		if err := overlayVulnerability(e, VulnerabilityProfileInput{Name: "v1", InlineExceptionEdlURLs: []string{}, InlineExceptionIPAddresses: []string{}}); err != nil {
 			t.Fatal(err)
 		}
@@ -391,7 +391,7 @@ func TestOverlayProfilesClearList(t *testing.T) {
 		assertClearedList(t, "inline_exception_ip_addresses", e.InlineExceptionIpAddress)
 	})
 	t.Run("spyware inline exceptions", func(t *testing.T) {
-		e := &spyware.Entry{Name: "s1", InlineExceptionEdlUrl: []string{"old"}, InlineExceptionIpAddress: []string{"1.2.3.4"}}
+		e := &spyware.Entry{Name: "s1", InlineExceptionEdlUrl: []string{"old"}, InlineExceptionIpAddress: []string{"ip-edl-1"}}
 		if err := overlaySpyware(e, SpywareProfileInput{Name: "s1", InlineExceptionEdlURLs: []string{}, InlineExceptionIPAddresses: []string{}}); err != nil {
 			t.Fatal(err)
 		}
@@ -874,14 +874,14 @@ func TestVulnerabilityProfileCreate(t *testing.T) {
 	)
 	h := createHandler[vulnerability.Location, vulnerability.Entry, VulnerabilityProfileInput](d, "panos_vulnerability_profile_create", newVulnerabilityService(d), vulnerabilityResolve(d),
 		func(in VulnerabilityProfileInput) LocationInput { return in.Location }, buildVulnerabilityEntry, vulnerabilitySummary)
-	res, _, err := h(t.Context(), nil, VulnerabilityProfileInput{Name: "v-new", CloudInlineAnalysis: ptr(true), InlineExceptionIPAddresses: []string{"1.2.3.4"}})
+	res, _, err := h(t.Context(), nil, VulnerabilityProfileInput{Name: "v-new", CloudInlineAnalysis: ptr(true), InlineExceptionIPAddresses: []string{"ip-edl-1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.IsError {
 		t.Fatalf("create failed: %s", textContent(t, res))
 	}
-	if set := strings.Join(setElements(f), " "); !strings.Contains(set, "<inline-exception-ip-address><member>1.2.3.4</member></inline-exception-ip-address>") {
+	if set := strings.Join(setElements(f), " "); !strings.Contains(set, "<inline-exception-ip-address><member>ip-edl-1</member></inline-exception-ip-address>") {
 		t.Fatalf("create set element missing inline exception: %s", set)
 	}
 	// vulnerability has no vsys location: a firewall default targets shared.

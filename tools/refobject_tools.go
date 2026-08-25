@@ -676,7 +676,7 @@ type EdlInput struct {
 	ExceptionList       []string      `json:"exception_list,omitempty" jsonschema:"Entries excluded from the list; replaces fully when provided, an explicitly empty list clears it"`
 	CertificateProfile  string        `json:"certificate_profile,omitempty" jsonschema:"Certificate profile for HTTPS source validation; ip, domain, and url types only"`
 	ExpandDomain        *bool         `json:"expand_domain,omitempty" jsonschema:"Expand to include subdomains; domain type only"`
-	Recurring           string        `json:"recurring,omitempty" jsonschema:"Refresh interval: five-minute, hourly, daily, weekly, monthly; ip, domain, and url types only. Omitted leaves recurring unset"`
+	Recurring           string        `json:"recurring,omitempty" jsonschema:"Refresh interval: five-minute, hourly, daily, weekly, monthly. Required whenever type is ip, domain, or url (the device rejects the commit without a refresh schedule); not accepted for predefined types. On a type-less update, omitted leaves the current schedule unchanged"`
 	RecurringAt         string        `json:"recurring_at,omitempty" jsonschema:"Refresh time; daily, weekly, and monthly intervals only. Device-validated format"`
 	RecurringDayOfWeek  string        `json:"recurring_day_of_week,omitempty" jsonschema:"Weekly refresh day (sunday..saturday); weekly interval only"`
 	RecurringDayOfMonth *int64        `json:"recurring_day_of_month,omitempty" jsonschema:"Monthly refresh day 1-31; monthly interval only"`
@@ -868,10 +868,20 @@ func edlURLRecurringSpec(r *extdynlist.TypeUrlRecurring) *edlRecurringSpec {
 
 // buildEdlType builds a fresh Type subtree for the provided type from the input
 // only. url is required (a source-less list fails commit; for predefined types
-// it is the built-in list name). Every non-chosen branch is left nil.
+// it is the built-in list name), and recurring is required for the ip, domain,
+// and url types (a schedule-less list fails commit the same way). Every
+// non-chosen branch is left nil.
 func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 	if in.URL == "" {
 		return nil, errors.New("url is required when type is set")
+	}
+	// ip, domain, and url lists need a refresh schedule or the device rejects the
+	// commit ("... is missing 'recurring'"). Predefined types refresh with content
+	// updates and take none (already rejected upstream in validateEdlParams).
+	// MEASURED live for ip (#69); domain and url inferred from the identical pango
+	// recurring model, NOT separately MEASURED.
+	if !edlIsPredefined(in.Type) && in.Recurring == "" {
+		return nil, errors.New("recurring is required for the ip, domain, and url types (the device rejects the commit without a refresh schedule); one of " + edlRecurringListStr)
 	}
 	spec := edlRecurringSpecFrom(in)
 	switch in.Type {
@@ -1176,12 +1186,12 @@ func RegisterEdlTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_edl_create",
-		Description: "Create an external dynamic list in the candidate config. type is required (ip, domain, url, predefined-ip, predefined-url) and url is required (the source URL, or the built-in list name for predefined types). recurring sets the refresh interval; credentials (auth) are not settable through this server. Run panos_commit to apply.",
+		Description: "Create an external dynamic list in the candidate config. type is required (ip, domain, url, predefined-ip, predefined-url) and url is required (the source URL, or the built-in list name for predefined types). recurring sets the refresh interval and is required for the ip, domain, and url types (the device rejects the commit without one); predefined types refresh with content updates and take none. credentials (auth) are not settable through this server. Run panos_commit to apply.",
 		Annotations: createTool("Create EDL"),
 	}, createHandler[extdynlist.Location, extdynlist.Entry, EdlInput](d, "panos_edl_create", svc, resolve, loc, buildEdlEntry, edlDetail))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_edl_update",
-		Description: "Update an external dynamic list: read-modify-write, only provided fields change. A provided type replaces the whole source definition (url required); without a type, the source fields (url, description, exception_list, certificate_profile, expand_domain, recurring) overlay within the current type, and a field not valid for that type is rejected (for example expand_domain applies to domain only, and predefined lists take none of certificate_profile, expand_domain, or recurring). exception_list replaces fully (an empty list clears it). Candidate config only; run panos_commit to apply.",
+		Description: "Update an external dynamic list: read-modify-write, only provided fields change. A provided type replaces the whole source definition (url required, and recurring required for the ip, domain, and url types); without a type, the source fields (url, description, exception_list, certificate_profile, expand_domain, recurring) overlay within the current type, and a field not valid for that type is rejected (for example expand_domain applies to domain only, and predefined lists take none of certificate_profile, expand_domain, or recurring). exception_list replaces fully (an empty list clears it). Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update EDL"),
 	}, updateHandler[extdynlist.Location, extdynlist.Entry, EdlInput](d, "panos_edl_update", svc, resolve, loc,
 		func(in EdlInput) string { return in.Name }, overlayEdl, edlDetail))

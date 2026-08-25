@@ -468,7 +468,7 @@ func TestBuildEdlEntry(t *testing.T) {
 		}
 	})
 	t.Run("domain carries expand_domain", func(t *testing.T) {
-		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "domain", URL: "https://x", ExpandDomain: ptr(true)})
+		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "domain", URL: "https://x", ExpandDomain: ptr(true), Recurring: "hourly"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -500,6 +500,9 @@ func TestBuildEdlEntryRejects(t *testing.T) {
 		{"predefined with recurring", "predefined lists refresh", EdlInput{Name: "e", Type: "predefined-ip", URL: "x", Recurring: "hourly"}},
 		{"predefined with cert", "certificate_profile does not apply", EdlInput{Name: "e", Type: "predefined-ip", URL: "x", CertificateProfile: "cp"}},
 		{"expand_domain on ip", "expand_domain applies to the domain type only", EdlInput{Name: "e", Type: "ip", URL: "x", ExpandDomain: ptr(true)}},
+		{"ip without recurring", "recurring is required", EdlInput{Name: "e", Type: "ip", URL: "x"}},
+		{"domain without recurring", "recurring is required", EdlInput{Name: "e", Type: "domain", URL: "x"}},
+		{"url without recurring", "recurring is required", EdlInput{Name: "e", Type: "url", URL: "x"}},
 	}
 	for _, c := range bad {
 		t.Run(c.name, func(t *testing.T) {
@@ -575,7 +578,7 @@ func TestEdlRecurringValidation(t *testing.T) {
 // TestOverlayEdlTypeSwitchClearsOldBranch is the headline EDL oneof test.
 func TestOverlayEdlTypeSwitchClearsOldBranch(t *testing.T) {
 	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: ptr("https://old")}}}
-	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "https://new"}); err != nil {
+	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "https://new", Recurring: "hourly"}); err != nil {
 		t.Fatal(err)
 	}
 	if e.Type.Ip != nil {
@@ -583,6 +586,17 @@ func TestOverlayEdlTypeSwitchClearsOldBranch(t *testing.T) {
 	}
 	if e.Type.Domain == nil || strVal(e.Type.Domain.Url) != "https://new" {
 		t.Fatalf("domain branch not set: %+v", e.Type.Domain)
+	}
+}
+
+// TestOverlayEdlTypeSwitchRequiresRecurring pins that a type switch on update
+// runs through the same recurring guard as create: rebuilding the source for an
+// ip/domain/url type without a schedule is rejected, so the update path cannot
+// produce an un-committable EDL either.
+func TestOverlayEdlTypeSwitchRequiresRecurring(t *testing.T) {
+	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: ptr("https://old"), Recurring: &extdynlist.TypeIpRecurring{Hourly: &extdynlist.TypeIpRecurringHourly{}}}}}
+	if err := overlayEdl(e, EdlInput{Type: "url", URL: "https://new"}); err == nil || !strings.Contains(err.Error(), "recurring is required") {
+		t.Fatalf("type switch to url without recurring must be rejected, got %v", err)
 	}
 }
 
@@ -836,7 +850,7 @@ func TestOverlayEdlTypeSwitchPreservesTypeMisc(t *testing.T) {
 		Ip:             &extdynlist.TypeIp{Url: ptr("old")},
 		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
 	}}
-	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "new"}); err != nil {
+	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "new", Recurring: "hourly"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.Type.MiscAttributes) != 1 || e.Type.MiscAttributes[0].Value != "keep-me" {

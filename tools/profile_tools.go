@@ -259,7 +259,7 @@ type VulnerabilityProfileInput struct {
 	Description                string        `json:"description,omitempty"`
 	CloudInlineAnalysis        *bool         `json:"cloud_inline_analysis,omitempty" jsonschema:"Enable cloud inline analysis"`
 	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
-	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"IP address inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
+	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"Inline-detection IP exceptions: each entry is the name of an ip-type external dynamic list (see panos_edl_create), not an IP literal or address object; replaces fully when provided, an explicit empty list clears it"`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
@@ -289,6 +289,12 @@ func overlayVulnerability(e *vulnerability.Entry, in VulnerabilityProfileInput) 
 // and the two inline_exception lists. Each nil (omitted) value is left unchanged;
 // an explicit empty list clears that exception set (issue #61). in is by pointer
 // to avoid copying the large input.
+//
+// Each inline_exception_ip_addresses entry is the NAME of an ip-type external
+// dynamic list, not an IP literal or address object: the device rejects any other
+// value as "not a valid reference". MEASURED live against the PA-VM for the
+// vulnerability profile (#66/#70); anti-spyware shares the pango model
+// (applySpywareInline) and is inferred, NOT separately measured.
 func applyVulnerabilityInline(e *vulnerability.Entry, in *VulnerabilityProfileInput) {
 	if in.CloudInlineAnalysis != nil {
 		e.CloudInlineAnalysis = in.CloudInlineAnalysis
@@ -333,12 +339,12 @@ func RegisterVulnerabilityProfileTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vulnerability_profile_create",
-		Description: "Create a vulnerability protection profile in the candidate config. Per-signature rules are SDK-only and not set here, so a profile created with this tool carries no per-signature rules of its own; it models the top-level inline-inspection controls. On a firewall it is created at shared. Run panos_commit to apply.",
+		Description: "Create a vulnerability protection profile in the candidate config. Per-signature rules are SDK-only and not set here, so a profile created with this tool carries no per-signature rules of its own; it models the top-level inline-inspection controls. inline_exception_ip_addresses entries are names of ip-type EDLs (see panos_edl_create), not IP literals or address objects. On a firewall it is created at shared. Run panos_commit to apply.",
 		Annotations: createTool("Create vulnerability profile"),
 	}, createHandler[vulnerability.Location, vulnerability.Entry, VulnerabilityProfileInput](d, "panos_vulnerability_profile_create", svc, resolve, loc, buildVulnerabilityEntry, vulnerabilitySummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vulnerability_profile_update",
-		Description: "Update a vulnerability protection profile: read-modify-write, only provided fields change. Candidate config only; run panos_commit to apply.",
+		Description: "Update a vulnerability protection profile: read-modify-write, only provided fields change. inline_exception_ip_addresses entries are names of ip-type EDLs (see panos_edl_create), not IP literals or address objects. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update vulnerability profile"),
 	}, updateHandler[vulnerability.Location, vulnerability.Entry, VulnerabilityProfileInput](d, "panos_vulnerability_profile_update", svc, resolve, loc,
 		func(in VulnerabilityProfileInput) string { return in.Name }, overlayVulnerability, vulnerabilitySummary))
@@ -386,7 +392,7 @@ type SpywareProfileInput struct {
 	Description                string        `json:"description,omitempty"`
 	CloudInlineAnalysis        *bool         `json:"cloud_inline_analysis,omitempty" jsonschema:"Enable cloud inline analysis"`
 	InlineExceptionEdlURLs     []string      `json:"inline_exception_edl_urls,omitempty" jsonschema:"EDL URL inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
-	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"IP address inline-detection exceptions; replaces fully when provided, an explicit empty list clears it"`
+	InlineExceptionIPAddresses []string      `json:"inline_exception_ip_addresses,omitempty" jsonschema:"Inline-detection IP exceptions: each entry is the name of an ip-type external dynamic list (see panos_edl_create), not an IP literal or address object; replaces fully when provided, an explicit empty list clears it"`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.
@@ -456,12 +462,12 @@ func RegisterSpywareProfileTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_anti_spyware_profile_create",
-		Description: "Create an anti-spyware profile in the candidate config. Per-threat rules and DNS-security (botnet-domains) settings are SDK-only and not set here, so a profile created with this tool carries no per-threat rules of its own; it models the top-level inline-inspection controls. Run panos_commit to apply.",
+		Description: "Create an anti-spyware profile in the candidate config. Per-threat rules and DNS-security (botnet-domains) settings are SDK-only and not set here, so a profile created with this tool carries no per-threat rules of its own; it models the top-level inline-inspection controls. inline_exception_ip_addresses entries are names of ip-type EDLs (see panos_edl_create), not IP literals or address objects. Run panos_commit to apply.",
 		Annotations: createTool("Create anti-spyware profile"),
 	}, createHandler[spyware.Location, spyware.Entry, SpywareProfileInput](d, "panos_anti_spyware_profile_create", svc, resolve, loc, buildSpywareEntry, spywareSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_anti_spyware_profile_update",
-		Description: "Update an anti-spyware profile: read-modify-write, only provided fields change. Candidate config only; run panos_commit to apply.",
+		Description: "Update an anti-spyware profile: read-modify-write, only provided fields change. inline_exception_ip_addresses entries are names of ip-type EDLs (see panos_edl_create), not IP literals or address objects. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update anti-spyware profile"),
 	}, updateHandler[spyware.Location, spyware.Entry, SpywareProfileInput](d, "panos_anti_spyware_profile_update", svc, resolve, loc,
 		func(in SpywareProfileInput) string { return in.Name }, overlaySpyware, spywareSummary))
