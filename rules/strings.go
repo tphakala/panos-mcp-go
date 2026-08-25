@@ -149,3 +149,79 @@ func StringsFieldsFuncIteration(m dsl.Matcher) {
 	).
 		Report("use for $field := range bytes.FieldsFuncSeq($s, $f) to avoid intermediate slice allocation (Go 1.24+)")
 }
+
+// StringsCutLast detects strings.LastIndex / bytes.LastIndex followed by manual
+// slicing or an index check, and suggests strings.CutLast / bytes.CutLast.
+//
+// Old patterns:
+//
+//	dir := path[:strings.LastIndex(path, "/")]
+//	base := path[strings.LastIndex(path, "/")+1:]
+//	if i := strings.LastIndex(s, sep); i >= 0 {
+//	    before, after := s[:i], s[i+len(sep):]
+//	}
+//
+// New pattern (Go 1.27+):
+//
+//	before, after, found := strings.CutLast(s, sep)
+//
+// CutLast returns (s, "", false) when sep is absent (bytes.CutLast returns
+// (s, nil, false)). The slicing idioms behave differently in that case:
+// s[:LastIndex] panics on -1, and s[LastIndex+1:] yields the whole string. Check
+// the found result when the not-found case matters.
+//
+// The +1 slicing form fires only for a one-character literal separator, since
+// with a longer separator it keeps part of it and CutLast would not. The
+// index-check forms fire only when the guarded code slices s at the index
+// (s[:i], s[i:], s[i+n:]); an index used for anything else is not a CutLast
+// candidate.
+//
+// See: https://pkg.go.dev/strings#CutLast
+// See: https://pkg.go.dev/bytes#CutLast
+func StringsCutLast(m dsl.Matcher) {
+	// Slicing around the last separator.
+	m.Match(
+		`$s[:strings.LastIndex($s, $sep)]`,
+		`$s[strings.LastIndex($s, $sep)+len($sep):]`,
+	).
+		Report("use before, after, found := strings.CutLast($s, $sep) instead of slicing around strings.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == \"\", so check found")
+
+	m.Match(
+		`$s[:bytes.LastIndex($s, $sep)]`,
+		`$s[bytes.LastIndex($s, $sep)+len($sep):]`,
+	).
+		Report("use before, after, found := bytes.CutLast($s, $sep) instead of slicing around bytes.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == nil, so check found")
+
+	// The +1 form skips exactly one byte, so it is a CutLast candidate only when
+	// the separator is a one-character literal; with "::" it would keep a ":".
+	m.Match(
+		`$s[strings.LastIndex($s, $sep)+1:]`,
+	).
+		Where(m["sep"].Text.Matches(`^"(\\.|[^"\\])"$`)).
+		Report("use before, after, found := strings.CutLast($s, $sep) instead of slicing around strings.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == \"\", so check found")
+
+	m.Match(
+		`$s[bytes.LastIndex($s, $sep)+1:]`,
+	).
+		Where(m["sep"].Text.Matches(`^\[\]byte\("(\\.|[^"\\])"\)$`) || m["sep"].Text.Matches(`^\[\]byte\{'(\\.|[^'\\])'\}$`)).
+		Report("use before, after, found := bytes.CutLast($s, $sep) instead of slicing around bytes.LastIndex (Go 1.27+); when $sep is absent the slicing idiom yields all of $s but CutLast yields after == nil, so check found")
+
+	// Index check followed by manual slicing in the body.
+	m.Match(
+		`if $i := strings.LastIndex($s, $sep); $i >= 0 { $*body }`,
+		`if $i := strings.LastIndex($s, $sep); $i != -1 { $*body }`,
+		`$i := strings.LastIndex($s, $sep); if $i < 0 { $*_ }; $*body`,
+		`$i := strings.LastIndex($s, $sep); if $i == -1 { $*_ }; $*body`,
+	).
+		Where(m["body"].Contains(`$s[:$i]`) || m["body"].Contains(`$s[$i:]`) || m["body"].Contains(`$s[$i+$_:]`)).
+		Report("use before, after, found := strings.CutLast($s, $sep) instead of checking strings.LastIndex and slicing by hand (Go 1.27+)")
+
+	m.Match(
+		`if $i := bytes.LastIndex($s, $sep); $i >= 0 { $*body }`,
+		`if $i := bytes.LastIndex($s, $sep); $i != -1 { $*body }`,
+		`$i := bytes.LastIndex($s, $sep); if $i < 0 { $*_ }; $*body`,
+		`$i := bytes.LastIndex($s, $sep); if $i == -1 { $*_ }; $*body`,
+	).
+		Where(m["body"].Contains(`$s[:$i]`) || m["body"].Contains(`$s[$i:]`) || m["body"].Contains(`$s[$i+$_:]`)).
+		Report("use before, after, found := bytes.CutLast($s, $sep) instead of checking bytes.LastIndex and slicing by hand (Go 1.27+)")
+}

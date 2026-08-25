@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -554,11 +555,7 @@ type securityMatchRule struct {
 // policyMatchName returns the rule name from a policy-match entry: the name
 // attribute on the modern shape, or the trimmed chardata on the legacy shape.
 func policyMatchName(nameAttr, chardata string) string {
-	name := strings.TrimSpace(nameAttr)
-	if name == "" {
-		name = strings.TrimSpace(chardata)
-	}
-	return name
+	return cmp.Or(strings.TrimSpace(nameAttr), strings.TrimSpace(chardata))
 }
 
 // securityMatchRuleSummary projects one matched security rule to the output shape.

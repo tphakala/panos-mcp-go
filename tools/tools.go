@@ -103,9 +103,6 @@ const (
 	rulebasePost = "post-rulebase"
 )
 
-// ptr returns a pointer to v; pango entry fields are mostly pointers.
-func ptr[T any](v T) *T { return &v }
-
 // strVal dereferences s, mapping nil to the empty string.
 func strVal(s *string) string {
 	if s == nil {
@@ -147,7 +144,7 @@ type LocationInput struct {
 
 // ListInput is the common input for list tools.
 type ListInput struct {
-	Location LocationInput `json:"location,omitempty"`
+	Location LocationInput `json:"location,omitzero"`
 	Limit    int           `json:"limit,omitempty" jsonschema:"Max results (default 50, max 200)"`
 	Offset   int           `json:"offset,omitempty" jsonschema:"Skip this many results"`
 	Filter   string        `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
@@ -156,7 +153,7 @@ type ListInput struct {
 // NameInput is the common input for single-object tools.
 type NameInput struct {
 	Name     string        `json:"name" jsonschema:"Object name"`
-	Location LocationInput `json:"location,omitempty"`
+	Location LocationInput `json:"location,omitzero"`
 }
 
 // normalizeRulebase maps the tool-level pre/post values onto the PAN-OS
@@ -219,25 +216,25 @@ func resolveLocation[L any](d *Deps, in LocationInput, p locParts[L]) (L, error)
 			return zero, err
 		}
 	} else if in.Rulebase != "" {
-		return zero, fmt.Errorf("rulebase applies only to rule tools")
+		return zero, errors.New("rulebase applies only to rule tools")
 	}
 	switch {
 	case in.DeviceGroup != "":
 		if !d.IsPanorama {
-			return zero, fmt.Errorf("location device_group requires a Panorama connection")
+			return zero, errors.New("location device_group requires a Panorama connection")
 		}
 		return p.deviceGroup(in.DeviceGroup, rb), nil
 	case in.Shared:
 		if p.rules && !d.IsPanorama {
-			return zero, fmt.Errorf("shared rulebases exist only on Panorama")
+			return zero, errors.New("shared rulebases exist only on Panorama")
 		}
 		return p.shared(rb), nil
 	case in.Vsys != "":
 		if d.IsPanorama {
-			return zero, fmt.Errorf("location vsys requires a firewall connection; use shared or device_group")
+			return zero, errors.New("location vsys requires a firewall connection; use shared or device_group")
 		}
 		if p.vsys == nil {
-			return zero, fmt.Errorf("location vsys is not supported for this object type; pango models it at shared or device_group only")
+			return zero, errors.New("location vsys is not supported for this object type; pango models it at shared or device_group only")
 		}
 		return p.vsys(in.Vsys), nil
 	case d.IsPanorama:

@@ -89,9 +89,13 @@ func TimeDateTimeConstants(m dsl.Matcher) {
 //	}
 //
 // Background: Before Go 1.23, timer channels had capacity 1. Code that
-// checked len(timer.C) to avoid blocking reads is now broken.
+// checked len(timer.C) to avoid blocking reads is now broken. Go 1.23 through
+// Go 1.26 kept the old behaviour reachable through the asynctimerchan GODEBUG
+// setting; Go 1.27 removed that setting permanently, so timer and ticker
+// channels are unbuffered regardless of GODEBUG.
 //
 // See: https://go.dev/doc/go1.23#timer-changes
+// See: https://go.dev/doc/go1.27#runtime
 // See: https://pkg.go.dev/time#Timer
 func TimerChannelLen(m dsl.Matcher) {
 	// len() on timer.C

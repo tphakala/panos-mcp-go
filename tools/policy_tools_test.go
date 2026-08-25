@@ -126,7 +126,7 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 		From: []string{"dmz"}, To: []string{"trust"},
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"web-srv"},
 		Application: []string{"ssl"}, Service: []string{"tcp-8443"},
-		Description: "d", Tags: []string{"t"}, Disabled: ptr(true), Schedule: "work-hours",
+		Description: "d", Tags: []string{"t"}, Disabled: new(true), Schedule: "work-hours",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,12 +166,12 @@ func TestBuildSecurityRuleEntryRejects(t *testing.T) {
 func TestOverlaySecurityRuleFields(t *testing.T) {
 	base := func() *security.Entry {
 		return &security.Entry{
-			Name: "r1", Action: ptr("allow"),
+			Name: "r1", Action: new("allow"),
 			From: []string{"any"}, To: []string{"any"},
 			Source: []string{"any"}, Destination: []string{"any"},
 			Application: []string{"any"}, Service: []string{"application-default"},
-			Description: ptr("old"), Tag: []string{"t1"}, Disabled: ptr(false),
-			Schedule: ptr("sched-old"),
+			Description: new("old"), Tag: []string{"t1"}, Disabled: new(false),
+			Schedule: new("sched-old"),
 		}
 	}
 
@@ -192,7 +192,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 		From: []string{"dmz"}, To: []string{"untrust"},
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.0/24"},
 		Application: []string{"ssl"}, Service: []string{"tcp-8443"},
-		Description: "new", Tags: []string{}, Disabled: ptr(true), Schedule: "sched-new",
+		Description: "new", Tags: []string{}, Disabled: new(true), Schedule: "sched-new",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -657,27 +657,27 @@ func TestSecurityRuleGetUpdateViaRegisteredTools(t *testing.T) {
 //nolint:gocyclo,gocognit // exhaustive field-by-field assertions on the detail projection; each || is one field check.
 func TestSecurityRuleDetailFields(t *testing.T) {
 	full := &security.Entry{
-		Name: "r1", Action: ptr("allow"),
+		Name: "r1", Action: new("allow"),
 		From: []string{"any"}, To: []string{"any"},
 		Source: []string{"any"}, Destination: []string{"any"},
 		Application: []string{"any"}, Service: []string{"application-default"},
-		Description:                     ptr("d"),
+		Description:                     new("d"),
 		Tag:                             []string{"t1"},
-		Schedule:                        ptr("work-hours"),
+		Schedule:                        new("work-hours"),
 		Category:                        []string{"custom-cat"},
-		RuleType:                        ptr("intrazone"),
-		LogSetting:                      ptr("fwd-all"),
-		LogStart:                        ptr(true),
-		LogEnd:                          ptr(true), // explicit value proves the mapping reads the pointer, not a hardcoded default
-		NegateSource:                    ptr(true),
-		NegateDestination:               ptr(true),
-		DisableServerResponseInspection: ptr(true),
-		IcmpUnreachable:                 ptr(true),
+		RuleType:                        new("intrazone"),
+		LogSetting:                      new("fwd-all"),
+		LogStart:                        new(true),
+		LogEnd:                          new(true), // explicit value proves the mapping reads the pointer, not a hardcoded default
+		NegateSource:                    new(true),
+		NegateDestination:               new(true),
+		DisableServerResponseInspection: new(true),
+		IcmpUnreachable:                 new(true),
 		SourceUser:                      []string{"corp\\alice"},
 		SourceHip:                       []string{"hip-src"},
 		DestinationHip:                  []string{"hip-dst"},
-		GroupTag:                        ptr("gt1"),
-		Uuid:                            ptr("uuid-123"),
+		GroupTag:                        new("gt1"),
+		Uuid:                            new("uuid-123"),
 		Qos:                             &security.Qos{},
 		Target:                          &security.Target{},
 		ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{
@@ -743,8 +743,8 @@ func TestSecurityRuleDetailFields(t *testing.T) {
 	// Explicit false is reported present-and-false, distinct from an absent
 	// element (which is omitted): a rule that sets <log-end>no</log-end> etc.
 	off := mustMap(t, securityRuleDetail(&security.Entry{
-		Name: "r3", Action: ptr("allow"),
-		LogStart: ptr(false), LogEnd: ptr(false), NegateSource: ptr(false), IcmpUnreachable: ptr(false),
+		Name: "r3", Action: new("allow"),
+		LogStart: new(false), LogEnd: new(false), NegateSource: new(false), IcmpUnreachable: new(false),
 	}))
 	for _, k := range []string{"log_start", "log_end", "negate_source", "icmp_unreachable"} {
 		if v, present := off[k]; !present || v != false {
@@ -754,7 +754,7 @@ func TestSecurityRuleDetailFields(t *testing.T) {
 
 	// A zero entry: presence flags false, empty scalars, and every advanced
 	// *bool and optional list OMITTED (not a hard false / null).
-	zero := mustMap(t, securityRuleDetail(&security.Entry{Name: "r2", Action: ptr("allow")}))
+	zero := mustMap(t, securityRuleDetail(&security.Entry{Name: "r2", Action: new("allow")}))
 	if zero["has_qos"] != false || zero["has_target"] != false {
 		t.Errorf("presence flags must be false on the zero entry: %+v", zero)
 	}
@@ -779,7 +779,7 @@ func TestSecurityRuleDetailFields(t *testing.T) {
 	// omitted (securityRuleIndividualProfiles returns nil when every type is
 	// empty), so the two are not conflated.
 	empty := mustMap(t, securityRuleDetail(&security.Entry{
-		Name: "r4", Action: ptr("allow"),
+		Name: "r4", Action: new("allow"),
 		ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{}},
 	}))
 	if empty["has_individual_profiles"] != true {
@@ -919,8 +919,8 @@ func TestBuildNatRuleEntry(t *testing.T) {
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.1"},
 		Service: "http-svc", NatType: "ipv4", ToInterface: "ethernet1/2",
 		SNATAddresses: []string{"snat-pool"},
-		DNATAddress:   "10.0.0.80", DNATPort: ptr(int64(8080)),
-		Description: "d", Tags: []string{"t"}, Disabled: ptr(true),
+		DNATAddress:   "10.0.0.80", DNATPort: new(int64(8080)),
+		Description: "d", Tags: []string{"t"}, Disabled: new(true),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -971,10 +971,10 @@ func TestBuildNatRuleEntryRejects(t *testing.T) {
 	}{
 		{"no name", "name", NatRuleInput{}},
 		{"snat interface plus addresses", "not both", NatRuleInput{Name: "n", SNATInterface: "ethernet1/1", SNATAddresses: []string{"pool"}}},
-		{"dnat port without address", "requires dnat_address", NatRuleInput{Name: "n", DNATPort: ptr(int64(8080))}},
-		{"dnat port out of range", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: ptr(int64(70000))}},
-		{"dnat port negative", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: ptr(int64(-1))}},
-		{"dnat port zero", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: ptr(int64(0))}},
+		{"dnat port without address", "requires dnat_address", NatRuleInput{Name: "n", DNATPort: new(int64(8080))}},
+		{"dnat port out of range", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: new(int64(70000))}},
+		{"dnat port negative", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: new(int64(-1))}},
+		{"dnat port zero", "between 1 and 65535", NatRuleInput{Name: "n", DNATAddress: "10.0.0.80", DNATPort: new(int64(0))}},
 		{"bad nat_type", "nat_type", NatRuleInput{Name: "n", NatType: "ipv5"}},
 	} {
 		_, err := buildNatRuleEntry(c.in)
@@ -997,13 +997,13 @@ func TestOverlayNatRuleFields(t *testing.T) {
 			Name: "n1",
 			From: []string{"trust"}, To: []string{"untrust"},
 			Source: []string{"any"}, Destination: []string{"any"},
-			Service: ptr("any"), NatType: ptr("ipv4"), ToInterface: ptr("ethernet1/2"),
+			Service: new("any"), NatType: new("ipv4"), ToInterface: new("ethernet1/2"),
 			SourceTranslation: &nat.SourceTranslation{
 				DynamicIpAndPort: &nat.SourceTranslationDynamicIpAndPort{
-					InterfaceAddress: &nat.SourceTranslationDynamicIpAndPortInterfaceAddress{Interface: ptr("ethernet1/1")},
+					InterfaceAddress: &nat.SourceTranslationDynamicIpAndPortInterfaceAddress{Interface: new("ethernet1/1")},
 				},
 			},
-			Description: ptr("old"), Tag: []string{"t1"}, Disabled: ptr(false),
+			Description: new("old"), Tag: []string{"t1"}, Disabled: new(false),
 		}
 	}
 
@@ -1028,8 +1028,8 @@ func TestOverlayNatRuleFields(t *testing.T) {
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.0/24"},
 		Service: "http-svc", NatType: "nat64", ToInterface: "ethernet1/3",
 		SNATAddresses: []string{"snat-pool"},
-		DNATAddress:   "10.0.0.90", DNATPort: ptr(int64(9090)),
-		Description: "new", Tags: []string{}, Disabled: ptr(true),
+		DNATAddress:   "10.0.0.90", DNATPort: new(int64(9090)),
+		Description: "new", Tags: []string{}, Disabled: new(true),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1083,9 +1083,9 @@ func TestOverlayNatRulePreservesDNATPort(t *testing.T) {
 		return &nat.Entry{
 			Name: "n1",
 			DestinationTranslation: &nat.DestinationTranslation{
-				TranslatedAddress: ptr("10.0.0.80"),
-				TranslatedPort:    ptr(int64(8080)),
-				DnsRewrite:        &nat.DestinationTranslationDnsRewrite{Direction: ptr("reverse")},
+				TranslatedAddress: new("10.0.0.80"),
+				TranslatedPort:    new(int64(8080)),
+				DnsRewrite:        &nat.DestinationTranslationDnsRewrite{Direction: new("reverse")},
 			},
 		}
 	}
@@ -1109,7 +1109,7 @@ func TestOverlayNatRulePreservesDNATPort(t *testing.T) {
 
 	// A provided dnat_port replaces the existing one.
 	e = base()
-	if err := overlayNatRule(e, NatRuleInput{Name: "n1", DNATAddress: "10.0.0.99", DNATPort: ptr(int64(9090))}); err != nil {
+	if err := overlayNatRule(e, NatRuleInput{Name: "n1", DNATAddress: "10.0.0.99", DNATPort: new(int64(9090))}); err != nil {
 		t.Fatal(err)
 	}
 	if dt := e.DestinationTranslation; dt.TranslatedPort == nil || *dt.TranslatedPort != 9090 {
@@ -1251,7 +1251,7 @@ func TestNatRuleCreateTranslations(t *testing.T) {
 
 	t.Run("dnat address and port", func(t *testing.T) {
 		do, f := create(t, "in-dnat")
-		res := do(NatRuleInput{Name: "in-dnat", From: []string{"untrust"}, To: []string{"untrust"}, DNATAddress: "10.0.0.80", DNATPort: ptr(int64(8080))})
+		res := do(NatRuleInput{Name: "in-dnat", From: []string{"untrust"}, To: []string{"untrust"}, DNATAddress: "10.0.0.80", DNATPort: new(int64(8080))})
 		if res.IsError {
 			t.Fatalf("dnat create failed: %s", textContent(t, res))
 		}
@@ -1814,18 +1814,18 @@ func TestOverlaySecurityRuleProfileGroupReplaces(t *testing.T) {
 }
 
 func TestSecurityRuleSummaryProfileGroup(t *testing.T) {
-	withGroup := &security.Entry{Name: "r1", Action: ptr("allow"), ProfileSetting: &security.ProfileSetting{Group: []string{"pg1"}}}
+	withGroup := &security.Entry{Name: "r1", Action: new("allow"), ProfileSetting: &security.ProfileSetting{Group: []string{"pg1"}}}
 	if m := mustMap(t, securityRuleSummary(withGroup)); m["profile_group"] != "pg1" || m["has_individual_profiles"] != false {
 		t.Errorf("group rule must surface the group and no individual profiles: %+v", m)
 	}
 	// Individual profiles (no group) report an empty profile_group but a set flag,
 	// so a get does not conflate them with a rule that has no security profiles.
-	withProfiles := &security.Entry{Name: "r2", Action: ptr("allow"), ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{Virus: []string{"av1"}}}}
+	withProfiles := &security.Entry{Name: "r2", Action: new("allow"), ProfileSetting: &security.ProfileSetting{Profiles: &security.ProfileSettingProfiles{Virus: []string{"av1"}}}}
 	if m := mustMap(t, securityRuleSummary(withProfiles)); m["profile_group"] != "" || m["has_individual_profiles"] != true {
 		t.Errorf("individual-profile rule must report empty group but set the flag: %+v", m)
 	}
 	// No profile setting at all reports empty and unset.
-	if m := mustMap(t, securityRuleSummary(&security.Entry{Name: "r3", Action: ptr("allow")})); m["profile_group"] != "" || m["has_individual_profiles"] != false {
+	if m := mustMap(t, securityRuleSummary(&security.Entry{Name: "r3", Action: new("allow")})); m["profile_group"] != "" || m["has_individual_profiles"] != false {
 		t.Errorf("no profile setting must report empty group and no individual profiles: %+v", m)
 	}
 }

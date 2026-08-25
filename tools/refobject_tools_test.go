@@ -209,7 +209,7 @@ func TestBuildCustomURLCategoryEntryRejects(t *testing.T) {
 
 func TestOverlayCustomURLCategory(t *testing.T) {
 	t.Run("type replaces when valid", func(t *testing.T) {
-		e := &customurlcategory.Entry{Name: "c", Type: ptr("URL List"), List: []string{"x"}}
+		e := &customurlcategory.Entry{Name: "c", Type: new("URL List"), List: []string{"x"}}
 		if err := overlayCustomURLCategory(e, CustomURLCategoryInput{Type: "Category Match"}); err != nil {
 			t.Fatal(err)
 		}
@@ -218,13 +218,13 @@ func TestOverlayCustomURLCategory(t *testing.T) {
 		}
 	})
 	t.Run("bad type rejected", func(t *testing.T) {
-		e := &customurlcategory.Entry{Name: "c", Type: ptr("URL List")}
+		e := &customurlcategory.Entry{Name: "c", Type: new("URL List")}
 		if err := overlayCustomURLCategory(e, CustomURLCategoryInput{Type: "bogus"}); err == nil || !strings.Contains(err.Error(), "type must be one of") {
 			t.Fatalf("bad type must be rejected: %v", err)
 		}
 	})
 	t.Run("non-empty members replace, empty rejected", func(t *testing.T) {
-		e := &customurlcategory.Entry{Name: "c", Type: ptr("URL List"), List: []string{"x"}}
+		e := &customurlcategory.Entry{Name: "c", Type: new("URL List"), List: []string{"x"}}
 		if err := overlayCustomURLCategory(e, CustomURLCategoryInput{Members: []string{"y", "z"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -236,7 +236,7 @@ func TestOverlayCustomURLCategory(t *testing.T) {
 		}
 	})
 	t.Run("empty overlay keeps entry", func(t *testing.T) {
-		e := &customurlcategory.Entry{Name: "c", Type: ptr("URL List"), List: []string{"x"}, Description: ptr("d")}
+		e := &customurlcategory.Entry{Name: "c", Type: new("URL List"), List: []string{"x"}, Description: new("d")}
 		if err := overlayCustomURLCategory(e, CustomURLCategoryInput{}); err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestOverlayCustomURLCategory(t *testing.T) {
 }
 
 func TestCustomURLCategorySummary(t *testing.T) {
-	m := asMap(t, customURLCategorySummary(&customurlcategory.Entry{Name: "c", Type: ptr("Category Match"), List: []string{"a"}, Description: ptr("d")}))
+	m := asMap(t, customURLCategorySummary(&customurlcategory.Entry{Name: "c", Type: new("Category Match"), List: []string{"a"}, Description: new("d")}))
 	if m[tagNameKey] != "c" || m["type"] != "Category Match" || m[descriptionKey] != "d" {
 		t.Fatalf("summary wrong: %v", m)
 	}
@@ -468,7 +468,7 @@ func TestBuildEdlEntry(t *testing.T) {
 		}
 	})
 	t.Run("domain carries expand_domain", func(t *testing.T) {
-		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "domain", URL: "https://x", ExpandDomain: ptr(true), Recurring: "hourly"})
+		e, err := buildEdlEntry(EdlInput{Name: "e", Type: "domain", URL: "https://x", ExpandDomain: new(true), Recurring: "hourly"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -499,7 +499,7 @@ func TestBuildEdlEntryRejects(t *testing.T) {
 		{"bad type", "type must be one of", EdlInput{Name: "e", Type: "bogus", URL: "x"}},
 		{"predefined with recurring", "predefined lists refresh", EdlInput{Name: "e", Type: "predefined-ip", URL: "x", Recurring: "hourly"}},
 		{"predefined with cert", "certificate_profile does not apply", EdlInput{Name: "e", Type: "predefined-ip", URL: "x", CertificateProfile: "cp"}},
-		{"expand_domain on ip", "expand_domain applies to the domain type only", EdlInput{Name: "e", Type: "ip", URL: "x", ExpandDomain: ptr(true)}},
+		{"expand_domain on ip", "expand_domain applies to the domain type only", EdlInput{Name: "e", Type: "ip", URL: "x", ExpandDomain: new(true)}},
 		{"ip without recurring", "recurring is required", EdlInput{Name: "e", Type: "ip", URL: "x"}},
 		{"domain without recurring", "recurring is required", EdlInput{Name: "e", Type: "domain", URL: "x"}},
 		{"url without recurring", "recurring is required", EdlInput{Name: "e", Type: "url", URL: "x"}},
@@ -542,7 +542,7 @@ func TestEdlRecurringValidation(t *testing.T) {
 	t.Run("day_of_month range", func(t *testing.T) {
 		in := base()
 		in.Recurring = "monthly"
-		in.RecurringDayOfMonth = ptr(int64(32))
+		in.RecurringDayOfMonth = new(int64(32))
 		if _, err := buildEdlEntry(in); err == nil || !strings.Contains(err.Error(), "between 1 and 31") {
 			t.Fatalf("dom 32 must be rejected: %v", err)
 		}
@@ -564,7 +564,7 @@ func TestEdlRecurringValidation(t *testing.T) {
 	t.Run("valid monthly builds day_of_month", func(t *testing.T) {
 		in := base()
 		in.Recurring = "monthly"
-		in.RecurringDayOfMonth = ptr(int64(15))
+		in.RecurringDayOfMonth = new(int64(15))
 		e, err := buildEdlEntry(in)
 		if err != nil {
 			t.Fatal(err)
@@ -577,7 +577,7 @@ func TestEdlRecurringValidation(t *testing.T) {
 
 // TestOverlayEdlTypeSwitchClearsOldBranch is the headline EDL oneof test.
 func TestOverlayEdlTypeSwitchClearsOldBranch(t *testing.T) {
-	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: ptr("https://old")}}}
+	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: new("https://old")}}}
 	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "https://new", Recurring: "hourly"}); err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestOverlayEdlTypeSwitchClearsOldBranch(t *testing.T) {
 // ip/domain/url type without a schedule is rejected, so the update path cannot
 // produce an un-committable EDL either.
 func TestOverlayEdlTypeSwitchRequiresRecurring(t *testing.T) {
-	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: ptr("https://old"), Recurring: &extdynlist.TypeIpRecurring{Hourly: &extdynlist.TypeIpRecurringHourly{}}}}}
+	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: new("https://old"), Recurring: &extdynlist.TypeIpRecurring{Hourly: &extdynlist.TypeIpRecurringHourly{}}}}}
 	if err := overlayEdl(e, EdlInput{Type: "url", URL: "https://new"}); err == nil || !strings.Contains(err.Error(), "recurring is required") {
 		t.Fatalf("type switch to url without recurring must be rejected, got %v", err)
 	}
@@ -603,9 +603,9 @@ func TestOverlayEdlTypeSwitchRequiresRecurring(t *testing.T) {
 func TestOverlayEdlInBranch(t *testing.T) {
 	t.Run("fields overlay, recurring replaces wholesale", func(t *testing.T) {
 		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{
-			Url:         ptr("https://old"),
-			Description: ptr("old"),
-			Recurring:   &extdynlist.TypeIpRecurring{Monthly: &extdynlist.TypeIpRecurringMonthly{DayOfMonth: ptr(int64(1))}},
+			Url:         new("https://old"),
+			Description: new("old"),
+			Recurring:   &extdynlist.TypeIpRecurring{Monthly: &extdynlist.TypeIpRecurringMonthly{DayOfMonth: new(int64(1))}},
 		}}}
 		if err := overlayEdl(e, EdlInput{URL: "https://new", Recurring: "hourly"}); err != nil {
 			t.Fatal(err)
@@ -621,7 +621,7 @@ func TestOverlayEdlInBranch(t *testing.T) {
 		}
 	})
 	t.Run("exception_list empty clears", func(t *testing.T) {
-		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: ptr("https://x"), ExceptionList: []string{"1.1.1.1"}}}}
+		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: new("https://x"), ExceptionList: []string{"1.1.1.1"}}}}
 		if err := overlayEdl(e, EdlInput{ExceptionList: []string{}}); err != nil {
 			t.Fatal(err)
 		}
@@ -636,7 +636,7 @@ func TestOverlayEdlInBranch(t *testing.T) {
 		}
 	})
 	t.Run("imei branch is unmanaged", func(t *testing.T) {
-		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Imei: &extdynlist.TypeImei{Url: ptr("x")}}}
+		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Imei: &extdynlist.TypeImei{Url: new("x")}}}
 		if err := overlayEdl(e, EdlInput{Description: "d"}); err == nil || !strings.Contains(err.Error(), "does not manage") {
 			t.Fatalf("overlay on an imei branch must error: %v", err)
 		}
@@ -647,7 +647,7 @@ func TestOverlayEdlInBranch(t *testing.T) {
 // before the no-type early return, so a bad recurring combination is caught even
 // when no type is provided.
 func TestEdlOrphanChecksRunBeforeEmptyTypeReturn(t *testing.T) {
-	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: ptr("https://x")}}}
+	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{Url: new("https://x")}}}
 	if err := overlayEdl(e, EdlInput{RecurringAt: "03"}); err == nil || !strings.Contains(err.Error(), "recurring_at requires recurring") {
 		t.Fatalf("orphan recurring_at must be rejected on the no-type path: %v", err)
 	}
@@ -655,10 +655,10 @@ func TestEdlOrphanChecksRunBeforeEmptyTypeReturn(t *testing.T) {
 
 func TestEdlSummaryAndDetail(t *testing.T) {
 	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{Ip: &extdynlist.TypeIp{
-		Url:           ptr("https://x/l.txt"),
-		Description:   ptr("d"),
+		Url:           new("https://x/l.txt"),
+		Description:   new("d"),
 		ExceptionList: []string{"1.1.1.1"},
-		Recurring:     &extdynlist.TypeIpRecurring{Weekly: &extdynlist.TypeIpRecurringWeekly{At: ptr("03"), DayOfWeek: ptr("monday")}},
+		Recurring:     &extdynlist.TypeIpRecurring{Weekly: &extdynlist.TypeIpRecurringWeekly{At: new("03"), DayOfWeek: new("monday")}},
 	}}}
 	sum := asMap(t, edlSummary(e))
 	if sum["type"] != "ip" || sum["url"] != "https://x/l.txt" {
@@ -675,7 +675,7 @@ func TestEdlSummaryAndDetail(t *testing.T) {
 		t.Fatalf("detail must carry exception_list: %v", det["exception_list"])
 	}
 	// imei is reported honestly by the type string.
-	imei := &extdynlist.Entry{Name: "m", Type: &extdynlist.Type{Imei: &extdynlist.TypeImei{Url: ptr("x")}}}
+	imei := &extdynlist.Entry{Name: "m", Type: &extdynlist.Type{Imei: &extdynlist.TypeImei{Url: new("x")}}}
 	if asMap(t, edlSummary(imei))["type"] != "imei" {
 		t.Fatalf("imei type must be reported honestly")
 	}
@@ -800,7 +800,7 @@ func TestEdlRecurringMatrixBuildAndReadback(t *testing.T) {
 		}
 	})
 	t.Run("monthly day_of_month readback", func(t *testing.T) {
-		e := ip("monthly", "03:00", "", ptr(int64(15)))
+		e := ip("monthly", "03:00", "", new(int64(15)))
 		if e.Type.Ip.Recurring.Monthly == nil || *e.Type.Ip.Recurring.Monthly.DayOfMonth != 15 {
 			t.Fatalf("monthly branch wrong: %+v", e.Type.Ip.Recurring.Monthly)
 		}
@@ -827,7 +827,7 @@ func TestEdlRecurringMatrixBuildAndReadback(t *testing.T) {
 // arm (edlOverlayPredefined), which the ip-only overlay test does not reach.
 func TestOverlayEdlPredefinedInBranch(t *testing.T) {
 	t.Run("url and description overlay", func(t *testing.T) {
-		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{PredefinedIp: &extdynlist.TypePredefinedIp{Url: ptr("old")}}}
+		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{PredefinedIp: &extdynlist.TypePredefinedIp{Url: new("old")}}}
 		if err := overlayEdl(e, EdlInput{URL: "new", Description: "d"}); err != nil {
 			t.Fatal(err)
 		}
@@ -836,7 +836,7 @@ func TestOverlayEdlPredefinedInBranch(t *testing.T) {
 		}
 	})
 	t.Run("recurring rejected on a predefined branch", func(t *testing.T) {
-		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{PredefinedUrl: &extdynlist.TypePredefinedUrl{Url: ptr("x")}}}
+		e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{PredefinedUrl: &extdynlist.TypePredefinedUrl{Url: new("x")}}}
 		if err := overlayEdl(e, EdlInput{Recurring: "hourly"}); err == nil || !strings.Contains(err.Error(), "predefined lists have no recurring") {
 			t.Fatalf("recurring on a predefined branch must be rejected: %v", err)
 		}
@@ -847,7 +847,7 @@ func TestOverlayEdlPredefinedInBranch(t *testing.T) {
 // unknown XML survives a wholesale type switch (consistent with schedule/zone).
 func TestOverlayEdlTypeSwitchPreservesTypeMisc(t *testing.T) {
 	e := &extdynlist.Entry{Name: "e", Type: &extdynlist.Type{
-		Ip:             &extdynlist.TypeIp{Url: ptr("old")},
+		Ip:             &extdynlist.TypeIp{Url: new("old")},
 		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
 	}}
 	if err := overlayEdl(e, EdlInput{Type: "domain", URL: "new", Recurring: "hourly"}); err != nil {

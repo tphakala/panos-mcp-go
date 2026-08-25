@@ -50,7 +50,7 @@ func newAddressGroupService(d *Deps) nameFixAdapter[address_group.Location, addr
 // AddressInput is the input for address create and update tools.
 type AddressInput struct {
 	Name        string        `json:"name" jsonschema:"Address object name"`
-	Location    LocationInput `json:"location,omitempty"`
+	Location    LocationInput `json:"location,omitzero"`
 	IPNetmask   string        `json:"ip_netmask,omitempty" jsonschema:"IP or CIDR, e.g. 10.0.0.5 or 10.0.0.0/24"`
 	IPRange     string        `json:"ip_range,omitempty" jsonschema:"Range, e.g. 10.0.0.10-10.0.0.20"`
 	FQDN        string        `json:"fqdn,omitempty" jsonschema:"Fully qualified domain name"`
@@ -97,16 +97,16 @@ func buildAddressEntry(in AddressInput) (*address.Entry, error) {
 	}
 	e := &address.Entry{Name: in.Name, Tag: in.Tags}
 	if in.IPNetmask != "" {
-		e.IpNetmask = ptr(in.IPNetmask)
+		e.IpNetmask = new(in.IPNetmask)
 	}
 	if in.IPRange != "" {
-		e.IpRange = ptr(in.IPRange)
+		e.IpRange = new(in.IPRange)
 	}
 	if in.FQDN != "" {
-		e.Fqdn = ptr(in.FQDN)
+		e.Fqdn = new(in.FQDN)
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -132,16 +132,16 @@ func overlayAddress(e *address.Entry, in AddressInput) error {
 	// reads it back, so an object created elsewhere with ip-wildcard would
 	// otherwise keep it and produce a dual-valued (invalid) entry.
 	if in.IPNetmask != "" {
-		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = ptr(in.IPNetmask), nil, nil, nil
+		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = new(in.IPNetmask), nil, nil, nil
 	}
 	if in.IPRange != "" {
-		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = nil, ptr(in.IPRange), nil, nil
+		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = nil, new(in.IPRange), nil, nil
 	}
 	if in.FQDN != "" {
-		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = nil, nil, ptr(in.FQDN), nil
+		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = nil, nil, new(in.FQDN), nil
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
@@ -234,7 +234,7 @@ func addressGroupParts() locParts[address_group.Location] {
 // AddressGroupInput is the input for address group create and update tools.
 type AddressGroupInput struct {
 	Name          string        `json:"name" jsonschema:"Address group name"`
-	Location      LocationInput `json:"location,omitempty"`
+	Location      LocationInput `json:"location,omitzero"`
 	Static        []string      `json:"static,omitempty" jsonschema:"Static member names; a non-empty list replaces the members. An explicitly empty list is rejected on update, since a static group cannot be emptied in place (switch to dynamic_filter or delete the group)"`
 	DynamicFilter string        `json:"dynamic_filter,omitempty" jsonschema:"Dynamic match expression over tags, e.g. 'prod' and 'web'"`
 	Description   string        `json:"description,omitempty"`
@@ -260,10 +260,10 @@ func buildAddressGroupEntry(in AddressGroupInput) (*address_group.Entry, error) 
 	if hasStatic {
 		e.Static = in.Static
 	} else {
-		e.Dynamic = &address_group.Dynamic{Filter: ptr(in.DynamicFilter)}
+		e.Dynamic = &address_group.Dynamic{Filter: new(in.DynamicFilter)}
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -291,10 +291,10 @@ func overlayAddressGroup(e *address_group.Entry, in AddressGroupInput) error {
 		e.Static, e.Dynamic = in.Static, nil
 	}
 	if hasDynamic {
-		e.Static, e.Dynamic = nil, &address_group.Dynamic{Filter: ptr(in.DynamicFilter)}
+		e.Static, e.Dynamic = nil, &address_group.Dynamic{Filter: new(in.DynamicFilter)}
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
@@ -385,7 +385,7 @@ func newServiceService(d *Deps) nameFixAdapter[service.Location, service.Entry] 
 // ServiceInput is the input for service create and update tools.
 type ServiceInput struct {
 	Name        string        `json:"name" jsonschema:"Service object name"`
-	Location    LocationInput `json:"location,omitempty"`
+	Location    LocationInput `json:"location,omitzero"`
 	Protocol    string        `json:"protocol,omitempty" jsonschema:"tcp or udp (required on create; on update required together with port when changing ports)"`
 	Port        string        `json:"port,omitempty" jsonschema:"Destination port or range, e.g. 8080 or 8000-8080"`
 	SourcePort  string        `json:"source_port,omitempty" jsonschema:"Source port or range; only meaningful together with protocol and port"`
@@ -404,15 +404,15 @@ func buildServiceProtocol(in ServiceInput) (*service.Protocol, error) {
 	}
 	switch in.Protocol {
 	case "tcp":
-		p := &service.ProtocolTcp{Port: ptr(in.Port)}
+		p := &service.ProtocolTcp{Port: new(in.Port)}
 		if in.SourcePort != "" {
-			p.SourcePort = ptr(in.SourcePort)
+			p.SourcePort = new(in.SourcePort)
 		}
 		return &service.Protocol{Tcp: p}, nil
 	case "udp":
-		p := &service.ProtocolUdp{Port: ptr(in.Port)}
+		p := &service.ProtocolUdp{Port: new(in.Port)}
 		if in.SourcePort != "" {
-			p.SourcePort = ptr(in.SourcePort)
+			p.SourcePort = new(in.SourcePort)
 		}
 		return &service.Protocol{Udp: p}, nil
 	default:
@@ -433,7 +433,7 @@ func buildServiceEntry(in ServiceInput) (*service.Entry, error) {
 	}
 	e := &service.Entry{Name: in.Name, Tag: in.Tags, Protocol: proto}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	return e, nil
 }
@@ -463,7 +463,7 @@ func overlayService(e *service.Entry, in ServiceInput) error {
 		e.Protocol = proto
 	}
 	if in.Description != "" {
-		e.Description = ptr(in.Description)
+		e.Description = new(in.Description)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags
@@ -578,7 +578,7 @@ func newServiceGroupService(d *Deps) nameFixAdapter[service_group.Location, serv
 // objects/service/group Entry), so none is exposed.
 type ServiceGroupInput struct {
 	Name     string        `json:"name" jsonschema:"Service group name"`
-	Location LocationInput `json:"location,omitempty"`
+	Location LocationInput `json:"location,omitzero"`
 	Members  []string      `json:"members,omitempty" jsonschema:"Member service or service group names; at least one is required on create, and a non-empty list replaces the full membership on update (an explicitly empty list is rejected)"`
 	Tags     []string      `json:"tags,omitempty" jsonschema:"Replaces the full tag list when provided"`
 }
@@ -668,7 +668,7 @@ func RegisterServiceGroupTools(s *mcp.Server, d *Deps) {
 // rides through the read-modify-write untouched.
 type TagInput struct {
 	Name     string        `json:"name" jsonschema:"Tag name"`
-	Location LocationInput `json:"location,omitempty"`
+	Location LocationInput `json:"location,omitzero"`
 	Color    string        `json:"color,omitempty" jsonschema:"PAN-OS named color code, color1 to color42, excluding the unused color11 and color18"`
 	Comments string        `json:"comments,omitempty"`
 }
@@ -684,10 +684,10 @@ func buildTagEntry(in TagInput) (*admintag.Entry, error) {
 	}
 	e := &admintag.Entry{Name: in.Name}
 	if in.Color != "" {
-		e.Color = ptr(in.Color)
+		e.Color = new(in.Color)
 	}
 	if in.Comments != "" {
-		e.Comments = ptr(in.Comments)
+		e.Comments = new(in.Comments)
 	}
 	return e, nil
 }
@@ -701,10 +701,10 @@ func buildTagEntry(in TagInput) (*admintag.Entry, error) {
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayTag(e *admintag.Entry, in TagInput) error {
 	if in.Color != "" {
-		e.Color = ptr(in.Color)
+		e.Color = new(in.Color)
 	}
 	if in.Comments != "" {
-		e.Comments = ptr(in.Comments)
+		e.Comments = new(in.Comments)
 	}
 	return nil
 }
