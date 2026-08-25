@@ -292,9 +292,9 @@ func overlayVulnerability(e *vulnerability.Entry, in VulnerabilityProfileInput) 
 //
 // Each inline_exception_ip_addresses entry is the NAME of an ip-type external
 // dynamic list, not an IP literal or address object: the device rejects any other
-// value as "not a valid reference". MEASURED live against the PA-VM for the
-// vulnerability profile (#66/#70); anti-spyware shares the pango model
-// (applySpywareInline) and is inferred, NOT separately measured.
+// value as "not a valid reference". MEASURED live: the vulnerability profile on a
+// PA-VM (#66/#70), and the anti-spyware profile (applySpywareInline) on Panorama
+// 11.1.16-h1 (#72), which rejects an IP literal at set time (code 12).
 func applyVulnerabilityInline(e *vulnerability.Entry, in *VulnerabilityProfileInput) {
 	if in.CloudInlineAnalysis != nil {
 		e.CloudInlineAnalysis = in.CloudInlineAnalysis

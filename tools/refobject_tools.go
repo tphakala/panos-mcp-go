@@ -878,8 +878,8 @@ func buildEdlType(in *EdlInput) (*extdynlist.Type, error) {
 	// ip, domain, and url lists need a refresh schedule or the device rejects the
 	// commit ("... is missing 'recurring'"). Predefined types refresh with content
 	// updates and take none (already rejected upstream in validateEdlParams).
-	// MEASURED live for ip (#69); domain and url inferred from the identical pango
-	// recurring model, NOT separately MEASURED.
+	// MEASURED live: ip on PAN-OS 12.1.7 (#69); domain and url on Panorama
+	// 11.1.16-h1 (#72), where validate flags the same missing-recurring error.
 	if !edlIsPredefined(in.Type) && in.Recurring == "" {
 		return nil, errors.New("recurring is required for the ip, domain, and url types (the device rejects the commit without a refresh schedule); one of " + edlRecurringListStr)
 	}
