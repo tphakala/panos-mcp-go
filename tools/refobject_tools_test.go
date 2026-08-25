@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PaloAltoNetworks/pango/objects/application"
 	application_group "github.com/PaloAltoNetworks/pango/objects/application/group"
 	"github.com/PaloAltoNetworks/pango/objects/extdynlist"
 	"github.com/PaloAltoNetworks/pango/objects/profiles/customurlcategory"
@@ -174,6 +175,278 @@ func TestRegisterApplicationGroupToolsReadOnly(t *testing.T) {
 	assertReadOnlyGating(t, RegisterApplicationGroupTools,
 		[]string{"panos_application_group_list", "panos_application_group_get"},
 		[]string{"panos_application_group_create", "panos_application_group_update", "panos_application_group_delete"})
+}
+
+// --- Custom applications -----------------------------------------------------
+
+// applicationBoolField pins one *bool input->entry mapping so that deleting the
+// mapping line (which leaves the entry field nil) turns this red. Distinct
+// per-field want values also catch a copy-paste swap between two fields.
+type applicationBoolField struct {
+	name string
+	got  func(*application.Entry) *bool
+	want bool
+}
+
+//nolint:gocyclo // exhaustive field-mapping assertions across the built entry.
+func TestBuildApplicationEntry(t *testing.T) {
+	// Every *bool characteristic, alternating true/false so a swap between an
+	// adjacent pair is caught, not only a dropped line.
+	flags := []applicationBoolField{
+		{"evasive_behavior", func(e *application.Entry) *bool { return e.EvasiveBehavior }, true},
+		{"has_known_vulnerability", func(e *application.Entry) *bool { return e.HasKnownVulnerability }, false},
+		{"used_by_malware", func(e *application.Entry) *bool { return e.UsedByMalware }, true},
+		{"able_to_transfer_file", func(e *application.Entry) *bool { return e.AbleToTransferFile }, false},
+		{"prone_to_misuse", func(e *application.Entry) *bool { return e.ProneToMisuse }, true},
+		{"pervasive_use", func(e *application.Entry) *bool { return e.PervasiveUse }, false},
+		{"tunnel_applications", func(e *application.Entry) *bool { return e.TunnelApplications }, true},
+	}
+	e, err := buildApplicationEntry(ApplicationInput{
+		Name: "my-app", Description: "d", Category: "business-systems", Subcategory: "management",
+		Technology: "client-server", Risk: new(int64(4)), DefaultPorts: []string{"tcp/8080"},
+		Timeout: new(int64(60)), TCPTimeout: new(int64(30)), UDPTimeout: new(int64(20)),
+		EvasiveBehavior: new(true), HasKnownVulnerability: new(false), UsedByMalware: new(true),
+		AbleToTransferFile: new(false), ProneToMisuse: new(true), PervasiveUse: new(false),
+		TunnelApplications: new(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "my-app" || strVal(e.Description) != "d" || strVal(e.Category) != "business-systems" ||
+		strVal(e.Subcategory) != "management" || strVal(e.Technology) != "client-server" {
+		t.Fatalf("classification mapped wrong: %+v", e)
+	}
+	if e.Risk == nil || *e.Risk != 4 {
+		t.Fatalf("risk mapped wrong: %v", e.Risk)
+	}
+	if e.Default == nil || len(e.Default.Port) != 1 || e.Default.Port[0] != "tcp/8080" {
+		t.Fatalf("default ports mapped wrong: %+v", e.Default)
+	}
+	if e.Timeout == nil || *e.Timeout != 60 || e.TcpTimeout == nil || *e.TcpTimeout != 30 || e.UdpTimeout == nil || *e.UdpTimeout != 20 {
+		t.Fatalf("timeouts mapped wrong: %+v", e)
+	}
+	for _, fl := range flags {
+		got := fl.got(e)
+		if got == nil || *got != fl.want {
+			t.Fatalf("%s mapped wrong: got %v want %v", fl.name, got, fl.want)
+		}
+	}
+}
+
+func TestBuildApplicationEntryIPProtocol(t *testing.T) {
+	e, err := buildApplicationEntry(ApplicationInput{Name: "proto-app", DefaultIPProtocol: "6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Default == nil || strVal(e.Default.IdentByIpProtocol) != "6" {
+		t.Fatalf("default_ip_protocol must map to Default.IdentByIpProtocol: %+v", e.Default)
+	}
+	if len(e.Default.Port) != 0 {
+		t.Fatalf("ip-protocol default must carry no ports: %+v", e.Default)
+	}
+}
+
+func TestBuildApplicationEntryRejects(t *testing.T) {
+	if _, err := buildApplicationEntry(ApplicationInput{}); err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("empty name must be rejected, got %v", err)
+	}
+	for _, r := range []int64{0, 6} {
+		if _, err := buildApplicationEntry(ApplicationInput{Name: "a", Risk: new(r)}); err == nil || !strings.Contains(err.Error(), "risk must be between 1 and 5") {
+			t.Fatalf("risk %d must be rejected, got %v", r, err)
+		}
+	}
+	_, err := buildApplicationEntry(ApplicationInput{Name: "a", DefaultPorts: []string{"tcp/80"}, DefaultIPProtocol: "6"})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("port and ip-protocol together must be rejected, got %v", err)
+	}
+}
+
+//nolint:gocyclo,gocognit // exhaustive overlay assertions across the preserve/replace/clear/reject/no-op scenarios.
+func TestOverlayApplication(t *testing.T) {
+	t.Run("untouched default preserves existing ident", func(t *testing.T) {
+		e := &application.Entry{Name: "a", Default: &application.Default{IdentByIcmpType: &application.DefaultIdentByIcmpType{Type: new("8")}}, Risk: new(int64(3))}
+		if err := overlayApplication(e, ApplicationInput{Description: "d"}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Default == nil || e.Default.IdentByIcmpType == nil || strVal(e.Default.IdentByIcmpType.Type) != "8" {
+			t.Fatalf("untouched default must preserve the existing ICMP ident: %+v", e.Default)
+		}
+		if e.Risk == nil || *e.Risk != 3 {
+			t.Fatalf("untouched risk must survive: %v", e.Risk)
+		}
+	})
+	t.Run("provided ports replace the whole default oneof", func(t *testing.T) {
+		e := &application.Entry{Name: "a", Default: &application.Default{IdentByIcmpType: &application.DefaultIdentByIcmpType{Type: new("8")}}}
+		if err := overlayApplication(e, ApplicationInput{DefaultPorts: []string{"tcp/443"}}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Default == nil || len(e.Default.Port) != 1 || e.Default.Port[0] != "tcp/443" {
+			t.Fatalf("ports must be set: %+v", e.Default)
+		}
+		if e.Default.IdentByIcmpType != nil {
+			t.Fatalf("setting a port must clear the mutually-exclusive ICMP ident: %+v", e.Default)
+		}
+	})
+	t.Run("ip-protocol replaces an existing port default", func(t *testing.T) {
+		e := &application.Entry{Name: "a", Default: &application.Default{Port: []string{"tcp/80"}}}
+		if err := overlayApplication(e, ApplicationInput{DefaultIPProtocol: "47"}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Default == nil || strVal(e.Default.IdentByIpProtocol) != "47" || len(e.Default.Port) != 0 {
+			t.Fatalf("ip-protocol must replace the whole default, clearing the port branch: %+v", e.Default)
+		}
+	})
+	t.Run("explicit empty ports clears the default", func(t *testing.T) {
+		e := &application.Entry{Name: "a", Default: &application.Default{IdentByIcmpType: &application.DefaultIdentByIcmpType{Type: new("8")}}}
+		if err := overlayApplication(e, ApplicationInput{DefaultPorts: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Default != nil {
+			t.Fatalf("an explicit empty default_ports must clear the default identification: %+v", e.Default)
+		}
+	})
+	t.Run("empty ports and ip-protocol together are rejected", func(t *testing.T) {
+		e := &application.Entry{Name: "a"}
+		if err := overlayApplication(e, ApplicationInput{DefaultPorts: []string{}, DefaultIPProtocol: "6"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("empty default_ports with an ip-protocol must be rejected, got %v", err)
+		}
+	})
+	t.Run("all-nil input changes nothing", func(t *testing.T) {
+		e := &application.Entry{Name: "a"}
+		if err := overlayApplication(e, ApplicationInput{}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Category != nil || e.Subcategory != nil || e.Technology != nil || e.Description != nil ||
+			e.Risk != nil || e.Timeout != nil || e.TcpTimeout != nil || e.UdpTimeout != nil ||
+			e.EvasiveBehavior != nil || e.HasKnownVulnerability != nil || e.UsedByMalware != nil ||
+			e.AbleToTransferFile != nil || e.ProneToMisuse != nil || e.PervasiveUse != nil ||
+			e.TunnelApplications != nil || e.Default != nil {
+			t.Fatalf("all-nil overlay must leave the entry untouched: %+v", e)
+		}
+	})
+}
+
+//nolint:gocyclo,gocognit // exhaustive summary assertions across the omit, present-value and ip/icmp scenarios.
+func TestApplicationSummary(t *testing.T) {
+	t.Run("nil optionals omit keys", func(t *testing.T) {
+		m := asMap(t, applicationSummary(&application.Entry{Name: "a"}))
+		for _, k := range []string{"risk", "timeout", "tcp_timeout", "udp_timeout", "evasive_behavior", "has_known_vulnerability", "used_by_malware", "able_to_transfer_file", "prone_to_misuse", "pervasive_use", "tunnel_applications", "default_ports", "default_ip_protocol"} {
+			if _, ok := m[k]; ok {
+				t.Fatalf("nil %s must be omitted, not coerced: %v", k, m[k])
+			}
+		}
+		if v, ok := m["has_signatures"].(bool); !ok || v {
+			t.Fatalf("has_signatures must be present and false: %v", m["has_signatures"])
+		}
+		if v, ok := m["has_icmp_ident"].(bool); !ok || v {
+			t.Fatalf("has_icmp_ident must be present and false when no default: %v", m["has_icmp_ident"])
+		}
+	})
+	t.Run("present values emitted", func(t *testing.T) {
+		e := &application.Entry{
+			Name: "a", Description: new("d"), Category: new("business-systems"),
+			Subcategory: new("email"), Technology: new("client-server"), Risk: new(int64(2)),
+			Default: &application.Default{Port: []string{"tcp/80"}},
+			Timeout: new(int64(60)), TcpTimeout: new(int64(30)), UdpTimeout: new(int64(20)),
+			EvasiveBehavior: new(false), HasKnownVulnerability: new(true), UsedByMalware: new(false),
+			AbleToTransferFile: new(true), ProneToMisuse: new(false), PervasiveUse: new(true),
+			TunnelApplications: new(false),
+			Signature:          []application.Signature{{Name: "s1"}},
+		}
+		m := asMap(t, applicationSummary(e))
+		strChecks := map[string]string{"description": "d", "category": "business-systems", "subcategory": "email", "technology": "client-server"}
+		for k, want := range strChecks {
+			if m[k] != want {
+				t.Fatalf("%s wrong: got %v want %q", k, m[k], want)
+			}
+		}
+		intChecks := map[string]int64{"risk": 2, "timeout": 60, "tcp_timeout": 30, "udp_timeout": 20}
+		for k, want := range intChecks {
+			if v, ok := m[k].(int64); !ok || v != want {
+				t.Fatalf("%s wrong: got %v want %d", k, m[k], want)
+			}
+		}
+		boolChecks := map[string]bool{"evasive_behavior": false, "has_known_vulnerability": true, "used_by_malware": false, "able_to_transfer_file": true, "prone_to_misuse": false, "pervasive_use": true, "tunnel_applications": false}
+		for k, want := range boolChecks {
+			if v, ok := m[k].(bool); !ok || v != want {
+				t.Fatalf("%s wrong: got %v want %v", k, m[k], want)
+			}
+		}
+		if ports, ok := m["default_ports"].([]string); !ok || len(ports) != 1 || ports[0] != "tcp/80" {
+			t.Fatalf("default_ports wrong: %v", m["default_ports"])
+		}
+		if v, ok := m["has_signatures"].(bool); !ok || !v {
+			t.Fatalf("has_signatures must be true when signatures present: %v", m["has_signatures"])
+		}
+	})
+	t.Run("ip-protocol and icmp ident surfaced", func(t *testing.T) {
+		ip := asMap(t, applicationSummary(&application.Entry{Name: "a", Default: &application.Default{IdentByIpProtocol: new("6")}}))
+		if ip["default_ip_protocol"] != "6" {
+			t.Fatalf("default_ip_protocol wrong: %v", ip["default_ip_protocol"])
+		}
+		if v, ok := ip["has_icmp_ident"].(bool); !ok || v {
+			t.Fatalf("has_icmp_ident must be false for an ip-protocol default: %v", ip["has_icmp_ident"])
+		}
+		icmp := asMap(t, applicationSummary(&application.Entry{Name: "a", Default: &application.Default{IdentByIcmpType: &application.DefaultIdentByIcmpType{Type: new("8")}}}))
+		if v, ok := icmp["has_icmp_ident"].(bool); !ok || !v {
+			t.Fatalf("has_icmp_ident must be true when the default identifies by ICMP: %v", icmp["has_icmp_ident"])
+		}
+	})
+}
+
+func TestApplicationCreate(t *testing.T) {
+	d, f := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("my-app")},
+	)
+	h := createHandler[application.Location, application.Entry, ApplicationInput](d, "panos_application_create",
+		newApplicationService(d), func(in LocationInput) (application.Location, error) {
+			return resolveLocation(d, in, applicationParts())
+		},
+		func(in ApplicationInput) LocationInput { return in.Location }, buildApplicationEntry, applicationSummary)
+	res, _, err := h(t.Context(), nil, ApplicationInput{
+		Name: "my-app", Category: "business-systems", Subcategory: "management", Technology: "client-server",
+		Risk: new(int64(4)), DefaultPorts: []string{"tcp/8080"}, EvasiveBehavior: new(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create failed: %s", textContent(t, res))
+	}
+	set := strings.Join(setElements(f), " ")
+	for _, want := range []string{`name="my-app"`, `<category>business-systems</category>`, `<risk>4</risk>`, `<default><port><member>tcp/8080</member></port></default>`, `<evasive-behavior>yes</evasive-behavior>`} {
+		if !strings.Contains(set, want) {
+			t.Fatalf("create set element missing %q: %s", want, set)
+		}
+	}
+	if xp := strings.Join(getConfigXpaths(f), " "); !strings.Contains(xp, "vsys1") || !strings.Contains(xp, "/application/") {
+		t.Fatalf("create did not target the firewall application node: %s", xp)
+	}
+	assertReadBackGet(t, f)
+}
+
+func TestApplicationAPIErrorSurfaces(t *testing.T) {
+	errBody := `<response status="error" code="12"><msg><line>invalid object</line></msg></response>`
+	d, f := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: errBody})
+	h := getHandler[application.Location, application.Entry](d, "panos_application_get",
+		newApplicationService(d), func(in LocationInput) (application.Location, error) {
+			return resolveLocation(d, in, applicationParts())
+		}, applicationSummary)
+	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(textContent(t, res), "invalid object") {
+		t.Fatalf("API error must surface: %s", textContent(t, res))
+	}
+	assertSingleWrappedGet(t, f, "entry[@name='nope']")
+}
+
+func TestRegisterApplicationToolsReadOnly(t *testing.T) {
+	assertReadOnlyGating(t, RegisterApplicationTools,
+		[]string{"panos_application_list", "panos_application_get"},
+		[]string{"panos_application_create", "panos_application_update", "panos_application_delete"})
 }
 
 // --- Custom URL categories ---------------------------------------------------

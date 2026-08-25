@@ -46,8 +46,8 @@ func newSecurityRuleService(d *Deps) nameFixAdapter[security.Location, security.
 
 // SecurityRuleInput is the input for the security rule create and update
 // tools. It exposes the practical writable subset of pango's 30+ field Entry;
-// schedule is settable, and the remaining advanced fields (individual
-// profiles, QoS, HIP, log settings, negate flags, rule type, ...) are surfaced
+// schedule and log_setting are settable, and the remaining advanced fields
+// (individual profiles, QoS, HIP, negate flags, rule type, ...) are surfaced
 // read-only by securityRuleDetail but stay SDK-only on the write path until a
 // task needs them.
 type SecurityRuleInput struct {
@@ -65,6 +65,7 @@ type SecurityRuleInput struct {
 	Disabled     *bool         `json:"disabled,omitempty"`
 	ProfileGroup string        `json:"profile_group,omitempty" jsonschema:"Security profile group applied to matching traffic; a provided value replaces the whole profile-setting subtree (clearing any individually assigned profiles). Individual per-type profile assignment is not modelled here."`
 	Schedule     string        `json:"schedule,omitempty" jsonschema:"Schedule object name limiting when the rule is active (see panos_schedule_list); a non-empty value sets it, blank leaves it unchanged (clearing in place is not supported)"`
+	LogSetting   string        `json:"log_setting,omitempty" jsonschema:"Log-forwarding profile name applied to matching traffic (see panos_log_forwarding_profile_list); a non-empty value sets it, blank leaves it unchanged (clearing in place is not supported)"`
 	Position     string        `json:"position,omitempty" jsonschema:"Optional placement on create: top, bottom, before, after (PAN-OS appends at the bottom by default); ignored on update"`
 	RelativeTo   string        `json:"relative_to,omitempty" jsonschema:"Rule name for position before/after; ignored on update"`
 }
@@ -151,6 +152,9 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 	if in.Schedule != "" {
 		e.Schedule = new(in.Schedule)
 	}
+	if in.LogSetting != "" {
+		e.LogSetting = new(in.LogSetting)
+	}
 	applyRuleProfileGroup(e, in.ProfileGroup)
 	return e, nil
 }
@@ -196,6 +200,9 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 	}
 	if in.Schedule != "" {
 		e.Schedule = new(in.Schedule)
+	}
+	if in.LogSetting != "" {
+		e.LogSetting = new(in.LogSetting)
 	}
 	if in.Tags != nil {
 		e.Tag = in.Tags

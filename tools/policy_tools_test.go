@@ -116,8 +116,8 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 	if strVal(e.Action) != "deny" {
 		t.Errorf("action = %v, want deny", e.Action)
 	}
-	if e.Description != nil || e.Disabled != nil || e.Tag != nil || e.Schedule != nil {
-		t.Errorf("unset optional fields must stay unset: %v %v %v %v", e.Description, e.Disabled, e.Tag, e.Schedule)
+	if e.Description != nil || e.Disabled != nil || e.Tag != nil || e.Schedule != nil || e.LogSetting != nil {
+		t.Errorf("unset optional fields must stay unset: %v %v %v %v %v", e.Description, e.Disabled, e.Tag, e.Schedule, e.LogSetting)
 	}
 
 	// Explicit values must suppress every default.
@@ -126,7 +126,7 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 		From: []string{"dmz"}, To: []string{"trust"},
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"web-srv"},
 		Application: []string{"ssl"}, Service: []string{"tcp-8443"},
-		Description: "d", Tags: []string{"t"}, Disabled: new(true), Schedule: "work-hours",
+		Description: "d", Tags: []string{"t"}, Disabled: new(true), Schedule: "work-hours", LogSetting: "fwd-all",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestBuildSecurityRuleEntry(t *testing.T) {
 		e.Destination[0] != "web-srv" || e.Application[0] != "ssl" || e.Service[0] != "tcp-8443" {
 		t.Errorf("explicit fields must not be defaulted: %+v", e)
 	}
-	if strVal(e.Description) != "d" || len(e.Tag) != 1 || e.Disabled == nil || !*e.Disabled || strVal(e.Schedule) != "work-hours" {
+	if strVal(e.Description) != "d" || len(e.Tag) != 1 || e.Disabled == nil || !*e.Disabled || strVal(e.Schedule) != "work-hours" || strVal(e.LogSetting) != "fwd-all" {
 		t.Errorf("optional fields not carried: %+v", e)
 	}
 }
@@ -171,7 +171,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 			Source: []string{"any"}, Destination: []string{"any"},
 			Application: []string{"any"}, Service: []string{"application-default"},
 			Description: new("old"), Tag: []string{"t1"}, Disabled: new(false),
-			Schedule: new("sched-old"),
+			Schedule: new("sched-old"), LogSetting: new("log-old"),
 		}
 	}
 
@@ -180,7 +180,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 	if err := overlaySecurityRule(e, SecurityRuleInput{Name: "r1"}); err != nil {
 		t.Fatal(err)
 	}
-	if strVal(e.Action) != "allow" || e.From[0] != "any" || strVal(e.Description) != "old" || len(e.Tag) != 1 || *e.Disabled || strVal(e.Schedule) != "sched-old" {
+	if strVal(e.Action) != "allow" || e.From[0] != "any" || strVal(e.Description) != "old" || len(e.Tag) != 1 || *e.Disabled || strVal(e.Schedule) != "sched-old" || strVal(e.LogSetting) != "log-old" {
 		t.Fatalf("empty overlay must not change the entry: %+v", e)
 	}
 
@@ -192,7 +192,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 		From: []string{"dmz"}, To: []string{"untrust"},
 		Source: []string{"10.0.0.0/8"}, Destination: []string{"192.0.2.0/24"},
 		Application: []string{"ssl"}, Service: []string{"tcp-8443"},
-		Description: "new", Tags: []string{}, Disabled: new(true), Schedule: "sched-new",
+		Description: "new", Tags: []string{}, Disabled: new(true), Schedule: "sched-new", LogSetting: "log-new",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -201,8 +201,8 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 		e.Destination[0] != "192.0.2.0/24" || e.Application[0] != "ssl" || e.Service[0] != "tcp-8443" {
 		t.Fatalf("all six match lists must replace when non-empty: %+v", e)
 	}
-	if strVal(e.Action) != "deny" || strVal(e.Description) != "new" || len(e.Tag) != 0 || !*e.Disabled || strVal(e.Schedule) != "sched-new" {
-		t.Fatalf("action/description/tags/disabled/schedule overlay wrong: %+v", e)
+	if strVal(e.Action) != "deny" || strVal(e.Description) != "new" || len(e.Tag) != 0 || !*e.Disabled || strVal(e.Schedule) != "sched-new" || strVal(e.LogSetting) != "log-new" {
+		t.Fatalf("action/description/tags/disabled/schedule/log_setting overlay wrong: %+v", e)
 	}
 
 	// An EMPTY match list leaves the field unchanged (a rule cannot have zero

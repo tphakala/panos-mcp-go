@@ -111,6 +111,25 @@ func strVal(s *string) string {
 	return *s
 }
 
+// setPtr assigns src to *dst when src is non-nil, leaving *dst untouched
+// otherwise. It collapses the read-modify-write "set only when provided" guard
+// used across the overlay builders for optional pointer fields.
+func setPtr[T any](dst **T, src *T) {
+	if src != nil {
+		*dst = src
+	}
+}
+
+// setStrPtr sets *dst to a pointer to s when s is non-empty, leaving *dst
+// untouched otherwise: a blank input leaves any existing value in place,
+// matching the single-value field semantics (clearing in place is not
+// supported).
+func setStrPtr(dst **string, s string) {
+	if s != "" {
+		*dst = new(s)
+	}
+}
+
 // readOnlyTool annotates a tool that only reads from the device (open world).
 // DestructiveHint is set false explicitly (redundant under ReadOnlyHint, but
 // unambiguous for scanners).
@@ -533,6 +552,7 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterServiceTools(s, d)
 	RegisterServiceGroupTools(s, d)
 	RegisterTagTools(s, d)
+	RegisterApplicationTools(s, d)
 	RegisterApplicationGroupTools(s, d)
 	RegisterEdlTools(s, d)
 	RegisterCustomURLCategoryTools(s, d)
@@ -544,6 +564,8 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterFileBlockingProfileTools(s, d)
 	RegisterWildfireAnalysisProfileTools(s, d)
 	RegisterProfileGroupTools(s, d)
+	RegisterLogForwardingProfileTools(s, d)
+	RegisterDecryptionProfileTools(s, d)
 	RegisterSecurityRuleTools(s, d)
 	RegisterNatRuleTools(s, d)
 	RegisterDecryptionRuleTools(s, d)
