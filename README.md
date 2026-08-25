@@ -1,11 +1,16 @@
-# panos-mcp-go
+<p align="center">
+  <img src="assets/panos-mcp-go.svg" alt="panos-mcp-go Banner" width="100%">
+</p>
 
-[![CI](https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml/badge.svg)](https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/tphakala/panos-mcp-go/actions/workflows/codeql.yml/badge.svg)](https://github.com/tphakala/panos-mcp-go/actions/workflows/codeql.yml)
-[![Release](https://img.shields.io/github/v/release/tphakala/panos-mcp-go?sort=semver)](https://github.com/tphakala/panos-mcp-go/releases/latest)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/tphakala/panos-mcp-go)](go.mod)
-[![Go Reference](https://pkg.go.dev/badge/github.com/tphakala/panos-mcp-go.svg)](https://pkg.go.dev/github.com/tphakala/panos-mcp-go)
-[![License](https://img.shields.io/github/license/tphakala/panos-mcp-go)](LICENSE)
+<p align="center">
+  <a href="https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml"><img src="https://github.com/tphakala/panos-mcp-go/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tphakala/panos-mcp-go/actions/workflows/codeql.yml"><img src="https://github.com/tphakala/panos-mcp-go/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/tphakala/panos-mcp-go/releases/latest"><img src="https://img.shields.io/github/v/release/tphakala/panos-mcp-go?sort=semver" alt="Release"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/tphakala/panos-mcp-go" alt="Go Version"></a>
+  <a href="https://pkg.go.dev/github.com/tphakala/panos-mcp-go"><img src="https://pkg.go.dev/badge/github.com/tphakala/panos-mcp-go.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/tphakala/panos-mcp-go?color=FA582D" alt="License"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Protocol-00ADD8" alt="MCP Spec"></a>
+</p>
 
 An MCP server for Palo Alto Networks PAN-OS firewalls and Panorama, written in Go on top of the [pango](https://github.com/PaloAltoNetworks/pango) SDK. It gives an MCP client (an AI assistant, for example) configuration management of a single device: address and service objects, groups and tags, security, NAT, decryption, authentication and policy-based forwarding policy, and the candidate commit lifecycle. One server instance talks to one device.
 
