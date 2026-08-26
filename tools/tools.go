@@ -317,6 +317,9 @@ const (
 	offsetKey  = "offset"
 	countKey   = "count"
 	matchedKey = "matched"
+	// interfaceKey is the shared summary map key for an interface name, used by
+	// the op tools and the VPN local-address projections.
+	interfaceKey = "interface"
 )
 
 // replaceListOrRejectEmpty applies a replace-or-keep overlay for a list field
@@ -572,5 +575,14 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterAuthenticationRuleTools(s, d)
 	RegisterPbfRuleTools(s, d)
 	RegisterDeviceTools(s, d)
+	RegisterIkeCryptoProfileTools(s, d)
+	RegisterIpsecCryptoProfileTools(s, d)
+	RegisterIkeGatewayTools(s, d)
+	RegisterIpsecTunnelTools(s, d)
+	RegisterGreTunnelTools(s, d)
+	RegisterDeviceGroupWriteTools(s, d)
+	RegisterTemplateWriteTools(s, d)
+	RegisterTemplateStackTools(s, d)
+	RegisterTemplateVariableTools(s, d)
 	RegisterOpTools(s, d)
 }

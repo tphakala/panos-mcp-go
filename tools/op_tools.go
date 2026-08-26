@@ -357,7 +357,7 @@ func routeSummary(e *routeEntry) map[string]any {
 		"nexthop":        e.Nexthop,
 		"metric":         e.Metric,
 		"flags":          strings.TrimSpace(e.Flags),
-		"interface":      e.Interface,
+		interfaceKey:     e.Interface,
 		"route_table":    e.RouteTable,
 	}
 }
