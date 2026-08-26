@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 184 tools on Panorama and 168 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 73 on Panorama, 70 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 219 tools on Panorama and 203 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 87 on Panorama, 84 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -310,6 +310,48 @@ These manage the Panorama containers themselves. They are Panorama-only. The dev
 | `panos_template_variable_create` *(Panorama only)* | write | Create a Panorama template variable; var_type and value are required. |
 | `panos_template_variable_update` *(Panorama only)* | write | Update a Panorama template variable; provide var_type and value together to change the value. |
 | `panos_template_variable_delete` *(Panorama only)* | write | Delete a Panorama template variable from a template or template_stack. |
+
+### Layer 3 interfaces, virtual routers, and interface management
+
+These network-configuration tools are net-scoped: on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required. The interface tools model the Layer 3 configuration (addresses, MTU, management profile, IPv6 enable); other interface modes (Layer 2, virtual wire, tap) and deep subtrees are preserved untouched across updates but are not settable here, so converting an existing non-L3 port is out of scope.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_ethernet_interface_list` | read-only | List Layer 3 ethernet interfaces at a location. |
+| `panos_ethernet_interface_get` | read-only | Get one ethernet interface (comment, mtu, ips, management profile, ipv6, link settings, aggregate group). |
+| `panos_ethernet_interface_create` | write | Create a Layer 3 ethernet interface in the candidate config. |
+| `panos_ethernet_interface_update` | write | Update an ethernet interface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_ethernet_interface_delete` | write | Delete an ethernet interface from the candidate config. |
+| `panos_aggregate_interface_list` | read-only | List Layer 3 aggregate (ae) interfaces at a location. |
+| `panos_aggregate_interface_get` | read-only | Get one aggregate interface (comment, mtu, ips, management profile, ipv6). |
+| `panos_aggregate_interface_create` | write | Create a Layer 3 aggregate interface in the candidate config. |
+| `panos_aggregate_interface_update` | write | Update an aggregate interface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_aggregate_interface_delete` | write | Delete an aggregate interface from the candidate config. |
+| `panos_loopback_interface_list` | read-only | List loopback interfaces at a location. |
+| `panos_loopback_interface_get` | read-only | Get one loopback interface (comment, mtu, ips, management profile, ipv6). |
+| `panos_loopback_interface_create` | write | Create a loopback interface in the candidate config. |
+| `panos_loopback_interface_update` | write | Update a loopback interface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_loopback_interface_delete` | write | Delete a loopback interface from the candidate config. |
+| `panos_vlan_interface_list` | read-only | List VLAN interfaces at a location. |
+| `panos_vlan_interface_get` | read-only | Get one VLAN interface (comment, mtu, ips, management profile, ipv6). |
+| `panos_vlan_interface_create` | write | Create a VLAN interface in the candidate config. |
+| `panos_vlan_interface_update` | write | Update a VLAN interface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_vlan_interface_delete` | write | Delete a VLAN interface from the candidate config. |
+| `panos_tunnel_interface_list` | read-only | List tunnel interfaces at a location. |
+| `panos_tunnel_interface_get` | read-only | Get one tunnel interface (comment, mtu, ips, management profile, ipv6, link_tag). |
+| `panos_tunnel_interface_create` | write | Create a tunnel interface in the candidate config. |
+| `panos_tunnel_interface_update` | write | Update a tunnel interface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_tunnel_interface_delete` | write | Delete a tunnel interface from the candidate config. |
+| `panos_virtual_router_list` | read-only | List virtual routers at a location. |
+| `panos_virtual_router_get` | read-only | Get one virtual router (bound interfaces, administrative distances). |
+| `panos_virtual_router_create` | write | Create a virtual router; bind member interfaces and set administrative distances. |
+| `panos_virtual_router_update` | write | Update a virtual router: read-modify-write; a provided interfaces list replaces the members fully. Routing protocols (BGP, OSPF, RIP), ECMP and multicast are preserved untouched. |
+| `panos_virtual_router_delete` | write | Delete a virtual router from the candidate config. |
+| `panos_interface_mgmt_profile_list` | read-only | List interface management profiles at a location. |
+| `panos_interface_mgmt_profile_get` | read-only | Get one interface management profile (permitted services and permitted IPs). |
+| `panos_interface_mgmt_profile_create` | write | Create an interface management profile in the candidate config. |
+| `panos_interface_mgmt_profile_update` | write | Update an interface management profile: read-modify-write; a provided permitted_ip list replaces the entries fully. |
+| `panos_interface_mgmt_profile_delete` | write | Delete an interface management profile from the candidate config. |
 
 ## Example MCP client configuration
 

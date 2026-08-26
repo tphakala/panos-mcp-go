@@ -111,6 +111,19 @@ func strVal(s *string) string {
 	return *s
 }
 
+// names maps each element of s through get, returning a non-nil empty slice for
+// an empty input so a summary renders [] and not null (mirrors strList).
+func names[T any](s []T, get func(T) string) []string {
+	if len(s) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(s))
+	for _, v := range s {
+		out = append(out, get(v))
+	}
+	return out
+}
+
 // setPtr assigns src to *dst when src is non-nil, leaving *dst untouched
 // otherwise. It collapses the read-modify-write "set only when provided" guard
 // used across the overlay builders for optional pointer fields.
@@ -584,5 +597,13 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterTemplateWriteTools(s, d)
 	RegisterTemplateStackTools(s, d)
 	RegisterTemplateVariableTools(s, d)
+	// Tier 4: L3 network configuration (net-scoped to firewall, template, or template stack).
+	RegisterEthernetInterfaceTools(s, d)
+	RegisterAggregateInterfaceTools(s, d)
+	RegisterLoopbackInterfaceTools(s, d)
+	RegisterVlanInterfaceTools(s, d)
+	RegisterTunnelInterfaceTools(s, d)
+	RegisterVirtualRouterTools(s, d)
+	RegisterInterfaceManagementProfileTools(s, d)
 	RegisterOpTools(s, d)
 }

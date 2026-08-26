@@ -12,6 +12,10 @@ import (
 	"github.com/PaloAltoNetworks/pango/objects/profiles/ipseccrypto"
 )
 
+// ikeVersion1 is the PAN-OS IKE protocol version value that carries the ikev1
+// crypto-profile and exchange-mode children.
+const ikeVersion1 = "ikev1"
+
 // strList maps a nil slice to a non-nil empty slice so a summary renders [] and
 // not null for an absent ordered list.
 func strList(s []string) []string {
@@ -140,6 +144,18 @@ func overlayIkeCryptoProfile(e *ikecrypto.Entry, in IkeCryptoProfileInput) error
 	return applyIkeCryptoProfile(e, &in)
 }
 
+// lifetimeMap renders a lifetime node as a map, emitting only the units that are
+// set. Shared by the IKE and IPSec crypto profile summaries, whose Lifetime
+// structs are distinct pango types with the same four *int64 unit fields.
+func lifetimeMap(seconds, minutes, hours, days *int64) map[string]any {
+	lm := map[string]any{}
+	putInt(lm, "seconds", seconds)
+	putInt(lm, "minutes", minutes)
+	putInt(lm, "hours", hours)
+	putInt(lm, "days", days)
+	return lm
+}
+
 func ikeCryptoProfileSummary(e *ikecrypto.Entry) any {
 	m := map[string]any{
 		tagNameKey:   e.Name,
@@ -149,12 +165,7 @@ func ikeCryptoProfileSummary(e *ikecrypto.Entry) any {
 	}
 	putInt(m, "authentication_multiple", e.AuthenticationMultiple)
 	if lt := e.Lifetime; lt != nil {
-		lm := map[string]any{}
-		putInt(lm, "seconds", lt.Seconds)
-		putInt(lm, "minutes", lt.Minutes)
-		putInt(lm, "hours", lt.Hours)
-		putInt(lm, "days", lt.Days)
-		m["lifetime"] = lm
+		m["lifetime"] = lifetimeMap(lt.Seconds, lt.Minutes, lt.Hours, lt.Days)
 	}
 	return m
 }
@@ -283,7 +294,16 @@ func applyIpsecCryptoLifetime(e *ipseccrypto.Entry, in *IpsecCryptoProfileInput)
 
 func applyIpsecCryptoProfile(e *ipseccrypto.Entry, in *IpsecCryptoProfileInput) error {
 	setPtr(&e.DhGroup, in.DhGroup)
-	if in.EspEncryption != nil || in.EspAuthentication != nil {
+	espProvided := in.EspEncryption != nil || in.EspAuthentication != nil
+	ahProvided := in.AhAuthentication != nil
+	// PAN-OS rejects a profile carrying both <esp> and <ah>. Update is
+	// read-modify-write, so a provided block clears the opposite sibling the
+	// stored entry may still hold; providing both is a caller error, and
+	// providing neither leaves both untouched (preserve on a no-op update).
+	if espProvided && ahProvided {
+		return errors.New("esp and ah are mutually exclusive; provide esp_* or ah_*, not both")
+	}
+	if espProvided {
 		esp := e.Esp
 		if esp == nil {
 			esp = &ipseccrypto.Esp{}
@@ -295,14 +315,16 @@ func applyIpsecCryptoProfile(e *ipseccrypto.Entry, in *IpsecCryptoProfileInput) 
 		if in.EspAuthentication != nil {
 			esp.Authentication = in.EspAuthentication
 		}
+		e.Ah = nil
 	}
-	if in.AhAuthentication != nil {
+	if ahProvided {
 		ah := e.Ah
 		if ah == nil {
 			ah = &ipseccrypto.Ah{}
 			e.Ah = ah
 		}
 		ah.Authentication = in.AhAuthentication
+		e.Esp = nil
 	}
 	return applyIpsecCryptoLifetime(e, in)
 }
@@ -337,12 +359,7 @@ func ipsecCryptoProfileSummary(e *ipseccrypto.Entry) any {
 		m["ah"] = map[string]any{"authentication": strList(ah.Authentication)}
 	}
 	if lt := e.Lifetime; lt != nil {
-		lm := map[string]any{}
-		putInt(lm, "seconds", lt.Seconds)
-		putInt(lm, "minutes", lt.Minutes)
-		putInt(lm, "hours", lt.Hours)
-		putInt(lm, "days", lt.Days)
-		m["lifetime"] = lm
+		m["lifetime"] = lifetimeMap(lt.Seconds, lt.Minutes, lt.Hours, lt.Days)
 	}
 	if ls := e.Lifesize; ls != nil {
 		lm := map[string]any{}
@@ -502,7 +519,7 @@ func applyIkeGatewayProtocol(e *gateway.Entry, in *IkeGatewayInput) error {
 		e.Protocol = &gateway.Protocol{}
 	}
 	setPtr(&e.Protocol.Version, in.ProtocolVersion)
-	if strVal(e.Protocol.Version) == "ikev1" {
+	if strVal(e.Protocol.Version) == ikeVersion1 {
 		if e.Protocol.Ikev1 == nil {
 			e.Protocol.Ikev1 = &gateway.ProtocolIkev1{}
 		}
@@ -576,7 +593,7 @@ func ikeGatewayCryptoProfile(p *gateway.Protocol) string {
 	if p == nil {
 		return ""
 	}
-	if strVal(p.Version) == "ikev1" {
+	if strVal(p.Version) == ikeVersion1 {
 		if p.Ikev1 != nil && p.Ikev1.IkeCryptoProfile != nil {
 			return *p.Ikev1.IkeCryptoProfile
 		}
@@ -616,6 +633,11 @@ func ikeGatewaySummary(e *gateway.Entry) any {
 	}
 	if p := e.Protocol; p != nil {
 		m["protocol_version"] = strVal(p.Version)
+		// exchange_mode is an IKEv1-only setting; echo it only when ikev1 is the
+		// active version, mirroring where applyIkeGatewayProtocol routes it.
+		if strVal(p.Version) == ikeVersion1 && p.Ikev1 != nil {
+			m["exchange_mode"] = strVal(p.Ikev1.ExchangeMode)
+		}
 	}
 	m["ike_crypto_profile"] = ikeGatewayCryptoProfile(e.Protocol)
 	m["has_pre_shared_key"] = e.Authentication != nil && e.Authentication.PreSharedKey != nil && e.Authentication.PreSharedKey.Key != nil
@@ -754,11 +776,7 @@ func ipsecTunnelGateways(a *ipsec.AutoKey) []string {
 	if a == nil {
 		return []string{}
 	}
-	out := make([]string, 0, len(a.IkeGateway))
-	for _, g := range a.IkeGateway {
-		out = append(out, g.Name)
-	}
-	return out
+	return names(a.IkeGateway, func(g ipsec.AutoKeyIkeGateway) string { return g.Name })
 }
 
 func ipsecTunnelSummary(e *ipsec.Entry) any {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/PaloAltoNetworks/pango/crypto/ike/gateway"
 	"github.com/PaloAltoNetworks/pango/network/tunnel/ipsec"
+	"github.com/PaloAltoNetworks/pango/objects/profiles/ipseccrypto"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -416,6 +417,11 @@ func TestIkeGatewayCryptoProfileVersionSwitch(t *testing.T) {
 	if m["ike_crypto_profile"] != "cp-v1" {
 		t.Fatalf("summary must report the active ikev1 profile after a version switch, got %v", m["ike_crypto_profile"])
 	}
+	// The peer address was set at build and untouched by the version-switch
+	// overlay; a read-modify-write update must preserve it.
+	if pa, ok := m["peer_address"].(map[string]any); !ok || pa["ip"] != "203.0.113.9" {
+		t.Fatalf("omitted peer address must be preserved across a version-switch update: %v", m["peer_address"])
+	}
 }
 
 // TestIkeGatewayExchangeModeRejectedOnNonIkev1 pins that exchange_mode, an
@@ -432,6 +438,10 @@ func TestIkeGatewayExchangeModeRejectedOnNonIkev1(t *testing.T) {
 	}
 	if e.Protocol.Ikev1 == nil || e.Protocol.Ikev1.ExchangeMode == nil || *e.Protocol.Ikev1.ExchangeMode != "main" {
 		t.Fatalf("ikev1 exchange mode not applied: %+v", e.Protocol)
+	}
+	// The summary must echo exchange_mode under the active ikev1 version.
+	if m := asMap(t, ikeGatewaySummary(e)); m["exchange_mode"] != "main" {
+		t.Fatalf("summary must echo the ikev1 exchange_mode, got %v", m["exchange_mode"])
 	}
 }
 
@@ -483,6 +493,56 @@ func TestOverlayIpsecCryptoProfileUnitSwitch(t *testing.T) {
 	if _, err := buildIpsecCryptoProfile(IpsecCryptoProfileInput{Name: "cp", LifesizeGb: new(int64(1)), LifesizeTb: new(int64(1))}); err == nil || !strings.Contains(err.Error(), "at most one lifesize unit") {
 		t.Fatalf("two lifesize units must be rejected: %v", err)
 	}
+}
+
+// TestApplyIpsecCryptoProfileEspAhSiblingClear pins that esp and ah are mutually
+// exclusive, which PAN-OS enforces by rejecting a payload carrying both <esp>
+// and <ah>. Because update is read-modify-write, a provided block must clear the
+// stored opposite sibling: providing esp clears ah, providing ah clears esp,
+// providing both errors, and providing neither preserves both. Sabotage:
+// removing the "e.Ah = nil" line fails "esp after ah clears ah"; removing the
+// "e.Esp = nil" line fails "ah after esp clears esp".
+func TestApplyIpsecCryptoProfileEspAhSiblingClear(t *testing.T) {
+	t.Run("esp after ah clears ah", func(t *testing.T) {
+		e := &ipseccrypto.Entry{Name: "cp", Ah: &ipseccrypto.Ah{Authentication: []string{"sha1"}}}
+		if err := overlayIpsecCryptoProfile(e, IpsecCryptoProfileInput{Name: "cp", EspEncryption: []string{"aes-256-gcm"}}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Esp == nil {
+			t.Fatalf("esp must be set: %+v", e.Esp)
+		}
+		if e.Ah != nil {
+			t.Fatalf("ah must be cleared when esp is provided: %+v", e.Ah)
+		}
+	})
+	t.Run("ah after esp clears esp", func(t *testing.T) {
+		e := &ipseccrypto.Entry{Name: "cp", Esp: &ipseccrypto.Esp{Encryption: []string{"aes-256-gcm"}}}
+		if err := overlayIpsecCryptoProfile(e, IpsecCryptoProfileInput{Name: "cp", AhAuthentication: []string{"sha256"}}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Ah == nil {
+			t.Fatalf("ah must be set: %+v", e.Ah)
+		}
+		if e.Esp != nil {
+			t.Fatalf("esp must be cleared when ah is provided: %+v", e.Esp)
+		}
+	})
+	t.Run("both provided is rejected", func(t *testing.T) {
+		if _, err := buildIpsecCryptoProfile(IpsecCryptoProfileInput{Name: "cp", EspEncryption: []string{"aes-256-gcm"}, AhAuthentication: []string{"sha1"}}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("providing both esp and ah must be rejected: %v", err)
+		}
+	})
+	t.Run("neither provided preserves both", func(t *testing.T) {
+		e := &ipseccrypto.Entry{Name: "cp",
+			Esp: &ipseccrypto.Esp{Encryption: []string{"aes-256-gcm"}},
+			Ah:  &ipseccrypto.Ah{Authentication: []string{"sha1"}}}
+		if err := overlayIpsecCryptoProfile(e, IpsecCryptoProfileInput{Name: "cp", LifetimeHours: new(int64(8))}); err != nil {
+			t.Fatal(err)
+		}
+		if e.Esp == nil || e.Ah == nil {
+			t.Fatalf("an update touching neither esp nor ah must preserve both: esp=%+v ah=%+v", e.Esp, e.Ah)
+		}
+	})
 }
 
 // mustInt64 fails unless got points to want; mustNilInt64 fails unless got is
