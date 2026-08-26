@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PaloAltoNetworks/pango/network/profiles/bfd"
 	"github.com/PaloAltoNetworks/pango/network/profiles/interface_management"
+	"github.com/PaloAltoNetworks/pango/network/profiles/lldp"
+	"github.com/PaloAltoNetworks/pango/network/profiles/monitor"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -214,6 +217,259 @@ func TestInterfaceManagementProfileNoOpUpdate(t *testing.T) {
 func TestInterfaceManagementProfileReadOnlyGating(t *testing.T) {
 	base := "panos_interface_mgmt_profile"
 	assertReadOnlyGating(t, RegisterInterfaceManagementProfileTools,
+		[]string{base + "_list", base + "_get"},
+		[]string{base + "_create", base + "_update", base + "_delete"})
+}
+
+// ---------------------------------------------------------------------------
+// LLDP profile
+// ---------------------------------------------------------------------------
+
+// --- build --------------------------------------------------------------------
+
+func TestLldpProfileBuild(t *testing.T) {
+	e, err := buildLldpProfile(LldpProfileInput{
+		Name:                   "lldp1",
+		Mode:                   new("transmit-receive"),
+		SnmpSyslogNotification: new(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "lldp1" {
+		t.Fatalf("name wrong: got %q, want %q", e.Name, "lldp1")
+	}
+	mustStrPtr(t, e.Mode, "transmit-receive", "mode -> Entry.Mode")
+	mustBoolPtr(t, e.SnmpSyslogNotification, true, "snmp_syslog_notification -> Entry.SnmpSyslogNotification")
+
+	e2, err := buildLldpProfile(LldpProfileInput{Name: "lldp2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e2.Mode != nil {
+		t.Fatalf("unset mode must stay nil, got %v", *e2.Mode)
+	}
+	if e2.SnmpSyslogNotification != nil {
+		t.Fatalf("unset snmp_syslog_notification must stay nil, got %v", *e2.SnmpSyslogNotification)
+	}
+
+	if _, err := buildLldpProfile(LldpProfileInput{}); err == nil {
+		t.Fatal("empty name must be rejected")
+	}
+}
+
+// --- summary ------------------------------------------------------------------
+
+func TestLldpProfileSummary(t *testing.T) {
+	e := &lldp.Entry{
+		Name:                   "lldp1",
+		Mode:                   new("transmit-receive"),
+		SnmpSyslogNotification: new(true),
+	}
+	m := asMap(t, lldpProfileSummary(e))
+	if m[tagNameKey] != "lldp1" {
+		t.Fatalf("summary name wrong: %v", m[tagNameKey])
+	}
+	if m["mode"] != "transmit-receive" {
+		t.Fatalf("summary mode wrong: %v", m["mode"])
+	}
+	if m["snmp_syslog_notification"] != true {
+		t.Fatalf("summary snmp_syslog_notification wrong: %v", m["snmp_syslog_notification"])
+	}
+
+	eFalse := &lldp.Entry{
+		Name:                   "lldp-f",
+		SnmpSyslogNotification: new(false),
+	}
+	mFalse := asMap(t, lldpProfileSummary(eFalse))
+	if mFalse["snmp_syslog_notification"] != false {
+		t.Fatalf("summary must report explicit false: %v", mFalse["snmp_syslog_notification"])
+	}
+
+	eUnset := &lldp.Entry{Name: "lldp2"}
+	mUnset := asMap(t, lldpProfileSummary(eUnset))
+	if _, ok := mUnset["snmp_syslog_notification"]; ok {
+		t.Fatalf("summary must omit unset snmp_syslog_notification, got %v", mUnset["snmp_syslog_notification"])
+	}
+}
+
+// --- read-only gating ---------------------------------------------------------
+
+func TestLldpProfileReadOnlyGating(t *testing.T) {
+	base := "panos_lldp_profile"
+	assertReadOnlyGating(t, RegisterLldpProfileTools,
+		[]string{base + "_list", base + "_get"},
+		[]string{base + "_create", base + "_update", base + "_delete"})
+}
+
+// ---------------------------------------------------------------------------
+// BFD profile
+// ---------------------------------------------------------------------------
+
+// --- build --------------------------------------------------------------------
+
+func TestBfdProfileBuild(t *testing.T) {
+	e, err := buildBfdProfile(BfdProfileInput{
+		Name:                "bfd1",
+		Mode:                new("active"),
+		MinTxInterval:       new(int64(100)),
+		MinRxInterval:       new(int64(200)),
+		DetectionMultiplier: new(int64(3)),
+		HoldTime:            new(int64(500)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "bfd1" {
+		t.Fatalf("name wrong: got %q, want %q", e.Name, "bfd1")
+	}
+	mustStrPtr(t, e.Mode, "active", "mode -> Entry.Mode")
+	mustInt64(t, e.MinTxInterval, 100, "min_tx_interval -> Entry.MinTxInterval")
+	mustInt64(t, e.MinRxInterval, 200, "min_rx_interval -> Entry.MinRxInterval")
+	mustInt64(t, e.DetectionMultiplier, 3, "detection_multiplier -> Entry.DetectionMultiplier")
+	mustInt64(t, e.HoldTime, 500, "hold_time -> Entry.HoldTime")
+
+	e2, err := buildBfdProfile(BfdProfileInput{Name: "bfd2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e2.Mode != nil {
+		t.Fatalf("unset mode must stay nil, got %v", *e2.Mode)
+	}
+	mustNilInt64(t, e2.MinTxInterval, "unset min_tx_interval")
+	mustNilInt64(t, e2.MinRxInterval, "unset min_rx_interval")
+	mustNilInt64(t, e2.DetectionMultiplier, "unset detection_multiplier")
+	mustNilInt64(t, e2.HoldTime, "unset hold_time")
+
+	if _, err := buildBfdProfile(BfdProfileInput{}); err == nil {
+		t.Fatal("empty name must be rejected")
+	}
+}
+
+// --- summary ------------------------------------------------------------------
+
+func TestBfdProfileSummary(t *testing.T) {
+	e := &bfd.Entry{
+		Name:                "bfd1",
+		Mode:                new("active"),
+		MinTxInterval:       new(int64(100)),
+		MinRxInterval:       new(int64(200)),
+		DetectionMultiplier: new(int64(3)),
+		HoldTime:            new(int64(500)),
+	}
+	m := asMap(t, bfdProfileSummary(e))
+	if m[tagNameKey] != "bfd1" {
+		t.Fatalf("summary name wrong: %v", m[tagNameKey])
+	}
+	if m["mode"] != "active" {
+		t.Fatalf("summary mode wrong: %v", m["mode"])
+	}
+	if m["min_tx_interval"] != int64(100) {
+		t.Fatalf("summary min_tx_interval wrong: %v", m["min_tx_interval"])
+	}
+	if m["min_rx_interval"] != int64(200) {
+		t.Fatalf("summary min_rx_interval wrong: %v", m["min_rx_interval"])
+	}
+	if m["detection_multiplier"] != int64(3) {
+		t.Fatalf("summary detection_multiplier wrong: %v", m["detection_multiplier"])
+	}
+	if m["hold_time"] != int64(500) {
+		t.Fatalf("summary hold_time wrong: %v", m["hold_time"])
+	}
+
+	eUnset := &bfd.Entry{Name: "bfd2"}
+	mUnset := asMap(t, bfdProfileSummary(eUnset))
+	for _, key := range []string{"min_tx_interval", "min_rx_interval", "detection_multiplier", "hold_time"} {
+		if _, ok := mUnset[key]; ok {
+			t.Fatalf("summary must omit unset %s, got %v", key, mUnset[key])
+		}
+	}
+}
+
+// --- read-only gating ---------------------------------------------------------
+
+func TestBfdProfileReadOnlyGating(t *testing.T) {
+	base := "panos_bfd_profile"
+	assertReadOnlyGating(t, RegisterBfdProfileTools,
+		[]string{base + "_list", base + "_get"},
+		[]string{base + "_create", base + "_update", base + "_delete"})
+}
+
+// ---------------------------------------------------------------------------
+// Monitor profile
+// ---------------------------------------------------------------------------
+
+// --- build --------------------------------------------------------------------
+
+func TestMonitorProfileBuild(t *testing.T) {
+	e, err := buildMonitorProfile(MonitorProfileInput{
+		Name:      "mon1",
+		Action:    new("wait-recover"),
+		Interval:  new(int64(3)),
+		Threshold: new(int64(5)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Name != "mon1" {
+		t.Fatalf("name wrong: got %q, want %q", e.Name, "mon1")
+	}
+	mustStrPtr(t, e.Action, "wait-recover", "action -> Entry.Action")
+	mustInt64(t, e.Interval, 3, "interval -> Entry.Interval")
+	mustInt64(t, e.Threshold, 5, "threshold -> Entry.Threshold")
+
+	e2, err := buildMonitorProfile(MonitorProfileInput{Name: "mon2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e2.Action != nil {
+		t.Fatalf("unset action must stay nil, got %v", *e2.Action)
+	}
+	mustNilInt64(t, e2.Interval, "unset interval")
+	mustNilInt64(t, e2.Threshold, "unset threshold")
+
+	if _, err := buildMonitorProfile(MonitorProfileInput{}); err == nil {
+		t.Fatal("empty name must be rejected")
+	}
+}
+
+// --- summary ------------------------------------------------------------------
+
+func TestMonitorProfileSummary(t *testing.T) {
+	e := &monitor.Entry{
+		Name:      "mon1",
+		Action:    new("wait-recover"),
+		Interval:  new(int64(3)),
+		Threshold: new(int64(5)),
+	}
+	m := asMap(t, monitorProfileSummary(e))
+	if m[tagNameKey] != "mon1" {
+		t.Fatalf("summary name wrong: %v", m[tagNameKey])
+	}
+	if m["action"] != "wait-recover" {
+		t.Fatalf("summary action wrong: %v", m["action"])
+	}
+	if m["interval"] != int64(3) {
+		t.Fatalf("summary interval wrong: %v", m["interval"])
+	}
+	if m["threshold"] != int64(5) {
+		t.Fatalf("summary threshold wrong: %v", m["threshold"])
+	}
+
+	eUnset := &monitor.Entry{Name: "mon2"}
+	mUnset := asMap(t, monitorProfileSummary(eUnset))
+	for _, key := range []string{"interval", "threshold"} {
+		if _, ok := mUnset[key]; ok {
+			t.Fatalf("summary must omit unset %s, got %v", key, mUnset[key])
+		}
+	}
+}
+
+// --- read-only gating ---------------------------------------------------------
+
+func TestMonitorProfileReadOnlyGating(t *testing.T) {
+	base := "panos_monitor_profile"
+	assertReadOnlyGating(t, RegisterMonitorProfileTools,
 		[]string{base + "_list", base + "_get"},
 		[]string{base + "_create", base + "_update", base + "_delete"})
 }

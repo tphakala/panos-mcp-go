@@ -28,11 +28,11 @@ import (
 // schema) by both family inputs. Comment maps to Entry.Comment; the rest map to
 // the Entry.Layer3 block.
 type InterfaceCommonInput struct {
-	Comment                    *string  `json:"comment,omitempty" jsonschema:"Free-text interface comment"`
-	Mtu                        *int64   `json:"mtu,omitempty" jsonschema:"Layer3 MTU in bytes (e.g. 1500)"`
-	Ips                        []string `json:"ips,omitempty" jsonschema:"Layer3 IP addresses (ip-netmask or an address-object name); on update this list replaces the current IPs fully, an empty list clears them"`
-	InterfaceManagementProfile *string  `json:"interface_management_profile,omitempty" jsonschema:"Name of the interface management profile to attach"`
-	Ipv6Enabled                *bool    `json:"ipv6_enabled,omitempty" jsonschema:"Enable or disable IPv6 on the Layer3 interface"`
+	Comment                    *string  `json:"comment,omitzero" jsonschema:"Free-text interface comment"`
+	Mtu                        *int64   `json:"mtu,omitzero" jsonschema:"Layer3 MTU in bytes (e.g. 1500)"`
+	Ips                        []string `json:"ips,omitzero" jsonschema:"Layer3 IP addresses (ip-netmask or an address-object name); on update this list replaces the current IPs fully, an empty list clears them"`
+	InterfaceManagementProfile *string  `json:"interface_management_profile,omitzero" jsonschema:"Name of the interface management profile to attach"`
+	Ipv6Enabled                *bool    `json:"ipv6_enabled,omitzero" jsonschema:"Enable or disable IPv6 on the Layer3 interface"`
 }
 
 // hasLayer3Fields reports whether any Layer3 field was provided, so an update
@@ -80,10 +80,10 @@ type EthernetInterfaceInput struct {
 	NetScopeInput
 	Name string `json:"name" jsonschema:"Interface name, e.g. ethernet1/1"`
 	InterfaceCommonInput
-	LinkState      *string `json:"link_state,omitempty" jsonschema:"Administrative link state: up, down, or auto"`
-	LinkSpeed      *string `json:"link_speed,omitempty" jsonschema:"Link speed: 10, 100, 1000, or auto"`
-	LinkDuplex     *string `json:"link_duplex,omitempty" jsonschema:"Link duplex: full, half, or auto"`
-	AggregateGroup *string `json:"aggregate_group,omitempty" jsonschema:"Name of the aggregate-ethernet group this port is a member of, e.g. ae1"`
+	LinkState      *string `json:"link_state,omitzero" jsonschema:"Administrative link state: up, down, or auto"`
+	LinkSpeed      *string `json:"link_speed,omitzero" jsonschema:"Link speed: 10, 100, 1000, or auto"`
+	LinkDuplex     *string `json:"link_duplex,omitzero" jsonschema:"Link duplex: full, half, or auto"`
+	AggregateGroup *string `json:"aggregate_group,omitzero" jsonschema:"Name of the aggregate-ethernet group this port is a member of, e.g. ae1"`
 }
 
 // applyEthernetLayer3 writes the provided Layer3 fields into l3, leaving an
@@ -107,34 +107,72 @@ func applyEthernetLayer3(l3 *ethernet.Layer3, in InterfaceCommonInput) {
 	}
 }
 
+// overlayEthernetTopFields writes the physical link and aggregate-group settings
+// that live on the ethernet Entry root, leaving an omitted field untouched
+// (read-modify-write). Shared by the create and update paths.
+//
+//nolint:gocritic // hugeParam: in is by value to match the build/overlay contract that calls this.
+func overlayEthernetTopFields(e *ethernet.Entry, in EthernetInterfaceInput) {
+	setPtr(&e.Comment, in.Comment)
+	setPtr(&e.LinkState, in.LinkState)
+	setPtr(&e.LinkSpeed, in.LinkSpeed)
+	setPtr(&e.LinkDuplex, in.LinkDuplex)
+	setPtr(&e.AggregateGroup, in.AggregateGroup)
+}
+
+// checkAggregateGroupLayer3 rejects combining aggregate_group with any Layer3
+// field in a single request. This server models an aggregate-group member port as
+// carrying no layer3 configuration, so it rejects the combination up front with a
+// clear client-side error rather than emitting an entry the device would reject at
+// commit (NOT MEASURED against a live commit). It inspects the request only; the
+// existing-config transition case is guarded in overlayEthernetInterface.
+//
+//nolint:gocritic // hugeParam: in is by value to match the build/overlay contract that calls this.
+func checkAggregateGroupLayer3(in EthernetInterfaceInput) error {
+	if in.AggregateGroup != nil && in.hasLayer3Fields() {
+		return errors.New("aggregate_group cannot be combined with layer3 fields (mtu, ips, interface_management_profile, ipv6_enabled): an aggregate-group member port carries no layer3 configuration")
+	}
+	return nil
+}
+
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
 func buildEthernetInterface(in EthernetInterfaceInput) (*ethernet.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
 	}
+	if err := checkAggregateGroupLayer3(in); err != nil {
+		return nil, err
+	}
 	e := &ethernet.Entry{Name: in.Name}
-	setPtr(&e.Comment, in.Comment)
-	setPtr(&e.LinkState, in.LinkState)
-	setPtr(&e.LinkSpeed, in.LinkSpeed)
-	setPtr(&e.LinkDuplex, in.LinkDuplex)
-	setPtr(&e.AggregateGroup, in.AggregateGroup)
-	// Create always declares a Layer3 interface: this server models only the
-	// layer3 mode, so a new interface is layer3 even when no L3 field is set.
-	e.Layer3 = &ethernet.Layer3{}
-	applyEthernetLayer3(e.Layer3, in.InterfaceCommonInput)
+	overlayEthernetTopFields(e, in)
+	if in.AggregateGroup == nil {
+		// A standalone port is layer3: this server models only the layer3 mode, so
+		// a new interface is layer3 even when no L3 field is set. A member port
+		// (aggregate_group set) carries no layer3 block, so it is left off entirely.
+		e.Layer3 = &ethernet.Layer3{}
+		applyEthernetLayer3(e.Layer3, in.InterfaceCommonInput)
+	}
 	return e, nil
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract.
 func overlayEthernetInterface(e *ethernet.Entry, in EthernetInterfaceInput) error {
-	setPtr(&e.Comment, in.Comment)
-	setPtr(&e.LinkState, in.LinkState)
-	setPtr(&e.LinkSpeed, in.LinkSpeed)
-	setPtr(&e.LinkDuplex, in.LinkDuplex)
-	setPtr(&e.AggregateGroup, in.AggregateGroup)
-	// Only touch the Layer3 block when a Layer3 field was provided; otherwise
-	// leave the interface's existing mode (layer3 or a sibling) exactly as read.
-	// Sibling mode blocks are never cleared, so their SDK-only subtrees survive.
+	// The resulting entry must not carry both an aggregate_group element and a
+	// layer3 block: an aggregate-group member port has no layer3 config, and the
+	// device rejects the combination at commit (NOT MEASURED against a live
+	// commit). A provided aggregate_group counts as present even when empty, since
+	// setPtr writes it as an empty element rather than removing it. Rejecting the
+	// combination up front covers both transition directions (setting
+	// aggregate_group on a layer3 port, and adding layer3 fields to an existing
+	// member port); converting between the two modes is out of scope for this server.
+	aggPresent := e.AggregateGroup != nil || in.AggregateGroup != nil
+	if aggPresent && (e.Layer3 != nil || in.hasLayer3Fields()) {
+		return errors.New("an ethernet interface cannot carry both an aggregate_group and a layer3 configuration: an aggregate-group member port has no layer3 config, and converting between an aggregate member and a layer3 port is out of scope. Recreate the interface in the target mode instead")
+	}
+	overlayEthernetTopFields(e, in)
+	// Only touch the Layer3 block when a Layer3 field was provided; otherwise leave
+	// the interface's existing mode (layer3 or a sibling) exactly as read. Sibling
+	// mode blocks are never cleared, so their SDK-only subtrees survive.
 	if in.hasLayer3Fields() {
 		if e.Layer3 == nil {
 			e.Layer3 = &ethernet.Layer3{}
@@ -145,25 +183,21 @@ func overlayEthernetInterface(e *ethernet.Entry, in EthernetInterfaceInput) erro
 }
 
 func ethernetInterfaceSummary(e *ethernet.Entry) any {
-	m := map[string]any{tagNameKey: e.Name, "comment": strVal(e.Comment)}
+	m := map[string]any{tagNameKey: e.Name, commentKey: strVal(e.Comment)}
 	m["link_state"] = strVal(e.LinkState)
 	m["link_speed"] = strVal(e.LinkSpeed)
 	m["link_duplex"] = strVal(e.LinkDuplex)
 	m["aggregate_group"] = strVal(e.AggregateGroup)
 	if l3 := e.Layer3; l3 != nil {
 		putInt(m, "mtu", l3.Mtu)
-		m["interface_management_profile"] = strVal(l3.InterfaceManagementProfile)
-		names := make([]string, 0, len(l3.Ip))
-		for i := range l3.Ip {
-			names = append(names, l3.Ip[i].Name)
-		}
-		m["ips"] = strList(names)
+		m[interfaceMgmtProfileKey] = strVal(l3.InterfaceManagementProfile)
+		m[ipsKey] = strList(names(l3.Ip, func(ip ethernet.Layer3Ip) string { return ip.Name }))
 		if l3.Ipv6 != nil {
 			putBool(m, "ipv6_enabled", l3.Ipv6.Enabled)
 		}
 	} else {
-		m["ips"] = strList(nil)
-		m["interface_management_profile"] = ""
+		m[ipsKey] = strList(nil)
+		m[interfaceMgmtProfileKey] = ""
 	}
 	return m
 }
@@ -293,21 +327,17 @@ func overlayAggregateInterface(e *aggregate.Entry, in AggregateInterfaceInput) e
 }
 
 func aggregateInterfaceSummary(e *aggregate.Entry) any {
-	m := map[string]any{tagNameKey: e.Name, "comment": strVal(e.Comment)}
+	m := map[string]any{tagNameKey: e.Name, commentKey: strVal(e.Comment)}
 	if l3 := e.Layer3; l3 != nil {
 		putInt(m, "mtu", l3.Mtu)
-		m["interface_management_profile"] = strVal(l3.InterfaceManagementProfile)
-		names := make([]string, 0, len(l3.Ip))
-		for i := range l3.Ip {
-			names = append(names, l3.Ip[i].Name)
-		}
-		m["ips"] = strList(names)
+		m[interfaceMgmtProfileKey] = strVal(l3.InterfaceManagementProfile)
+		m[ipsKey] = strList(names(l3.Ip, func(ip aggregate.Layer3Ip) string { return ip.Name }))
 		if l3.Ipv6 != nil {
 			putBool(m, "ipv6_enabled", l3.Ipv6.Enabled)
 		}
 	} else {
-		m["ips"] = strList(nil)
-		m["interface_management_profile"] = ""
+		m[ipsKey] = strList(nil)
+		m[interfaceMgmtProfileKey] = ""
 	}
 	return m
 }

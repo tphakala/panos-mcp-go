@@ -329,6 +329,7 @@ const (
 	totalKey   = "total"
 	offsetKey  = "offset"
 	countKey   = "count"
+	entriesKey = "entries"
 	matchedKey = "matched"
 	// interfaceKey is the shared summary map key for an interface name, used by
 	// the op tools and the VPN local-address projections.
@@ -420,7 +421,7 @@ func listHandler[L, E any](
 		for _, e := range entries[lo:hi] {
 			out = append(out, summarize(e))
 		}
-		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), "entries": out})
+		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), entriesKey: out})
 		return res, v, nil
 	}
 }
@@ -605,5 +606,17 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterTunnelInterfaceTools(s, d)
 	RegisterVirtualRouterTools(s, d)
 	RegisterInterfaceManagementProfileTools(s, d)
+	RegisterLldpProfileTools(s, d)
+	RegisterBfdProfileTools(s, d)
+	RegisterMonitorProfileTools(s, d)
+	RegisterVirtualWireTools(s, d)
+	RegisterVlanTools(s, d)
+	// Tier 5: device server profiles (device-scoped: firewall vsys/shared or Panorama template/stack/shared).
+	RegisterLdapProfileTools(s, d)
+	RegisterTacacsProfileTools(s, d)
+	RegisterRadiusProfileTools(s, d)
+	RegisterSyslogProfileTools(s, d)
+	RegisterSnmpTrapProfileTools(s, d)
+	RegisterEmailProfileTools(s, d)
 	RegisterOpTools(s, d)
 }

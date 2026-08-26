@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 219 tools on Panorama and 203 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 87 on Panorama, 84 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 274 tools on Panorama and 258 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 109 on Panorama, 106 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -352,6 +352,75 @@ These network-configuration tools are net-scoped: on a firewall they act on the 
 | `panos_interface_mgmt_profile_create` | write | Create an interface management profile in the candidate config. |
 | `panos_interface_mgmt_profile_update` | write | Update an interface management profile: read-modify-write; a provided permitted_ip list replaces the entries fully. |
 | `panos_interface_mgmt_profile_delete` | write | Delete an interface management profile from the candidate config. |
+
+### LLDP, BFD, monitor profiles, and Layer 2 switching
+
+These network profiles and the two Layer 2 switching objects are net-scoped: on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required. Optional subtrees (LLDP TLVs, BFD multihop, virtual-wire link-state and multicast, the VLAN virtual-interface) are preserved untouched across updates but are not settable here. The `panos_vlan_*` tools manage the Layer 2 VLAN object, distinct from the Layer 3 VLAN interface (`panos_vlan_interface_*`).
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_lldp_profile_list` | read-only | List LLDP profiles at a location. |
+| `panos_lldp_profile_get` | read-only | Get one LLDP profile (mode and the notification toggle). |
+| `panos_lldp_profile_create` | write | Create an LLDP profile in the candidate config. |
+| `panos_lldp_profile_update` | write | Update an LLDP profile: read-modify-write; the TLV set is preserved. |
+| `panos_lldp_profile_delete` | write | Delete an LLDP profile from the candidate config. |
+| `panos_bfd_profile_list` | read-only | List BFD profiles at a location. |
+| `panos_bfd_profile_get` | read-only | Get one BFD profile (mode and detection timers). |
+| `panos_bfd_profile_create` | write | Create a BFD profile in the candidate config. |
+| `panos_bfd_profile_update` | write | Update a BFD profile: read-modify-write; the multihop settings are preserved. |
+| `panos_bfd_profile_delete` | write | Delete a BFD profile from the candidate config. |
+| `panos_monitor_profile_list` | read-only | List monitor profiles at a location. |
+| `panos_monitor_profile_get` | read-only | Get one monitor profile (action, interval, threshold). |
+| `panos_monitor_profile_create` | write | Create a monitor profile in the candidate config. |
+| `panos_monitor_profile_update` | write | Update a monitor profile: read-modify-write. |
+| `panos_monitor_profile_delete` | write | Delete a monitor profile from the candidate config. |
+| `panos_virtual_wire_list` | read-only | List virtual wires at a location. |
+| `panos_virtual_wire_get` | read-only | Get one virtual wire (bound interfaces and allowed tags). |
+| `panos_virtual_wire_create` | write | Create a virtual wire binding two Layer 2 interfaces. |
+| `panos_virtual_wire_update` | write | Update a virtual wire: read-modify-write; link-state and multicast settings are preserved. |
+| `panos_virtual_wire_delete` | write | Delete a virtual wire from the candidate config. |
+| `panos_vlan_list` | read-only | List VLAN objects (Layer 2 broadcast domains) at a location. |
+| `panos_vlan_get` | read-only | Get one VLAN object (its Layer 2 member interfaces). |
+| `panos_vlan_create` | write | Create a VLAN object in the candidate config. |
+| `panos_vlan_update` | write | Update a VLAN object: read-modify-write; a provided interfaces list replaces the members fully. |
+| `panos_vlan_delete` | write | Delete a VLAN object from the candidate config. |
+
+### Device server profiles
+
+These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the authentication profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope. Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_ldap_profile_list` | read-only | List LDAP server profiles at a location. |
+| `panos_ldap_profile_get` | read-only | Get one LDAP server profile (the bind password is never returned). |
+| `panos_ldap_profile_create` | write | Create an LDAP server profile; bind_password is write-only. |
+| `panos_ldap_profile_update` | write | Update an LDAP server profile: read-modify-write; an omitted bind_password is kept. |
+| `panos_ldap_profile_delete` | write | Delete an LDAP server profile from the candidate config. |
+| `panos_tacacs_profile_list` | read-only | List TACACS+ server profiles at a location. |
+| `panos_tacacs_profile_get` | read-only | Get one TACACS+ server profile (per-server secrets are never returned). |
+| `panos_tacacs_profile_create` | write | Create a TACACS+ server profile; server secrets are write-only. |
+| `panos_tacacs_profile_update` | write | Update a TACACS+ server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_tacacs_profile_delete` | write | Delete a TACACS+ server profile from the candidate config. |
+| `panos_radius_profile_list` | read-only | List RADIUS server profiles at a location. |
+| `panos_radius_profile_get` | read-only | Get one RADIUS server profile (per-server secrets are never returned). |
+| `panos_radius_profile_create` | write | Create a RADIUS server profile; server secrets are write-only. |
+| `panos_radius_profile_update` | write | Update a RADIUS server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_radius_profile_delete` | write | Delete a RADIUS server profile from the candidate config. |
+| `panos_syslog_profile_list` | read-only | List syslog server profiles at a location. |
+| `panos_syslog_profile_get` | read-only | Get one syslog server profile (its servers). |
+| `panos_syslog_profile_create` | write | Create a syslog server profile in the candidate config. |
+| `panos_syslog_profile_update` | write | Update a syslog server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_syslog_profile_delete` | write | Delete a syslog server profile from the candidate config. |
+| `panos_snmptrap_profile_list` | read-only | List SNMP-trap server profiles at a location. |
+| `panos_snmptrap_profile_get` | read-only | Get one SNMP-trap server profile (communities and v3 passwords are never returned). |
+| `panos_snmptrap_profile_create` | write | Create an SNMP-trap server profile; version (v2c or v3) is required, secrets are write-only. |
+| `panos_snmptrap_profile_update` | write | Update an SNMP-trap server profile: read-modify-write; switching version clears the other receivers. |
+| `panos_snmptrap_profile_delete` | write | Delete an SNMP-trap server profile from the candidate config. |
+| `panos_email_profile_list` | read-only | List email server profiles at a location. |
+| `panos_email_profile_get` | read-only | Get one email server profile (SMTP passwords are never returned). |
+| `panos_email_profile_create` | write | Create an email server profile; SMTP passwords are write-only. |
+| `panos_email_profile_update` | write | Update an email server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_email_profile_delete` | write | Delete an email server profile from the candidate config. |
 
 ## Example MCP client configuration
 

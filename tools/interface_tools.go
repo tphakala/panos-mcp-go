@@ -62,27 +62,25 @@ func loopbackInterfaceParts() netScopeParts[loopback.Location] {
 	}
 }
 
+// LogicalInterfaceCommonInput is the shared field block for the loopback, VLAN
+// and tunnel logical interfaces. Unlike ethernet/aggregate (whose
+// InterfaceCommonInput maps to the nested Entry.Layer3 block), these three carry
+// their addressing on the Entry root, so this is a separate embed with its own
+// field descriptions rather than a reuse of InterfaceCommonInput.
+type LogicalInterfaceCommonInput struct {
+	Comment                    *string  `json:"comment,omitzero" jsonschema:"Free-text interface comment"`
+	Mtu                        *int64   `json:"mtu,omitzero" jsonschema:"Interface MTU in bytes"`
+	Ips                        []string `json:"ips,omitzero" jsonschema:"IP addresses (CIDR or address-object names); replaces the full list on update"`
+	InterfaceManagementProfile *string  `json:"interface_management_profile,omitzero" jsonschema:"Name of the interface management profile to attach"`
+	Ipv6Enabled                *bool    `json:"ipv6_enabled,omitzero" jsonschema:"Enable IPv6 on the interface"`
+}
+
 // LoopbackInterfaceInput is the input for the loopback interface create and
 // update tools.
 type LoopbackInterfaceInput struct {
 	NetScopeInput
-	Name                       string   `json:"name" jsonschema:"Interface unit name, e.g. loopback.1"`
-	Comment                    *string  `json:"comment,omitempty" jsonschema:"Free-text interface comment"`
-	Mtu                        *int64   `json:"mtu,omitempty" jsonschema:"Interface MTU in bytes"`
-	Ips                        []string `json:"ips,omitempty" jsonschema:"IP addresses (CIDR or address-object names); replaces the full list on update"`
-	InterfaceManagementProfile *string  `json:"interface_management_profile,omitempty" jsonschema:"Name of the interface management profile to attach"`
-	Ipv6Enabled                *bool    `json:"ipv6_enabled,omitempty" jsonschema:"Enable IPv6 on the interface"`
-}
-
-func loopbackIPNames(ips []loopback.Ip) []string {
-	if ips == nil {
-		return nil
-	}
-	out := make([]string, 0, len(ips))
-	for i := range ips {
-		out = append(out, ips[i].Name)
-	}
-	return out
+	Name string `json:"name" jsonschema:"Interface unit name, e.g. loopback.1"`
+	LogicalInterfaceCommonInput
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
@@ -128,7 +126,7 @@ func loopbackInterfaceSummary(e *loopback.Entry) any {
 		tagNameKey:              e.Name,
 		commentKey:              strVal(e.Comment),
 		interfaceMgmtProfileKey: strVal(e.InterfaceManagementProfile),
-		ipsKey:                  strList(loopbackIPNames(e.Ip)),
+		ipsKey:                  strList(names(e.Ip, func(ip loopback.Ip) string { return ip.Name })),
 	}
 	putInt(m, "mtu", e.Mtu)
 	if e.Ipv6 != nil {
@@ -208,23 +206,8 @@ func vlanInterfaceParts() netScopeParts[vlan.Location] {
 // VlanInterfaceInput is the input for the VLAN interface create and update tools.
 type VlanInterfaceInput struct {
 	NetScopeInput
-	Name                       string   `json:"name" jsonschema:"Interface unit name, e.g. vlan.1"`
-	Comment                    *string  `json:"comment,omitempty" jsonschema:"Free-text interface comment"`
-	Mtu                        *int64   `json:"mtu,omitempty" jsonschema:"Interface MTU in bytes"`
-	Ips                        []string `json:"ips,omitempty" jsonschema:"IP addresses (CIDR or address-object names); replaces the full list on update"`
-	InterfaceManagementProfile *string  `json:"interface_management_profile,omitempty" jsonschema:"Name of the interface management profile to attach"`
-	Ipv6Enabled                *bool    `json:"ipv6_enabled,omitempty" jsonschema:"Enable IPv6 on the interface"`
-}
-
-func vlanIPNames(ips []vlan.Ip) []string {
-	if ips == nil {
-		return nil
-	}
-	out := make([]string, 0, len(ips))
-	for i := range ips {
-		out = append(out, ips[i].Name)
-	}
-	return out
+	Name string `json:"name" jsonschema:"Interface unit name, e.g. vlan.1"`
+	LogicalInterfaceCommonInput
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
@@ -270,7 +253,7 @@ func vlanInterfaceSummary(e *vlan.Entry) any {
 		tagNameKey:              e.Name,
 		commentKey:              strVal(e.Comment),
 		interfaceMgmtProfileKey: strVal(e.InterfaceManagementProfile),
-		ipsKey:                  strList(vlanIPNames(e.Ip)),
+		ipsKey:                  strList(names(e.Ip, func(ip vlan.Ip) string { return ip.Name })),
 	}
 	putInt(m, "mtu", e.Mtu)
 	if e.Ipv6 != nil {
@@ -351,24 +334,9 @@ func tunnelInterfaceParts() netScopeParts[tunnel.Location] {
 // tools. link_tag is tunnel-only (it is absent on loopback and VLAN).
 type TunnelInterfaceInput struct {
 	NetScopeInput
-	Name                       string   `json:"name" jsonschema:"Interface unit name, e.g. tunnel.1"`
-	Comment                    *string  `json:"comment,omitempty" jsonschema:"Free-text interface comment"`
-	Mtu                        *int64   `json:"mtu,omitempty" jsonschema:"Interface MTU in bytes"`
-	Ips                        []string `json:"ips,omitempty" jsonschema:"IP addresses (CIDR or address-object names); replaces the full list on update"`
-	InterfaceManagementProfile *string  `json:"interface_management_profile,omitempty" jsonschema:"Name of the interface management profile to attach"`
-	Ipv6Enabled                *bool    `json:"ipv6_enabled,omitempty" jsonschema:"Enable IPv6 on the interface"`
-	LinkTag                    *string  `json:"link_tag,omitempty" jsonschema:"Link tag for the tunnel interface"`
-}
-
-func tunnelIPNames(ips []tunnel.Ip) []string {
-	if ips == nil {
-		return nil
-	}
-	out := make([]string, 0, len(ips))
-	for i := range ips {
-		out = append(out, ips[i].Name)
-	}
-	return out
+	Name string `json:"name" jsonschema:"Interface unit name, e.g. tunnel.1"`
+	LogicalInterfaceCommonInput
+	LinkTag *string `json:"link_tag,omitzero" jsonschema:"Link tag for the tunnel interface"`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
@@ -416,7 +384,7 @@ func tunnelInterfaceSummary(e *tunnel.Entry) any {
 		commentKey:              strVal(e.Comment),
 		interfaceMgmtProfileKey: strVal(e.InterfaceManagementProfile),
 		"link_tag":              strVal(e.LinkTag),
-		ipsKey:                  strList(tunnelIPNames(e.Ip)),
+		ipsKey:                  strList(names(e.Ip, func(ip tunnel.Ip) string { return ip.Name })),
 	}
 	putInt(m, "mtu", e.Mtu)
 	if e.Ipv6 != nil {
