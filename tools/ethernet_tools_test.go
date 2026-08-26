@@ -390,20 +390,39 @@ func TestOverlayEthernetInterfaceDeferredUntouched(t *testing.T) {
 }
 
 // TestOverlayEthernetInterfaceAggregateGroupOnLayer3 pins the state-transition
-// guard: setting aggregate_group on a port that already carries a Layer3 block is
-// rejected up front (the invalid combination would otherwise be caught only at
-// commit), while setting it on a member port (no Layer3) is allowed. Sabotage:
-// deleting the guard in overlayEthernetInterface lets the first case through.
+// guard in both directions: the resulting entry may never carry both an
+// aggregate_group and a layer3 block. Setting aggregate_group on a port that
+// already has a Layer3 block is rejected; adding a layer3 field to an existing
+// aggregate member (whose aggregate_group the request leaves in place) is
+// rejected; and each mode is allowed on its own. Sabotage: deleting the guard in
+// overlayEthernetInterface lets either invalid transition through.
 func TestOverlayEthernetInterfaceAggregateGroupOnLayer3(t *testing.T) {
+	// Direction 1: aggregate_group set on a port that already carries a Layer3 block.
 	l3 := &ethernet.Entry{Name: "ethernet1/1", Layer3: &ethernet.Layer3{}}
 	if err := overlayEthernetInterface(l3, EthernetInterfaceInput{Name: "ethernet1/1", AggregateGroup: new("ae1")}); err == nil {
 		t.Fatal("setting aggregate_group on an interface with an existing layer3 block must be rejected")
 	}
-	member := &ethernet.Entry{Name: "ethernet1/2"}
-	if err := overlayEthernetInterface(member, EthernetInterfaceInput{Name: "ethernet1/2", AggregateGroup: new("ae1")}); err != nil {
+
+	// Direction 2: a layer3 field added to an existing member port (aggregate_group
+	// left in place by the request) would give the member a layer3 block.
+	member := &ethernet.Entry{Name: "ethernet1/2", AggregateGroup: new("ae1")}
+	if err := overlayEthernetInterface(member, EthernetInterfaceInput{Name: "ethernet1/2", Mtu: new(int64(9000))}); err == nil {
+		t.Fatal("adding a layer3 field to an existing aggregate member must be rejected")
+	}
+
+	// An explicit empty aggregate_group is still a present (empty) element, so
+	// pairing it with a layer3 field on a member is rejected too.
+	memberEmpty := &ethernet.Entry{Name: "ethernet1/2", AggregateGroup: new("ae1")}
+	if err := overlayEthernetInterface(memberEmpty, EthernetInterfaceInput{Name: "ethernet1/2", AggregateGroup: new(""), Mtu: new(int64(9000))}); err == nil {
+		t.Fatal("an explicit empty aggregate_group with a layer3 field must be rejected")
+	}
+
+	// Allowed: aggregate_group on a member port with no layer3 (and no layer3 fields).
+	fresh := &ethernet.Entry{Name: "ethernet1/3"}
+	if err := overlayEthernetInterface(fresh, EthernetInterfaceInput{Name: "ethernet1/3", AggregateGroup: new("ae1")}); err != nil {
 		t.Fatalf("aggregate_group on a member port (no layer3) must be allowed: %v", err)
 	}
-	ethMustStrPtr(t, member.AggregateGroup, "ae1", "aggregate_group on member port")
+	ethMustStrPtr(t, fresh.AggregateGroup, "ae1", "aggregate_group on member port")
 }
 
 func TestOverlayAggregateInterfaceDeferredUntouched(t *testing.T) {

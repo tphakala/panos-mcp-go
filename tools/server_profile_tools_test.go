@@ -35,6 +35,12 @@ func assertNoSecretLeak(t *testing.T, m map[string]any, secrets ...string) {
 			for _, vv := range x {
 				walk(vv)
 			}
+		case []string:
+			// Guard fails closed: a future summary that projects a secret inside a
+			// []string (via strList) is still caught.
+			for _, vv := range x {
+				walk(vv)
+			}
 		}
 	}
 	walk(m)
@@ -142,11 +148,6 @@ func TestRadiusProfileBuildAndSummary(t *testing.T) {
 
 // --- SNMP trap: the v2c/v3 one-of ---------------------------------------------
 
-// TestSnmpTrapProfileVersionBranches pins the mutually-exclusive version model:
-// building v2c populates the v2c branch and leaves v3 nil (and vice versa), an
-// empty version is rejected on create, an invalid version is rejected, and
-// switching an existing profile from v2c to v3 clears the v2c branch so the entry
-// never carries both subtrees. Communities and v3 passwords never leak.
 // TestSnmpTrapProfileBuildBranches pins the mutually-exclusive version model on
 // create: building v2c populates only the v2c branch (and maps the community),
 // building v3 populates only the v3 branch, an empty version is rejected, and an
@@ -213,6 +214,29 @@ func TestSnmpTrapProfileOverlayAndSummary(t *testing.T) {
 		t.Fatalf("summary version wrong: %v", m["version"])
 	}
 	assertNoSecretLeak(t, m, "authpw", "privpw", "public-secret")
+}
+
+// TestSnmpTrapProfileOverlaySameVersionReplacesReceivers pins that supplying a
+// receiver list for the profile's already-active version replaces the list in
+// place without switching branches. Sabotage: not replacing
+// e.Version.V2c.Server in applySnmpTrapProfile leaves the old receiver and fails.
+func TestSnmpTrapProfileOverlaySameVersionReplacesReceivers(t *testing.T) {
+	e := &snmptrap.Entry{Name: "snmp", Version: &snmptrap.Version{V2c: &snmptrap.VersionV2c{
+		Server: []snmptrap.VersionV2cServer{{Name: "s1", Community: new("old")}},
+	}}}
+	if err := overlaySnmpTrapProfile(e, SnmpTrapProfileInput{
+		Name: "snmp", Version: "v2c",
+		V2cServers: []SnmpV2cServerInput{{Name: "s2", Manager: new("10.0.0.9"), Community: new("new")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Version.V3 != nil {
+		t.Fatalf("a same-version update must not create the other branch: %+v", e.Version)
+	}
+	if len(e.Version.V2c.Server) != 1 || e.Version.V2c.Server[0].Name != "s2" {
+		t.Fatalf("v2c receivers must be replaced in place: %+v", e.Version.V2c.Server)
+	}
+	mustStrPtr(t, e.Version.V2c.Server[0].Community, "new", "replaced community")
 }
 
 // --- Email --------------------------------------------------------------------

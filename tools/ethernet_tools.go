@@ -157,20 +157,22 @@ func buildEthernetInterface(in EthernetInterfaceInput) (*ethernet.Entry, error) 
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract.
 func overlayEthernetInterface(e *ethernet.Entry, in EthernetInterfaceInput) error {
-	if err := checkAggregateGroupLayer3(in); err != nil {
-		return err
-	}
-	// Setting aggregate_group on a port that already carries a layer3 block would
-	// leave both on the entry, which the device rejects at commit. This server does
-	// not convert an existing layer3 port to an aggregate member, so reject it up
-	// front rather than emitting an entry that fails far from here.
-	if in.AggregateGroup != nil && *in.AggregateGroup != "" && e.Layer3 != nil {
-		return errors.New("cannot set aggregate_group on an interface that already has a layer3 configuration: an aggregate-group member port carries no layer3 config, and converting an existing layer3 port to a member is out of scope. Recreate the interface as a member instead")
+	// The resulting entry must not carry both an aggregate_group element and a
+	// layer3 block: an aggregate-group member port has no layer3 config, and the
+	// device rejects the combination at commit (NOT MEASURED against a live
+	// commit). A provided aggregate_group counts as present even when empty, since
+	// setPtr writes it as an empty element rather than removing it. Rejecting the
+	// combination up front covers both transition directions (setting
+	// aggregate_group on a layer3 port, and adding layer3 fields to an existing
+	// member port); converting between the two modes is out of scope for this server.
+	aggPresent := e.AggregateGroup != nil || in.AggregateGroup != nil
+	if aggPresent && (e.Layer3 != nil || in.hasLayer3Fields()) {
+		return errors.New("an ethernet interface cannot carry both an aggregate_group and a layer3 configuration: an aggregate-group member port has no layer3 config, and converting between an aggregate member and a layer3 port is out of scope. Recreate the interface in the target mode instead")
 	}
 	overlayEthernetTopFields(e, in)
-	// Only touch the Layer3 block when a Layer3 field was provided; otherwise
-	// leave the interface's existing mode (layer3 or a sibling) exactly as read.
-	// Sibling mode blocks are never cleared, so their SDK-only subtrees survive.
+	// Only touch the Layer3 block when a Layer3 field was provided; otherwise leave
+	// the interface's existing mode (layer3 or a sibling) exactly as read. Sibling
+	// mode blocks are never cleared, so their SDK-only subtrees survive.
 	if in.hasLayer3Fields() {
 		if e.Layer3 == nil {
 			e.Layer3 = &ethernet.Layer3{}

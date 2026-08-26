@@ -44,10 +44,6 @@ func TestResolveDeviceScopeFirewall(t *testing.T) {
 	}
 }
 
-// TestResolveDeviceScopePanorama pins the Panorama branch of resolveDeviceScope
-// using ldap parts: template, template+template_vsys, template_stack,
-// template_stack+template_vsys, and shared each resolve to the matching location,
-// and a bare Panorama connection with no scope is rejected.
 // TestResolveDeviceScopePanoramaTemplate pins the Panorama template branches of
 // resolveDeviceScope: a template, and a template narrowed to a vsys.
 func TestResolveDeviceScopePanoramaTemplate(t *testing.T) {
