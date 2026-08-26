@@ -81,13 +81,13 @@ func TestBuildLoopbackInterfaceEmptyNameRejected(t *testing.T) {
 func TestLoopbackInterfaceCreateXpath(t *testing.T) {
 	t.Run("firewall device scope", func(t *testing.T) {
 		xp := loopbackCreateSetXpath(t, "PA-VM", map[string]any{"name": "loopback.1"})
-		if !strings.Contains(xp, "loopback") {
+		if !strings.Contains(xp, "interface/loopback") {
 			t.Fatalf("create must target the loopback node xpath: %s", xp)
 		}
 	})
 	t.Run("panorama template scope", func(t *testing.T) {
 		xp := loopbackCreateSetXpath(t, "Panorama", map[string]any{"name": "loopback.1", "template": "edge"})
-		if !strings.Contains(xp, "loopback") || !strings.Contains(xp, "template") {
+		if !strings.Contains(xp, "interface/loopback") || !strings.Contains(xp, "template") {
 			t.Fatalf("panorama create must target the template loopback xpath: %s", xp)
 		}
 	})
@@ -199,13 +199,13 @@ func TestBuildVlanInterfaceEmptyNameRejected(t *testing.T) {
 func TestVlanInterfaceCreateXpath(t *testing.T) {
 	t.Run("firewall device scope", func(t *testing.T) {
 		xp := vlanCreateSetXpath(t, "PA-VM", map[string]any{"name": "vlan.1"})
-		if !strings.Contains(xp, "vlan") {
+		if !strings.Contains(xp, "interface/vlan") {
 			t.Fatalf("create must target the vlan node xpath: %s", xp)
 		}
 	})
 	t.Run("panorama template scope", func(t *testing.T) {
 		xp := vlanCreateSetXpath(t, "Panorama", map[string]any{"name": "vlan.1", "template": "edge"})
-		if !strings.Contains(xp, "vlan") || !strings.Contains(xp, "template") {
+		if !strings.Contains(xp, "interface/vlan") || !strings.Contains(xp, "template") {
 			t.Fatalf("panorama create must target the template vlan xpath: %s", xp)
 		}
 	})
@@ -319,13 +319,13 @@ func TestBuildTunnelInterfaceEmptyNameRejected(t *testing.T) {
 func TestTunnelInterfaceCreateXpath(t *testing.T) {
 	t.Run("firewall device scope", func(t *testing.T) {
 		xp := tunnelCreateSetXpath(t, "PA-VM", map[string]any{"name": "tunnel.1"})
-		if !strings.Contains(xp, "tunnel") {
+		if !strings.Contains(xp, "interface/tunnel") {
 			t.Fatalf("create must target the tunnel node xpath: %s", xp)
 		}
 	})
 	t.Run("panorama template scope", func(t *testing.T) {
 		xp := tunnelCreateSetXpath(t, "Panorama", map[string]any{"name": "tunnel.1", "template": "edge"})
-		if !strings.Contains(xp, "tunnel") || !strings.Contains(xp, "template") {
+		if !strings.Contains(xp, "interface/tunnel") || !strings.Contains(xp, "template") {
 			t.Fatalf("panorama create must target the template tunnel xpath: %s", xp)
 		}
 	})

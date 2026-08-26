@@ -239,8 +239,9 @@ func ipsecCryptoProfileParts() netScopeParts[ipseccrypto.Location] {
 
 // IpsecCryptoProfileInput is the input for the IPSec crypto profile create and
 // update tools. ESP and AH are mutually exclusive at PAN-OS (esp is the common
-// choice); this server sets whichever the caller provides and lets the device
-// validate. The encryption and authentication lists are ordered and replaced
+// choice); providing both esp_* and ah_* in one call is rejected, and on update
+// providing one clears the other so a read-modify-write never emits both blocks.
+// The encryption and authentication lists are ordered and replaced
 // fully on update. Lifetime and lifesize are each a single-unit choice: at most
 // one unit may be set per group, and on update the chosen unit replaces the
 // others in that group.

@@ -345,7 +345,7 @@ These network-configuration tools are net-scoped: on a firewall they act on the 
 | `panos_virtual_router_list` | read-only | List virtual routers at a location. |
 | `panos_virtual_router_get` | read-only | Get one virtual router (bound interfaces, administrative distances). |
 | `panos_virtual_router_create` | write | Create a virtual router; bind member interfaces and set administrative distances. |
-| `panos_virtual_router_update` | write | Update a virtual router: read-modify-write; a provided interfaces list replaces the members fully. Routing protocols (BGP, OSPF, RIP), ECMP and multicast are preserved untouched. |
+| `panos_virtual_router_update` | write | Update a virtual router: read-modify-write; a provided interfaces list replaces the members fully. Routing protocols (BGP, OSPF, OSPFv3, RIP), ECMP and multicast are preserved untouched. |
 | `panos_virtual_router_delete` | write | Delete a virtual router from the candidate config. |
 | `panos_interface_mgmt_profile_list` | read-only | List interface management profiles at a location. |
 | `panos_interface_mgmt_profile_get` | read-only | Get one interface management profile (permitted services and permitted IPs). |
