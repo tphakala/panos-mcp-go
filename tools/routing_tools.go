@@ -69,9 +69,9 @@ type VirtualRouterInput struct {
 	AdminDistRip        *int64 `json:"admin_dist_rip,omitzero" jsonschema:"Administrative distance for RIP routes"`
 }
 
-// virtualRouterInterfacesKey is the summary key for the bound-interface list,
-// pulled into a constant so the same literal is not repeated (goconst).
-const virtualRouterInterfacesKey = "interfaces"
+// interfacesKey is the shared summary key for a bound-interface list, pulled
+// into a constant so the same literal is not repeated across summaries (goconst).
+const interfacesKey = "interfaces"
 
 // applyVirtualRouterAdminDists overlays the nine caller-provided administrative
 // distances onto the router's admin-dists node. It allocates AdminDists only
@@ -132,8 +132,8 @@ func overlayVirtualRouter(e *virtual_router.Entry, in VirtualRouterInput) error 
 
 func virtualRouterSummary(e *virtual_router.Entry) any {
 	m := map[string]any{
-		tagNameKey:                 e.Name,
-		virtualRouterInterfacesKey: strList(e.Interface),
+		tagNameKey:    e.Name,
+		interfacesKey: strList(e.Interface),
 	}
 	if e.AdminDists != nil {
 		putInt(m, "admin_dist_static", e.AdminDists.Static)

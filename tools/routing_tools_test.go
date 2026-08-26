@@ -47,9 +47,9 @@ func TestVirtualRouterSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := asMap(t, virtualRouterSummary(e))
-	ifaces, ok := m[virtualRouterInterfacesKey].([]string)
+	ifaces, ok := m[interfacesKey].([]string)
 	if !ok || len(ifaces) != 2 || ifaces[0] != "ethernet1/1" {
-		t.Fatalf("summary interfaces wrong: %v", m[virtualRouterInterfacesKey])
+		t.Fatalf("summary interfaces wrong: %v", m[interfacesKey])
 	}
 	if m["admin_dist_ospf_int"] != int64(110) {
 		t.Fatalf("summary must surface admin_dist_ospf_int: %v", m["admin_dist_ospf_int"])
@@ -73,9 +73,9 @@ func TestBuildVirtualRouterNoDistances(t *testing.T) {
 		t.Fatalf("AdminDists must be nil when no distance is provided: %+v", e.AdminDists)
 	}
 	m := asMap(t, virtualRouterSummary(e))
-	ifaces, ok := m[virtualRouterInterfacesKey].([]string)
+	ifaces, ok := m[interfacesKey].([]string)
 	if !ok {
-		t.Fatalf("interfaces must be a []string, got %T", m[virtualRouterInterfacesKey])
+		t.Fatalf("interfaces must be a []string, got %T", m[interfacesKey])
 	}
 	if ifaces == nil || len(ifaces) != 0 {
 		t.Fatalf("an absent interface list must render as [], got %v", ifaces)

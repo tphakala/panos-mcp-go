@@ -582,3 +582,41 @@ func TestOverlayGreTunnelPreservesOnOmit(t *testing.T) {
 		t.Fatalf("omitted peer ip must be preserved: %+v", e.PeerAddress)
 	}
 }
+
+// TestIkeGatewayLocalAddress pins applyIkeGatewayLocal: local_interface and
+// local_ip map onto Entry.LocalAddress.Interface and .Ip, the LocalAddress block
+// is created only when at least one is provided, and the summary reports the
+// interface and ip. Sabotage: dropping either setPtr in applyIkeGatewayLocal, or
+// the nil-guard that skips building LocalAddress, turns a subcheck red.
+func TestIkeGatewayLocalAddress(t *testing.T) {
+	e, err := buildIkeGateway(IkeGatewayInput{
+		Name: "gw", PeerIp: new("203.0.113.9"),
+		LocalInterface: new("ethernet1/1"), LocalIp: new("203.0.113.1/24"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.LocalAddress == nil {
+		t.Fatal("local_interface/local_ip must build a LocalAddress block")
+	}
+	if e.LocalAddress.Interface == nil || *e.LocalAddress.Interface != "ethernet1/1" {
+		t.Fatalf("local_interface must map to LocalAddress.Interface: %+v", e.LocalAddress.Interface)
+	}
+	if e.LocalAddress.Ip == nil || *e.LocalAddress.Ip != "203.0.113.1/24" {
+		t.Fatalf("local_ip must map to LocalAddress.Ip: %+v", e.LocalAddress.Ip)
+	}
+
+	// With neither field, no LocalAddress block is fabricated.
+	bare, err := buildIkeGateway(IkeGatewayInput{Name: "gw", PeerIp: new("203.0.113.9")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.LocalAddress != nil {
+		t.Fatalf("no local address input must leave LocalAddress nil: %+v", bare.LocalAddress)
+	}
+
+	la, ok := asMap(t, ikeGatewaySummary(e))["local_address"].(map[string]any)
+	if !ok || la[interfaceKey] != "ethernet1/1" || la["ip"] != "203.0.113.1/24" {
+		t.Fatalf("summary must report the local address: %v", la)
+	}
+}

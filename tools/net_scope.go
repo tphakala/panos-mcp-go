@@ -117,7 +117,7 @@ func netListHandler[L, E any](
 		for _, e := range entries[lo:hi] {
 			out = append(out, summarize(e))
 		}
-		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), "entries": out})
+		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), entriesKey: out})
 		return res, v, nil
 	}
 }

@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
+	"github.com/PaloAltoNetworks/pango/generic"
 	"github.com/PaloAltoNetworks/pango/network/interface/aggregate"
 	"github.com/PaloAltoNetworks/pango/network/interface/ethernet"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,13 +28,12 @@ func TestBuildEthernetInterface(t *testing.T) {
 		LinkState:                  new("up"),
 		LinkSpeed:                  new("1000"),
 		LinkDuplex:                 new("full"),
-		AggregateGroup:             new("ae1"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e.Layer3 == nil {
-		t.Fatal("create must build a Layer3 block")
+		t.Fatal("create must build a Layer3 block for a standalone port")
 	}
 	ethWantIPNames(t, e.Layer3.Ip, "10.0.0.1/24", "10.0.1.1/24")
 	mustInt64(t, e.Layer3.Mtu, 1500, "mtu -> Layer3.Mtu")
@@ -42,7 +43,27 @@ func TestBuildEthernetInterface(t *testing.T) {
 	ethMustStrPtr(t, e.LinkState, "up", "link_state")
 	ethMustStrPtr(t, e.LinkSpeed, "1000", "link_speed")
 	ethMustStrPtr(t, e.LinkDuplex, "full", "link_duplex")
-	ethMustStrPtr(t, e.AggregateGroup, "ae1", "aggregate_group")
+
+	// A member port (aggregate_group set, no layer3 fields) maps aggregate_group to
+	// the Entry root and carries no layer3 block.
+	mem, err := buildEthernetInterface(EthernetInterfaceInput{Name: "ethernet1/4", AggregateGroup: new("ae1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ethMustStrPtr(t, mem.AggregateGroup, "ae1", "aggregate_group")
+	if mem.Layer3 != nil {
+		t.Fatal("a member port must not carry a Layer3 block")
+	}
+
+	// aggregate_group combined with any layer3 field is rejected up front.
+	if _, err := buildEthernetInterface(EthernetInterfaceInput{
+		Name:           "ethernet1/5",
+		AggregateGroup: new("ae1"),
+		Mtu:            new(int64(1500)),
+	}); err == nil {
+		t.Fatal("aggregate_group with a layer3 field must be rejected")
+	}
+
 	if _, err := buildEthernetInterface(EthernetInterfaceInput{}); err == nil {
 		t.Fatal("empty name must be rejected")
 	}
@@ -331,8 +352,10 @@ func TestEthernetInterfaceUpdateNoop(t *testing.T) {
 // turns this red.
 func TestOverlayEthernetInterfaceDeferredUntouched(t *testing.T) {
 	e := &ethernet.Entry{
-		Name:        "ethernet1/1",
-		VirtualWire: &ethernet.VirtualWire{}, // a sibling mode block that must survive
+		Name:           "ethernet1/1",
+		VirtualWire:    &ethernet.VirtualWire{}, // a sibling mode block that must survive
+		Misc:           []generic.Xml{{}},       // nested unknown XML pango round-trips
+		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "abc-123"}},
 		Layer3: &ethernet.Layer3{
 			Ip:                         []ethernet.Layer3Ip{{Name: "10.0.0.1/24"}},
 			InterfaceManagementProfile: new("mgmt"),
@@ -356,6 +379,31 @@ func TestOverlayEthernetInterfaceDeferredUntouched(t *testing.T) {
 	if e.VirtualWire == nil {
 		t.Fatal("a sibling mode block (virtual-wire) must not be cleared on a layer3 update")
 	}
+	// Nested unknown XML preserved by the in-place read-modify-write: rebuilding
+	// the Entry from scratch would drop these.
+	if len(e.Misc) != 1 {
+		t.Fatalf("nested unknown XML (Misc) must survive a layer3 update: %+v", e.Misc)
+	}
+	if len(e.MiscAttributes) != 1 || e.MiscAttributes[0].Value != "abc-123" {
+		t.Fatalf("unknown entry attributes (MiscAttributes) must survive a layer3 update: %+v", e.MiscAttributes)
+	}
+}
+
+// TestOverlayEthernetInterfaceAggregateGroupOnLayer3 pins the state-transition
+// guard: setting aggregate_group on a port that already carries a Layer3 block is
+// rejected up front (the invalid combination would otherwise be caught only at
+// commit), while setting it on a member port (no Layer3) is allowed. Sabotage:
+// deleting the guard in overlayEthernetInterface lets the first case through.
+func TestOverlayEthernetInterfaceAggregateGroupOnLayer3(t *testing.T) {
+	l3 := &ethernet.Entry{Name: "ethernet1/1", Layer3: &ethernet.Layer3{}}
+	if err := overlayEthernetInterface(l3, EthernetInterfaceInput{Name: "ethernet1/1", AggregateGroup: new("ae1")}); err == nil {
+		t.Fatal("setting aggregate_group on an interface with an existing layer3 block must be rejected")
+	}
+	member := &ethernet.Entry{Name: "ethernet1/2"}
+	if err := overlayEthernetInterface(member, EthernetInterfaceInput{Name: "ethernet1/2", AggregateGroup: new("ae1")}); err != nil {
+		t.Fatalf("aggregate_group on a member port (no layer3) must be allowed: %v", err)
+	}
+	ethMustStrPtr(t, member.AggregateGroup, "ae1", "aggregate_group on member port")
 }
 
 func TestOverlayAggregateInterfaceDeferredUntouched(t *testing.T) {
