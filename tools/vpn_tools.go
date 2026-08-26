@@ -494,9 +494,9 @@ func applyIkeGatewayLocal(e *gateway.Entry, in *IkeGatewayInput) {
 // switch: ikev2-preferred negotiates ikev2 with an ikev1 fallback, so both
 // children can be legitimate, and read-modify-write preserves whichever the
 // caller does not touch.
-func applyIkeGatewayProtocol(e *gateway.Entry, in *IkeGatewayInput) {
+func applyIkeGatewayProtocol(e *gateway.Entry, in *IkeGatewayInput) error {
 	if in.ProtocolVersion == nil && in.IkeCryptoProfile == nil && in.ExchangeMode == nil {
-		return
+		return nil
 	}
 	if e.Protocol == nil {
 		e.Protocol = &gateway.Protocol{}
@@ -508,13 +508,20 @@ func applyIkeGatewayProtocol(e *gateway.Entry, in *IkeGatewayInput) {
 		}
 		setPtr(&e.Protocol.Ikev1.IkeCryptoProfile, in.IkeCryptoProfile)
 		setPtr(&e.Protocol.Ikev1.ExchangeMode, in.ExchangeMode)
-		return
+		return nil
+	}
+	// exchange_mode is an IKEv1-only setting. The active version is not ikev1
+	// here (ikev2, ikev2-preferred, or unset defaulting to ikev2), so reject a
+	// provided exchange_mode rather than silently dropping it.
+	if in.ExchangeMode != nil {
+		return errors.New("exchange_mode applies to ikev1 only; set protocol_version to ikev1")
 	}
 	// ikev2 and ikev2-preferred both carry the crypto profile under ikev2.
 	if e.Protocol.Ikev2 == nil {
 		e.Protocol.Ikev2 = &gateway.ProtocolIkev2{}
 	}
 	setPtr(&e.Protocol.Ikev2.IkeCryptoProfile, in.IkeCryptoProfile)
+	return nil
 }
 
 func applyIkeGatewayAuth(e *gateway.Entry, in *IkeGatewayInput) {
@@ -537,7 +544,9 @@ func applyIkeGateway(e *gateway.Entry, in *IkeGatewayInput) error {
 		return err
 	}
 	applyIkeGatewayLocal(e, in)
-	applyIkeGatewayProtocol(e, in)
+	if err := applyIkeGatewayProtocol(e, in); err != nil {
+		return err
+	}
 	applyIkeGatewayAuth(e, in)
 	return nil
 }

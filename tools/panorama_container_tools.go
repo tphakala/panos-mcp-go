@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -496,6 +497,9 @@ type TemplateVariableInput struct {
 func buildTemplateVariable(in TemplateVariableInput) (*template_variable.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
+	}
+	if !strings.HasPrefix(in.Name, "$") {
+		return nil, errors.New("name must start with a dollar sign, e.g. $wan-ip")
 	}
 	if in.VarType == "" || in.Value == "" {
 		return nil, errors.New("var_type and value are required")

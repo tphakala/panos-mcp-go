@@ -173,6 +173,9 @@ func TestBuildTemplateVariable(t *testing.T) {
 }
 
 func TestBuildTemplateVariableRejects(t *testing.T) {
+	if _, err := buildTemplateVariable(TemplateVariableInput{Name: "wan-ip", VarType: "ip-netmask", Value: "203.0.113.1/32"}); err == nil || !strings.Contains(err.Error(), "must start with a dollar sign") {
+		t.Fatalf("a name without the dollar-sign prefix must be rejected: %v", err)
+	}
 	if _, err := buildTemplateVariable(TemplateVariableInput{Name: "$v", VarType: "ip-netmask"}); err == nil || !strings.Contains(err.Error(), "var_type and value are required") {
 		t.Fatalf("value must be required: %v", err)
 	}

@@ -418,6 +418,23 @@ func TestIkeGatewayCryptoProfileVersionSwitch(t *testing.T) {
 	}
 }
 
+// TestIkeGatewayExchangeModeRejectedOnNonIkev1 pins that exchange_mode, an
+// IKEv1-only setting, is rejected rather than silently dropped when the resolved
+// protocol version is not ikev1 (for example a create with no protocol_version,
+// which defaults to the ikev2 branch).
+func TestIkeGatewayExchangeModeRejectedOnNonIkev1(t *testing.T) {
+	if _, err := buildIkeGateway(IkeGatewayInput{Name: "gw", PeerIp: new("203.0.113.9"), ExchangeMode: new("main")}); err == nil || !strings.Contains(err.Error(), "exchange_mode applies to ikev1 only") {
+		t.Fatalf("exchange_mode without ikev1 must be rejected, not silently dropped: %v", err)
+	}
+	e, err := buildIkeGateway(IkeGatewayInput{Name: "gw", PeerIp: new("203.0.113.9"), ProtocolVersion: new("ikev1"), ExchangeMode: new("main")})
+	if err != nil {
+		t.Fatalf("exchange_mode with ikev1 must be accepted: %v", err)
+	}
+	if e.Protocol.Ikev1 == nil || e.Protocol.Ikev1.ExchangeMode == nil || *e.Protocol.Ikev1.ExchangeMode != "main" {
+		t.Fatalf("ikev1 exchange mode not applied: %+v", e.Protocol)
+	}
+}
+
 // TestIkeCryptoLifetimeUnitSwitch pins that lifetime is a single-unit choice:
 // switching the unit on update clears the previous unit, and providing two units
 // is rejected. Sabotage: reverting applyIkeCryptoLifetime to independent setPtr
