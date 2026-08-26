@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 141 tools on Panorama and 143 on a firewall (the three Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 57 on Panorama, 60 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 184 tools on Panorama and 168 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 73 on Panorama, 70 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -253,6 +253,63 @@ These are read-only operational commands (`type=op`), not configuration changes.
 | `panos_route_list` *(Firewall only)* | read-only | List routes from the legacy virtual-router routing table, optionally scoped to one virtual router. |
 | `panos_test_security_policy_match` *(Firewall only)* | read-only | Test which security rule a hypothetical flow would match against the running config. |
 | `panos_test_nat_policy_match` *(Firewall only)* | read-only | Test which NAT rule a hypothetical flow would match, and the resulting translation, against the running config. |
+
+### Site-to-site VPN
+
+These configure IPSec and GRE VPN. On a firewall they apply at the device scope; on Panorama they require a `template` or `template_stack`. The crypto profiles, gateway, and tunnels reference each other by name within the same scope.
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_ike_crypto_profile_list` | read-only | List IKE crypto profiles (IKE phase-1 SA parameters). |
+| `panos_ike_crypto_profile_get` | read-only | Get one IKE crypto profile (dh_group, encryption, hash, lifetime). |
+| `panos_ike_crypto_profile_create` | write | Create an IKE crypto profile; an IKE gateway references it by name. |
+| `panos_ike_crypto_profile_update` | write | Update an IKE crypto profile: read-modify-write; a provided algorithm list replaces the existing one fully. |
+| `panos_ike_crypto_profile_delete` | write | Delete an IKE crypto profile from the candidate config. |
+| `panos_ipsec_crypto_profile_list` | read-only | List IPSec crypto profiles (IPSec phase-2 SA parameters). |
+| `panos_ipsec_crypto_profile_get` | read-only | Get one IPSec crypto profile (dh_group, esp/ah algorithms, lifetime, lifesize). |
+| `panos_ipsec_crypto_profile_create` | write | Create an IPSec crypto profile; an IPSec tunnel references it by name. |
+| `panos_ipsec_crypto_profile_update` | write | Update an IPSec crypto profile: read-modify-write; a provided algorithm list replaces the existing one fully. |
+| `panos_ipsec_crypto_profile_delete` | write | Delete an IPSec crypto profile from the candidate config. |
+| `panos_ike_gateway_list` | read-only | List IKE gateways (VPN peers). |
+| `panos_ike_gateway_get` | read-only | Get one IKE gateway (peer/local address, protocol version, ike_crypto_profile). The pre-shared key is never returned. |
+| `panos_ike_gateway_create` | write | Create an IKE gateway; set ike_crypto_profile and one of peer_ip, peer_fqdn or peer_dynamic. The pre-shared key is write-only. |
+| `panos_ike_gateway_update` | write | Update an IKE gateway: read-modify-write; the SDK-only certificate-auth, DPD and NAT-traversal subtrees are preserved. |
+| `panos_ike_gateway_delete` | write | Delete an IKE gateway from the candidate config. |
+| `panos_ipsec_tunnel_list` | read-only | List IPSec tunnels. |
+| `panos_ipsec_tunnel_get` | read-only | Get one IPSec tunnel (tunnel_interface, bound ike_gateways, ipsec_crypto_profile, option toggles). |
+| `panos_ipsec_tunnel_create` | write | Create an IPSec tunnel; bind it to a tunnel_interface, ike_gateways and an ipsec_crypto_profile. |
+| `panos_ipsec_tunnel_update` | write | Update an IPSec tunnel: read-modify-write; a provided ike_gateways list replaces the bound gateways fully. |
+| `panos_ipsec_tunnel_delete` | write | Delete an IPSec tunnel from the candidate config. |
+| `panos_gre_tunnel_list` | read-only | List GRE tunnels. |
+| `panos_gre_tunnel_get` | read-only | Get one GRE tunnel (tunnel_interface, local/peer address, ttl, keep-alive). |
+| `panos_gre_tunnel_create` | write | Create a GRE tunnel; bind it to a tunnel_interface and set local/peer addresses. |
+| `panos_gre_tunnel_update` | write | Update a GRE tunnel: read-modify-write, only provided fields change. |
+| `panos_gre_tunnel_delete` | write | Delete a GRE tunnel from the candidate config. |
+
+### Panorama device groups and templates
+
+These manage the Panorama containers themselves. They are Panorama-only. The device-group and template list tools are under Device operations above. Parent device-group hierarchy is not managed.
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_device_group_get` *(Panorama only)* | read-only | Get one Panorama device group (description, bound templates, member devices). |
+| `panos_device_group_create` *(Panorama only)* | write | Create a Panorama device group. Parent hierarchy is not managed. |
+| `panos_device_group_update` *(Panorama only)* | write | Update a Panorama device group: read-modify-write; a provided templates list replaces the bound templates fully. |
+| `panos_device_group_delete` *(Panorama only)* | write | Delete a Panorama device group from the candidate config. |
+| `panos_template_get` *(Panorama only)* | read-only | Get one Panorama template (description, default_vsys). |
+| `panos_template_create` *(Panorama only)* | write | Create a Panorama template. |
+| `panos_template_update` *(Panorama only)* | write | Update a Panorama template: read-modify-write; the device/vsys config subtree is preserved. |
+| `panos_template_delete` *(Panorama only)* | write | Delete a Panorama template from the candidate config. |
+| `panos_template_stack_list` *(Panorama only)* | read-only | List Panorama template stacks (member templates, assigned devices). |
+| `panos_template_stack_get` *(Panorama only)* | read-only | Get one Panorama template stack (ordered member templates, default_vsys, assigned devices, master_device). |
+| `panos_template_stack_create` *(Panorama only)* | write | Create a Panorama template stack; list member templates in priority order, highest first (the first member is the top of the stack and wins any duplicated setting), and assign firewalls by serial. |
+| `panos_template_stack_update` *(Panorama only)* | write | Update a Panorama template stack: read-modify-write; a provided templates or devices list replaces that member list fully. |
+| `panos_template_stack_delete` *(Panorama only)* | write | Delete a Panorama template stack from the candidate config. |
+| `panos_template_variable_list` *(Panorama only)* | read-only | List Panorama template variables in a template or template_stack. |
+| `panos_template_variable_get` *(Panorama only)* | read-only | Get one Panorama template variable (type and value). |
+| `panos_template_variable_create` *(Panorama only)* | write | Create a Panorama template variable; var_type and value are required. |
+| `panos_template_variable_update` *(Panorama only)* | write | Update a Panorama template variable; provide var_type and value together to change the value. |
+| `panos_template_variable_delete` *(Panorama only)* | write | Delete a Panorama template variable from a template or template_stack. |
 
 ## Example MCP client configuration
 
