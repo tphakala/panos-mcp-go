@@ -50,6 +50,9 @@ func TestResolveNetScopePanoramaTemplateStack(t *testing.T) {
 	if loc.TemplateStack == nil || loc.TemplateStack.TemplateStack != "stack1" {
 		t.Fatalf("Panorama template-stack scope wrong: %+v", loc)
 	}
+	if loc.Ngfw != nil || loc.Template != nil {
+		t.Fatalf("only the TemplateStack branch must be set: %+v", loc)
+	}
 }
 
 func TestResolveNetScopeErrors(t *testing.T) {

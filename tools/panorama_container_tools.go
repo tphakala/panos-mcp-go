@@ -30,6 +30,16 @@ type PanoramaNameInput struct {
 	Name string `json:"name" jsonschema:"Object name"`
 }
 
+// panoramaNameAdapter wraps a NameInput handler so it can be registered against
+// PanoramaNameInput, which carries only a name at a fixed Panorama location.
+// Every fixed Panorama-level get and delete tool routes through it, copying the
+// name through and leaving the location empty.
+func panoramaNameAdapter(inner func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error)) func(context.Context, *mcp.CallToolRequest, PanoramaNameInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
+		return inner(ctx, req, NameInput{Name: in.Name})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Device group (panorama/devicegroup)
 // ---------------------------------------------------------------------------
@@ -84,11 +94,7 @@ func overlayDeviceGroup(e *devicegroup.Entry, in DeviceGroupInput) error {
 }
 
 func deviceGroupDeviceNames(devs []devicegroup.Devices) []string {
-	out := make([]string, 0, len(devs))
-	for _, dv := range devs {
-		out = append(out, dv.Name)
-	}
-	return out
+	return names(devs, func(dv devicegroup.Devices) string { return dv.Name })
 }
 
 // deviceGroupDetail is the get/create/update projection. It is deliberately
@@ -118,9 +124,7 @@ func RegisterDeviceGroupWriteTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_device_group_get",
 		Description: "Get one Panorama device group (description, bound templates, member devices). Read-only.",
 		Annotations: readOnlyTool("Get device group"),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
-		return getInner(ctx, req, NameInput{Name: in.Name})
-	})
+	}, panoramaNameAdapter(getInner))
 	if d.ReadOnly {
 		return
 	}
@@ -144,9 +148,7 @@ func RegisterDeviceGroupWriteTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_device_group_delete",
 		Description: "Delete a Panorama device group from the candidate config. Fails while it still contains policy or references. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete device group"),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
-		return delInner(ctx, req, NameInput{Name: in.Name})
-	})
+	}, panoramaNameAdapter(delInner))
 }
 
 // ---------------------------------------------------------------------------
@@ -220,9 +222,7 @@ func RegisterTemplateWriteTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_template_get",
 		Description: "Get one Panorama template (description, default_vsys). Read-only.",
 		Annotations: readOnlyTool("Get template"),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
-		return getInner(ctx, req, NameInput{Name: in.Name})
-	})
+	}, panoramaNameAdapter(getInner))
 	if d.ReadOnly {
 		return
 	}
@@ -246,9 +246,7 @@ func RegisterTemplateWriteTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_template_delete",
 		Description: "Delete a Panorama template from the candidate config. Fails while a template stack still references it. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete template"),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
-		return delInner(ctx, req, NameInput{Name: in.Name})
-	})
+	}, panoramaNameAdapter(delInner))
 }
 
 // ---------------------------------------------------------------------------
@@ -320,11 +318,7 @@ func overlayTemplateStack(e *template_stack.Entry, in TemplateStackInput) error 
 }
 
 func templateStackDeviceNames(devs []template_stack.Devices) []string {
-	out := make([]string, 0, len(devs))
-	for _, dv := range devs {
-		out = append(out, dv.Name)
-	}
-	return out
+	return names(devs, func(dv template_stack.Devices) string { return dv.Name })
 }
 
 func templateStackSummary(e *template_stack.Entry) any {
@@ -364,9 +358,7 @@ func RegisterTemplateStackTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_template_stack_get",
 		Description: "Get one Panorama template stack (ordered member templates, default_vsys, assigned devices, master_device). Read-only.",
 		Annotations: readOnlyTool("Get template stack"),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
-		return getInner(ctx, req, NameInput{Name: in.Name})
-	})
+	}, panoramaNameAdapter(getInner))
 	if d.ReadOnly {
 		return
 	}
@@ -389,9 +381,7 @@ func RegisterTemplateStackTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_template_stack_delete",
 		Description: "Delete a Panorama template stack from the candidate config. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete template stack"),
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in PanoramaNameInput) (*mcp.CallToolResult, any, error) {
-		return delInner(ctx, req, NameInput{Name: in.Name})
-	})
+	}, panoramaNameAdapter(delInner))
 }
 
 // ---------------------------------------------------------------------------

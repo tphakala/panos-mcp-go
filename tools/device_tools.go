@@ -753,7 +753,7 @@ func panoramaFixedResolve[L any](tool string, loc L) func(LocationInput) (L, err
 // deviceGroupSummary reduces a device group entry to the list view fields.
 func deviceGroupSummary(e *devicegroup.Entry) any {
 	m := nameDescription(e.Name, e.Description)
-	m["templates"] = e.Templates
+	m["templates"] = strList(e.Templates)
 	return m
 }
 
