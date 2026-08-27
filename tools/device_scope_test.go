@@ -65,6 +65,21 @@ func TestResolveDeviceScopePanoramaTemplate(t *testing.T) {
 	if loc.TemplateVsys == nil || loc.TemplateVsys.Template != "t1" || loc.TemplateVsys.Vsys != "vsys3" {
 		t.Fatalf("template+template_vsys must resolve to the template-vsys location: %+v", loc.TemplateVsys)
 	}
+
+	// The device scope resolves a template combined with shared to the template,
+	// where the profile scope rejects the same combination. That difference is
+	// why the two resolvers share only their template tier and not their
+	// cross-tier rules, so it is pinned here rather than left to inference.
+	loc, err = resolveDeviceScope(d, DeviceScopeInput{Template: "t1", Shared: true}, parts)
+	if err != nil {
+		t.Fatalf("template combined with shared must resolve, not error: %v", err)
+	}
+	if loc.Template == nil || loc.Template.Template != "t1" {
+		t.Fatalf("template must win over shared in the device scope: %+v", loc)
+	}
+	if loc.Shared != nil {
+		t.Fatalf("template must win over shared in the device scope, got the shared location: %+v", loc)
+	}
 }
 
 // TestResolveDeviceScopePanoramaStackAndShared pins the Panorama template-stack

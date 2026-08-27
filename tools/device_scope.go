@@ -45,12 +45,9 @@ func (in DeviceScopeInput) deviceScope() DeviceScopeInput { return in }
 // shared scope (the log-settings profiles: syslog, SNMP-trap, email), which makes
 // a shared request an error rather than a silently invalid location.
 type deviceScopeParts[L any] struct {
-	shared            func() L
-	vsys              func(ngfw, vsys string) L
-	template          func(panorama, template string) L
-	templateVsys      func(panorama, template, ngfw, vsys string) L
-	templateStack     func(panorama, stack string) L
-	templateStackVsys func(panorama, stack, ngfw, vsys string) L
+	shared func() L
+	vsys   func(ngfw, vsys string) L
+	templateScopeParts[L]
 }
 
 // resolveDeviceScope maps a DeviceScopeInput onto a pango location for the
@@ -59,11 +56,8 @@ type deviceScopeParts[L any] struct {
 // an explicit template, template_stack, or shared selection.
 func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
-	if in.Template != "" && in.TemplateStack != "" {
-		return zero, errors.New("set only one of template or template_stack, not both")
-	}
-	if in.TemplateVsys != "" && in.Template == "" && in.TemplateStack == "" {
-		return zero, errors.New("template_vsys requires a template or template_stack")
+	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, in.TemplateVsys); err != nil {
+		return zero, err
 	}
 	if d.IsPanorama {
 		return resolvePanoramaDeviceScope(in, p)
@@ -86,17 +80,10 @@ func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[
 // scope is required.
 func resolvePanoramaDeviceScope[L any](in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
+	if loc, ok := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts); ok {
+		return loc, nil
+	}
 	switch {
-	case in.Template != "":
-		if in.TemplateVsys != "" {
-			return p.templateVsys(defaultPanoramaDevice, in.Template, defaultNgfwDevice, in.TemplateVsys), nil
-		}
-		return p.template(defaultPanoramaDevice, in.Template), nil
-	case in.TemplateStack != "":
-		if in.TemplateVsys != "" {
-			return p.templateStackVsys(defaultPanoramaDevice, in.TemplateStack, defaultNgfwDevice, in.TemplateVsys), nil
-		}
-		return p.templateStack(defaultPanoramaDevice, in.TemplateStack), nil
 	case in.Shared:
 		if p.shared == nil {
 			return zero, errors.New("the shared scope is not available for this profile type; use a template or template_stack")

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -80,4 +81,51 @@ func scopedDeleteHandler[NI nameInput, L, E any](
 ) func(context.Context, *mcp.CallToolRequest, NI) (*mcp.CallToolResult, any, error) {
 	return deleteCore(d, tool, svc, resolve,
 		func(in NI) string { return in.entryName() })
+}
+
+// templateScopeParts is the Panorama template and template-stack half of a
+// scope, optionally narrowed to a vsys within the template. The device and
+// profile scopes implement this tier identically, so they embed this rather than
+// each declaring the same four constructors. The net scope deliberately does not:
+// pango gives it a single-argument template constructor, a different shape.
+type templateScopeParts[L any] struct {
+	template          func(panorama, template string) L
+	templateVsys      func(panorama, template, ngfw, vsys string) L
+	templateStack     func(panorama, stack string) L
+	templateStackVsys func(panorama, stack, ngfw, vsys string) L
+}
+
+// validateTemplateExclusivity enforces the two template-tier input rules the
+// device and profile scopes share verbatim. Both spelled these out separately
+// before; the messages are unchanged. A family with further cross-tier rules
+// checks those itself.
+func validateTemplateExclusivity(template, stack, vsys string) error {
+	switch {
+	case template != "" && stack != "":
+		return errors.New("set only one of template or template_stack, not both")
+	case vsys != "" && template == "" && stack == "":
+		return errors.New("template_vsys requires a template or template_stack")
+	}
+	return nil
+}
+
+// resolveTemplateTier returns the location a template or template-stack request
+// names, narrowed to a vsys when one is given. ok is false when the request
+// names neither tier, which leaves the caller to handle its own remaining
+// scopes. Callers must have validated exclusivity first, so a request naming
+// both tiers cannot reach here.
+func resolveTemplateTier[L any](template, stack, vsys string, p templateScopeParts[L]) (loc L, ok bool) {
+	switch {
+	case template != "":
+		if vsys != "" {
+			return p.templateVsys(defaultPanoramaDevice, template, defaultNgfwDevice, vsys), true
+		}
+		return p.template(defaultPanoramaDevice, template), true
+	case stack != "":
+		if vsys != "" {
+			return p.templateStackVsys(defaultPanoramaDevice, stack, defaultNgfwDevice, vsys), true
+		}
+		return p.templateStack(defaultPanoramaDevice, stack), true
+	}
+	return loc, false
 }

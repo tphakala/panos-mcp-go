@@ -30,12 +30,9 @@ func (in ProfileScopeInput) profileScope() ProfileScopeInput { return in }
 // profileScopeParts supplies the six pango location constructors resolveProfileScope
 // selects among.
 type profileScopeParts[L any] struct {
-	shared            func() L
-	panorama          func() L
-	template          func(panorama, template string) L
-	templateVsys      func(panorama, template, ngfw, vsys string) L
-	templateStack     func(panorama, stack string) L
-	templateStackVsys func(panorama, stack, ngfw, vsys string) L
+	shared   func() L
+	panorama func() L
+	templateScopeParts[L]
 }
 
 // resolveProfileScope maps a ProfileScopeInput onto a pango location for the
@@ -63,11 +60,10 @@ func resolveProfileScope[L any](d *Deps, in ProfileScopeInput, p profileScopePar
 // are mutually exclusive, and a template tier cannot be combined with shared or
 // panorama.
 func validateProfileScopeExclusivity(in ProfileScopeInput) error {
+	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, in.TemplateVsys); err != nil {
+		return err
+	}
 	switch {
-	case in.Template != "" && in.TemplateStack != "":
-		return errors.New("set only one of template or template_stack, not both")
-	case in.TemplateVsys != "" && in.Template == "" && in.TemplateStack == "":
-		return errors.New("template_vsys requires a template or template_stack")
 	case in.Shared && in.Panorama:
 		return errors.New("set only one of shared or panorama, not both")
 	case (in.Template != "" || in.TemplateStack != "") && (in.Shared || in.Panorama):
@@ -81,17 +77,10 @@ func validateProfileScopeExclusivity(in ProfileScopeInput) error {
 // management-plane scope, or the shared scope is required.
 func resolvePanoramaProfileScope[L any](in ProfileScopeInput, p profileScopeParts[L]) (L, error) {
 	var zero L
+	if loc, ok := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts); ok {
+		return loc, nil
+	}
 	switch {
-	case in.Template != "":
-		if in.TemplateVsys != "" {
-			return p.templateVsys(defaultPanoramaDevice, in.Template, defaultNgfwDevice, in.TemplateVsys), nil
-		}
-		return p.template(defaultPanoramaDevice, in.Template), nil
-	case in.TemplateStack != "":
-		if in.TemplateVsys != "" {
-			return p.templateStackVsys(defaultPanoramaDevice, in.TemplateStack, defaultNgfwDevice, in.TemplateVsys), nil
-		}
-		return p.templateStack(defaultPanoramaDevice, in.TemplateStack), nil
 	case in.Panorama:
 		return p.panorama(), nil
 	case in.Shared:
