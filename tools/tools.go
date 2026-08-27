@@ -405,15 +405,27 @@ func isObjectNotFound(err error) bool {
 // listHandler builds a list tool handler: fetch all entries at the location
 // (the XML API has no server-side pagination), filter by name substring,
 // clamp, and summarize.
-func listHandler[L, E any](
+// The five *Core functions below hold the shared body of the object, net-scope
+// and device-scope CRUD handlers, which differ only in how they resolve a scope
+// and, for create/update, in whether they carry a write-only secret. Each
+// family's public handler is a thin wrapper that binds a resolve closure and
+// forwards here, so the read/write lock ordering and the write-error redaction
+// seam live in one audited place (issue #90). resolve maps the tool input to a
+// pango location; page and name extract the per-verb inputs; opts supplies the
+// secret extractor for a secret-bearing family (it is empty for object families,
+// where redactSecrets is a no-op that returns the message unchanged).
+
+func listCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
-	resolve func(LocationInput) (L, error),
+	resolve func(In) (L, error),
+	page func(In) (limit, offset int, filter string),
 	name func(*E) string, summarize func(*E) any,
-) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in ListInput) (*mcp.CallToolResult, any, error) {
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		defer d.RLockReads()()
-		d.Logger.Debug(tool, "limit", in.Limit, "offset", in.Offset, "filter", in.Filter)
-		loc, err := resolve(in.Location)
+		limit, offset, filter := page(in)
+		d.Logger.Debug(tool, "limit", limit, "offset", offset, "filter", filter)
+		loc, err := resolve(in)
 		if err != nil {
 			res, v := errorResult("%s: %v", tool, err)
 			return res, v, nil
@@ -430,33 +442,30 @@ func listHandler[L, E any](
 			// entries and return an empty list.
 			entries = nil
 		}
-		res, v := jsonResult(projectList(entries, in.Limit, in.Offset, in.Filter, name, summarize))
+		res, v := jsonResult(projectList(entries, limit, offset, filter, name, summarize))
 		return res, v, nil
 	}
 }
 
-// getHandler builds a get tool handler returning the entry through summarize,
-// a clean per-resource projection, so get, create, and update never leak
-// pango's internal struct fields (issue #48). summarize is usually the same
-// function list uses; the NAT tools pass natRuleDetail for get/create/update,
-// a fuller projection than the compact NAT list summary.
-func getHandler[L, E any](
+func getCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
-	resolve func(LocationInput) (L, error),
+	resolve func(In) (L, error),
+	name func(In) string,
 	summarize func(*E) any,
-) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in NameInput) (*mcp.CallToolResult, any, error) {
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		defer d.RLockReads()()
-		if in.Name == "" {
+		n := name(in)
+		if n == "" {
 			res, v := errorResult("%s: name is required", tool)
 			return res, v, nil
 		}
-		loc, err := resolve(in.Location)
+		loc, err := resolve(in)
 		if err != nil {
 			res, v := errorResult("%s: %v", tool, err)
 			return res, v, nil
 		}
-		entry, err := svc.Read(ctx, loc, in.Name, "get")
+		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
 			d.Logger.Error("failed: "+tool, "error", err)
 			res, v := errorResult("failed: %s: %v", tool, err)
@@ -467,43 +476,39 @@ func getHandler[L, E any](
 	}
 }
 
-// deleteHandler builds a delete tool handler.
-func deleteHandler[L, E any](
+func deleteCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
-	resolve func(LocationInput) (L, error),
-) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in NameInput) (*mcp.CallToolResult, any, error) {
-		if in.Name == "" {
+	resolve func(In) (L, error),
+	name func(In) string,
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		n := name(in)
+		if n == "" {
 			res, v := errorResult("%s: name is required", tool)
 			return res, v, nil
 		}
-		loc, err := resolve(in.Location)
+		loc, err := resolve(in)
 		if err != nil {
 			res, v := errorResult("%s: %v", tool, err)
 			return res, v, nil
 		}
 		defer d.LockWrites()()
-		if err := svc.Delete(ctx, loc, in.Name); err != nil {
+		if err := svc.Delete(ctx, loc, n); err != nil {
 			d.Logger.Error("failed: "+tool, "error", err)
 			res, v := errorResult("failed: %s: %v", tool, err)
 			return res, v, nil
 		}
-		res, v := successResult(d.Logger, tool, "deleted %q from candidate config; run panos_commit to apply", in.Name)
+		res, v := successResult(d.Logger, tool, "deleted %q from candidate config; run panos_commit to apply", n)
 		return res, v, nil
 	}
 }
 
-// createHandler builds a create tool handler from a resource-specific entry
-// builder. Unlike the net- and device-scope create/update handlers it takes no
-// writeOption secret extractor: no object family carries a write-only secret, so
-// there is nothing to redact from its device-error output (issue #92). A future
-// secret-bearing object family would thread the same opts seam through here.
-func createHandler[L, E, In any](
+func createCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
-	resolve func(LocationInput) (L, error),
-	location func(In) LocationInput,
+	resolve func(In) (L, error),
 	build func(In) (*E, error),
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		entry, err := build(in)
@@ -511,7 +516,7 @@ func createHandler[L, E, In any](
 			res, v := errorResult("%s: %v", tool, err)
 			return res, v, nil
 		}
-		loc, err := resolve(location(in))
+		loc, err := resolve(in)
 		if err != nil {
 			res, v := errorResult("%s: %v", tool, err)
 			return res, v, nil
@@ -519,8 +524,9 @@ func createHandler[L, E, In any](
 		defer d.LockWrites()()
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		d.Logger.Info(tool + " succeeded")
@@ -529,16 +535,13 @@ func createHandler[L, E, In any](
 	}
 }
 
-// updateHandler builds a read-modify-write update tool handler. The overlay
-// applies only the caller-provided fields; provided arrays replace the existing
-// arrays entirely.
-func updateHandler[L, E, In any](
+func updateCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
-	resolve func(LocationInput) (L, error),
-	location func(In) LocationInput,
+	resolve func(In) (L, error),
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		n := name(in)
@@ -546,7 +549,7 @@ func updateHandler[L, E, In any](
 			res, v := errorResult("%s: name is required", tool)
 			return res, v, nil
 		}
-		loc, err := resolve(location(in))
+		loc, err := resolve(in)
 		if err != nil {
 			res, v := errorResult("%s: %v", tool, err)
 			return res, v, nil
@@ -564,14 +567,85 @@ func updateHandler[L, E, In any](
 		}
 		updated, err := svc.Update(ctx, loc, entry, n)
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		d.Logger.Info(tool+" succeeded", "name", n)
 		res, v := jsonResult(summarize(updated))
 		return res, v, nil
 	}
+}
+
+func listHandler[L, E any](
+	d *Deps, tool string, svc crudService[L, E],
+	resolve func(LocationInput) (L, error),
+	name func(*E) string, summarize func(*E) any,
+) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
+	return listCore(d, tool, svc,
+		func(in ListInput) (L, error) { return resolve(in.Location) },
+		func(in ListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+		name, summarize)
+}
+
+// getHandler builds a get tool handler returning the entry through summarize,
+// a clean per-resource projection, so get, create, and update never leak
+// pango's internal struct fields (issue #48). summarize is usually the same
+// function list uses; the NAT tools pass natRuleDetail for get/create/update,
+// a fuller projection than the compact NAT list summary.
+func getHandler[L, E any](
+	d *Deps, tool string, svc crudService[L, E],
+	resolve func(LocationInput) (L, error),
+	summarize func(*E) any,
+) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
+	return getCore(d, tool, svc,
+		func(in NameInput) (L, error) { return resolve(in.Location) },
+		func(in NameInput) string { return in.Name },
+		summarize)
+}
+
+// deleteHandler builds a delete tool handler.
+func deleteHandler[L, E any](
+	d *Deps, tool string, svc crudService[L, E],
+	resolve func(LocationInput) (L, error),
+) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
+	return deleteCore(d, tool, svc,
+		func(in NameInput) (L, error) { return resolve(in.Location) },
+		func(in NameInput) string { return in.Name })
+}
+
+// createHandler builds a create tool handler from a resource-specific entry
+// builder. Unlike the net- and device-scope create/update handlers it takes no
+// writeOption secret extractor: no object family carries a write-only secret, so
+// there is nothing to redact from its device-error output (issue #92). A future
+// secret-bearing object family would thread the same opts seam through here.
+func createHandler[L, E, In any](
+	d *Deps, tool string, svc crudService[L, E],
+	resolve func(LocationInput) (L, error),
+	location func(In) LocationInput,
+	build func(In) (*E, error),
+	summarize func(*E) any,
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return createCore(d, tool, svc,
+		func(in In) (L, error) { return resolve(location(in)) },
+		build, summarize)
+}
+
+// updateHandler builds a read-modify-write update tool handler. The overlay
+// applies only the caller-provided fields; provided arrays replace the existing
+// arrays entirely.
+func updateHandler[L, E, In any](
+	d *Deps, tool string, svc crudService[L, E],
+	resolve func(LocationInput) (L, error),
+	location func(In) LocationInput,
+	name func(In) string,
+	overlay func(*E, In) error,
+	summarize func(*E) any,
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return updateCore(d, tool, svc,
+		func(in In) (L, error) { return resolve(location(in)) },
+		name, overlay, summarize)
 }
 
 // RegisterAll registers every tool for the connected device type.

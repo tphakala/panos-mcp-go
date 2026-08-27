@@ -83,26 +83,10 @@ func netListHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NetListInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in NetListInput) (*mcp.CallToolResult, any, error) {
-		defer d.RLockReads()()
-		d.Logger.Debug(tool, "limit", in.Limit, "offset", in.Offset, "filter", in.Filter)
-		loc, err := resolveNetScope(d, in.NetScopeInput, p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		entries, err := svc.List(ctx, loc, "get", "", "")
-		if err != nil {
-			if !isObjectNotFound(err) {
-				d.Logger.Error("failed: "+tool, "error", err)
-				res, v := errorResult("failed: %s: %v", tool, err)
-				return res, v, nil
-			}
-			entries = nil
-		}
-		res, v := jsonResult(projectList(entries, in.Limit, in.Offset, in.Filter, name, summarize))
-		return res, v, nil
-	}
+	return listCore(d, tool, svc,
+		func(in NetListInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
+		func(in NetListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+		name, summarize)
 }
 
 // netGetHandler mirrors getHandler for the net-scope resolver.
@@ -110,51 +94,19 @@ func netGetHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NetNameInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in NetNameInput) (*mcp.CallToolResult, any, error) {
-		defer d.RLockReads()()
-		if in.Name == "" {
-			res, v := errorResult("%s: name is required", tool)
-			return res, v, nil
-		}
-		loc, err := resolveNetScope(d, in.NetScopeInput, p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		entry, err := svc.Read(ctx, loc, in.Name, "get")
-		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
-			return res, v, nil
-		}
-		res, v := jsonResult(summarize(entry))
-		return res, v, nil
-	}
+	return getCore(d, tool, svc,
+		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
+		func(in NetNameInput) string { return in.Name },
+		summarize)
 }
 
 // netDeleteHandler mirrors deleteHandler for the net-scope resolver.
 func netDeleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 ) func(context.Context, *mcp.CallToolRequest, NetNameInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in NetNameInput) (*mcp.CallToolResult, any, error) {
-		if in.Name == "" {
-			res, v := errorResult("%s: name is required", tool)
-			return res, v, nil
-		}
-		loc, err := resolveNetScope(d, in.NetScopeInput, p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		defer d.LockWrites()()
-		if err := svc.Delete(ctx, loc, in.Name); err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
-			return res, v, nil
-		}
-		res, v := successResult(d.Logger, tool, "deleted %q from candidate config; run panos_commit to apply", in.Name)
-		return res, v, nil
-	}
+	return deleteCore(d, tool, svc,
+		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
+		func(in NetNameInput) string { return in.Name })
 }
 
 // netCreateHandler mirrors createHandler for the net-scope resolver.
@@ -165,29 +117,9 @@ func netCreateHandler[L, E, In any](
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		entry, err := build(in)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		loc, err := resolveNetScope(d, scope(in), p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		defer d.LockWrites()()
-		created, err := svc.Create(ctx, loc, entry)
-		if err != nil {
-			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: %s", tool, red)
-			return res, v, nil
-		}
-		d.Logger.Info(tool + " succeeded")
-		res, v := jsonResult(summarize(created))
-		return res, v, nil
-	}
+	return createCore(d, tool, svc,
+		func(in In) (L, error) { return resolveNetScope(d, scope(in), p) },
+		build, summarize, opts...)
 }
 
 // netUpdateHandler mirrors updateHandler for the net-scope resolver: a
@@ -200,37 +132,7 @@ func netUpdateHandler[L, E, In any](
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		n := name(in)
-		if n == "" {
-			res, v := errorResult("%s: name is required", tool)
-			return res, v, nil
-		}
-		loc, err := resolveNetScope(d, scope(in), p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		defer d.LockWrites()()
-		entry, err := svc.Read(ctx, loc, n, "get")
-		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: read %q: %v", tool, n, err)
-			return res, v, nil
-		}
-		if err := overlay(entry, in); err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		updated, err := svc.Update(ctx, loc, entry, n)
-		if err != nil {
-			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: %s", tool, red)
-			return res, v, nil
-		}
-		d.Logger.Info(tool+" succeeded", "name", n)
-		res, v := jsonResult(summarize(updated))
-		return res, v, nil
-	}
+	return updateCore(d, tool, svc,
+		func(in In) (L, error) { return resolveNetScope(d, scope(in), p) },
+		name, overlay, summarize, opts...)
 }

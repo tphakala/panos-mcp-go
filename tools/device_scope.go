@@ -121,26 +121,10 @@ func deviceListHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, DeviceListInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in DeviceListInput) (*mcp.CallToolResult, any, error) {
-		defer d.RLockReads()()
-		d.Logger.Debug(tool, "limit", in.Limit, "offset", in.Offset, "filter", in.Filter)
-		loc, err := resolveDeviceScope(d, in.DeviceScopeInput, p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		entries, err := svc.List(ctx, loc, "get", "", "")
-		if err != nil {
-			if !isObjectNotFound(err) {
-				d.Logger.Error("failed: "+tool, "error", err)
-				res, v := errorResult("failed: %s: %v", tool, err)
-				return res, v, nil
-			}
-			entries = nil
-		}
-		res, v := jsonResult(projectList(entries, in.Limit, in.Offset, in.Filter, name, summarize))
-		return res, v, nil
-	}
+	return listCore(d, tool, svc,
+		func(in DeviceListInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
+		func(in DeviceListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+		name, summarize)
 }
 
 // deviceGetHandler mirrors netGetHandler for the device-scope resolver.
@@ -148,51 +132,19 @@ func deviceGetHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, DeviceNameInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in DeviceNameInput) (*mcp.CallToolResult, any, error) {
-		defer d.RLockReads()()
-		if in.Name == "" {
-			res, v := errorResult("%s: name is required", tool)
-			return res, v, nil
-		}
-		loc, err := resolveDeviceScope(d, in.DeviceScopeInput, p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		entry, err := svc.Read(ctx, loc, in.Name, "get")
-		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
-			return res, v, nil
-		}
-		res, v := jsonResult(summarize(entry))
-		return res, v, nil
-	}
+	return getCore(d, tool, svc,
+		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
+		func(in DeviceNameInput) string { return in.Name },
+		summarize)
 }
 
 // deviceDeleteHandler mirrors netDeleteHandler for the device-scope resolver.
 func deviceDeleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 ) func(context.Context, *mcp.CallToolRequest, DeviceNameInput) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in DeviceNameInput) (*mcp.CallToolResult, any, error) {
-		if in.Name == "" {
-			res, v := errorResult("%s: name is required", tool)
-			return res, v, nil
-		}
-		loc, err := resolveDeviceScope(d, in.DeviceScopeInput, p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		defer d.LockWrites()()
-		if err := svc.Delete(ctx, loc, in.Name); err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
-			return res, v, nil
-		}
-		res, v := successResult(d.Logger, tool, "deleted %q from candidate config; run panos_commit to apply", in.Name)
-		return res, v, nil
-	}
+	return deleteCore(d, tool, svc,
+		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
+		func(in DeviceNameInput) string { return in.Name })
 }
 
 // deviceCreateHandler mirrors netCreateHandler for the device-scope resolver.
@@ -203,29 +155,9 @@ func deviceCreateHandler[L, E, In any](
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		entry, err := build(in)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		loc, err := resolveDeviceScope(d, scope(in), p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		defer d.LockWrites()()
-		created, err := svc.Create(ctx, loc, entry)
-		if err != nil {
-			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: %s", tool, red)
-			return res, v, nil
-		}
-		d.Logger.Info(tool + " succeeded")
-		res, v := jsonResult(summarize(created))
-		return res, v, nil
-	}
+	return createCore(d, tool, svc,
+		func(in In) (L, error) { return resolveDeviceScope(d, scope(in), p) },
+		build, summarize, opts...)
 }
 
 // deviceUpdateHandler mirrors netUpdateHandler for the device-scope resolver: a
@@ -238,37 +170,7 @@ func deviceUpdateHandler[L, E, In any](
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		n := name(in)
-		if n == "" {
-			res, v := errorResult("%s: name is required", tool)
-			return res, v, nil
-		}
-		loc, err := resolveDeviceScope(d, scope(in), p)
-		if err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		defer d.LockWrites()()
-		entry, err := svc.Read(ctx, loc, n, "get")
-		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: read %q: %v", tool, n, err)
-			return res, v, nil
-		}
-		if err := overlay(entry, in); err != nil {
-			res, v := errorResult("%s: %v", tool, err)
-			return res, v, nil
-		}
-		updated, err := svc.Update(ctx, loc, entry, n)
-		if err != nil {
-			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: %s", tool, red)
-			return res, v, nil
-		}
-		d.Logger.Info(tool+" succeeded", "name", n)
-		res, v := jsonResult(summarize(updated))
-		return res, v, nil
-	}
+	return updateCore(d, tool, svc,
+		func(in In) (L, error) { return resolveDeviceScope(d, scope(in), p) },
+		name, overlay, summarize, opts...)
 }
