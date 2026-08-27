@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -499,9 +500,9 @@ func TestSyslogProfileBuildAndSummary(t *testing.T) {
 // TestTacacsProfileOverlayReplaceAndPreserve pins the update contract for a
 // secret-bearing family: an overlay providing nothing preserves the stored
 // servers (and their secrets) and scalar fields; an overlay providing a servers
-// list replaces the whole list. Sabotage: replacing e.Server unconditionally in
-// applyTacacsProfile fails the preserve case; not replacing when provided fails
-// the replace case.
+// list merges by name, so a server absent from the list is removed. Sabotage:
+// replacing e.Server unconditionally in applyTacacsProfile fails the preserve
+// case; not merging when provided fails the removal case.
 func TestTacacsProfileOverlayReplaceAndPreserve(t *testing.T) {
 	e := &tacacsplus.Entry{
 		Name: "tac", Protocol: new("PAP"),
@@ -517,6 +518,102 @@ func TestTacacsProfileOverlayReplaceAndPreserve(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(e.Server) != 1 || e.Server[0].Name != "s2" || e.Server[0].Secret == nil || *e.Server[0].Secret != "fresh" {
-		t.Fatalf("a provided server list must replace the whole list: %+v", e.Server)
+		t.Fatalf("a server absent from the provided list must be removed: %+v", e.Server)
+	}
+}
+
+// TestTacacsProfileMergePreservesSecretAndMisc pins the #89 fix: re-supplying an
+// existing server by name, with its write-only secret omitted, keeps the stored
+// secret and any unmodeled per-server XML, and editing one server does not clear
+// another's secret.
+func TestTacacsProfileMergePreservesSecretAndMisc(t *testing.T) {
+	e := &tacacsplus.Entry{
+		Name: "tac",
+		Server: []tacacsplus.Server{
+			{Name: "s1", Address: new("10.0.0.1"), Secret: new("stored1"),
+				MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "u1"}}},
+			{Name: "s2", Address: new("10.0.0.2"), Secret: new("stored2")},
+		},
+	}
+	// Re-supply both servers by name: edit s1's address, omit both secrets.
+	in := TacacsProfileInput{Name: "tac", Servers: []TacacsServerInput{
+		{Name: "s1", Address: new("10.0.0.9")},
+		{Name: "s2"},
+	}}
+	if err := overlayTacacsProfile(e, in); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Server) != 2 {
+		t.Fatalf("both named servers should remain: %+v", e.Server)
+	}
+	s1 := e.Server[0]
+	if s1.Name != "s1" || s1.Address == nil || *s1.Address != "10.0.0.9" {
+		t.Fatalf("s1 address should update: %+v", s1)
+	}
+	if s1.Secret == nil || *s1.Secret != "stored1" {
+		t.Fatalf("s1 omitted secret must be preserved: %+v", s1)
+	}
+	if len(s1.MiscAttributes) != 1 || s1.MiscAttributes[0].Value != "u1" {
+		t.Fatalf("s1 unmodeled XML must be preserved: %+v", s1.MiscAttributes)
+	}
+	if e.Server[1].Secret == nil || *e.Server[1].Secret != "stored2" {
+		t.Fatalf("s2 secret must survive editing s1: %+v", e.Server[1])
+	}
+}
+
+// TestRadiusProfileMergePreservesSecret is the #89 replace-vs-preserve test for
+// the RADIUS family (the tracker called out RADIUS and email as lacking one).
+func TestRadiusProfileMergePreservesSecret(t *testing.T) {
+	e := &radius.Entry{
+		Name: "rad",
+		Server: []radius.Server{
+			{Name: "s1", IpAddress: new("10.0.0.1"), Secret: new("stored1"),
+				MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "r1"}}},
+			{Name: "s2", IpAddress: new("10.0.0.2"), Secret: new("stored2")},
+		},
+	}
+	in := RadiusProfileInput{Name: "rad", Servers: []RadiusServerInput{
+		{Name: "s1", IpAddress: new("10.9.9.9")},
+		{Name: "s2"},
+	}}
+	if err := overlayRadiusProfile(e, in); err != nil {
+		t.Fatal(err)
+	}
+	if e.Server[0].Secret == nil || *e.Server[0].Secret != "stored1" ||
+		e.Server[1].Secret == nil || *e.Server[1].Secret != "stored2" {
+		t.Fatalf("omitted per-server secrets must be preserved: %+v", e.Server)
+	}
+	if e.Server[0].IpAddress == nil || *e.Server[0].IpAddress != "10.9.9.9" {
+		t.Fatalf("a provided field should still update: %+v", e.Server[0])
+	}
+	if len(e.Server[0].MiscAttributes) != 1 || e.Server[0].MiscAttributes[0].Value != "r1" {
+		t.Fatalf("s1 unmodeled XML must be preserved: %+v", e.Server[0].MiscAttributes)
+	}
+}
+
+// TestEmailProfileMergePreservesSecret is the #89 replace-vs-preserve test for
+// the email family.
+func TestEmailProfileMergePreservesSecret(t *testing.T) {
+	e := &email.Entry{
+		Name: "em",
+		Server: []email.Server{
+			{Name: "s1", From: new("a@example.com"), Password: new("stored1"),
+				MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "e1"}}},
+			{Name: "s2", From: new("b@example.com"), Password: new("stored2")},
+		},
+	}
+	in := EmailProfileInput{Name: "em", Servers: []EmailServerInput{
+		{Name: "s1", From: new("c@example.com")},
+		{Name: "s2"},
+	}}
+	if err := overlayEmailProfile(e, in); err != nil {
+		t.Fatal(err)
+	}
+	if e.Server[0].Password == nil || *e.Server[0].Password != "stored1" ||
+		e.Server[1].Password == nil || *e.Server[1].Password != "stored2" {
+		t.Fatalf("omitted SMTP passwords must be preserved: %+v", e.Server)
+	}
+	if len(e.Server[0].MiscAttributes) != 1 || e.Server[0].MiscAttributes[0].Value != "e1" {
+		t.Fatalf("s1 unmodeled XML must be preserved: %+v", e.Server[0].MiscAttributes)
 	}
 }

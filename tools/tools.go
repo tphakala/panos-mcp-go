@@ -222,6 +222,31 @@ func clampList(limit, offset, n int) (lo, hi int) {
 	return offset, hi
 }
 
+// projectList applies the standard list post-processing shared by every list
+// tool: a case-insensitive substring filter on the entry name, offset/limit
+// clamping, and a per-entry summary projection. It returns the
+// {total, offset, count, entries} envelope. total counts entries after the
+// filter but before clamping; offset is the clamped start.
+func projectList[E any](entries []*E, limit, offset int, filter string, name func(*E) string, summarize func(*E) any) map[string]any {
+	if filter != "" {
+		needle := strings.ToLower(filter)
+		kept := entries[:0:0]
+		for _, e := range entries {
+			if strings.Contains(strings.ToLower(name(e)), needle) {
+				kept = append(kept, e)
+			}
+		}
+		entries = kept
+	}
+	total := len(entries)
+	lo, hi := clampList(limit, offset, total)
+	out := make([]any, 0, hi-lo)
+	for _, e := range entries[lo:hi] {
+		out = append(out, summarize(e))
+	}
+	return map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), entriesKey: out}
+}
+
 // locParts supplies the per-resource location constructors for resolveLocation.
 // The rulebase argument is meaningful only when rules is true; object
 // resources ignore it. vsys may be nil: a few pango profile packages
@@ -405,23 +430,7 @@ func listHandler[L, E any](
 			// entries and return an empty list.
 			entries = nil
 		}
-		if in.Filter != "" {
-			needle := strings.ToLower(in.Filter)
-			kept := entries[:0:0]
-			for _, e := range entries {
-				if strings.Contains(strings.ToLower(name(e)), needle) {
-					kept = append(kept, e)
-				}
-			}
-			entries = kept
-		}
-		total := len(entries)
-		lo, hi := clampList(in.Limit, in.Offset, total)
-		out := make([]any, 0, hi-lo)
-		for _, e := range entries[lo:hi] {
-			out = append(out, summarize(e))
-		}
-		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), entriesKey: out})
+		res, v := jsonResult(projectList(entries, in.Limit, in.Offset, in.Filter, name, summarize))
 		return res, v, nil
 	}
 }
@@ -485,7 +494,10 @@ func deleteHandler[L, E any](
 }
 
 // createHandler builds a create tool handler from a resource-specific entry
-// builder.
+// builder. Unlike the net- and device-scope create/update handlers it takes no
+// writeOption secret extractor: no object family carries a write-only secret, so
+// there is nothing to redact from its device-error output (issue #92). A future
+// secret-bearing object family would thread the same opts seam through here.
 func createHandler[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
 	resolve func(LocationInput) (L, error),
@@ -611,6 +623,8 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterMonitorProfileTools(s, d)
 	RegisterVirtualWireTools(s, d)
 	RegisterVlanTools(s, d)
+	RegisterDhcpTools(s, d)
+	RegisterDnsProxyTools(s, d)
 	// Tier 5: device server profiles (device-scoped: firewall vsys/shared or Panorama template/stack/shared).
 	RegisterLdapProfileTools(s, d)
 	RegisterTacacsProfileTools(s, d)
@@ -618,5 +632,9 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterSyslogProfileTools(s, d)
 	RegisterSnmpTrapProfileTools(s, d)
 	RegisterEmailProfileTools(s, d)
+	// Tier 5: device identity and auth (device-scoped): local users and SAML/MFA profiles.
+	RegisterLocalUserTools(s, d)
+	RegisterSamlIdpProfileTools(s, d)
+	RegisterMfaProfileTools(s, d)
 	RegisterOpTools(s, d)
 }

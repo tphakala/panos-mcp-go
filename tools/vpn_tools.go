@@ -668,13 +668,13 @@ func RegisterIkeGatewayTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ike_gateway_create",
 		Description: "Create an IKE gateway in the candidate config. Set ike_crypto_profile to a profile in the same scope, and one of peer_ip, peer_fqdn or peer_dynamic. The pre-shared key is write-only. Deeper certificate-auth, DPD and NAT-traversal settings are left at device defaults. Run panos_commit to apply.",
 		Annotations: createTool("Create IKE gateway"),
-	}, netCreateHandler(d, "panos_ike_gateway_create", svc, parts, scope, buildIkeGateway, ikeGatewaySummary))
+	}, netCreateHandler(d, "panos_ike_gateway_create", svc, parts, scope, buildIkeGateway, ikeGatewaySummary, withSecrets(ikeGatewaySecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_gateway_update",
 		Description: "Update an IKE gateway: read-modify-write, only provided fields change; the SDK-only certificate-auth, DPD, fragmentation and NAT-traversal subtrees are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IKE gateway"),
 	}, netUpdateHandler(d, "panos_ike_gateway_update", svc, parts, scope,
-		func(in IkeGatewayInput) string { return in.Name }, overlayIkeGateway, ikeGatewaySummary))
+		func(in IkeGatewayInput) string { return in.Name }, overlayIkeGateway, ikeGatewaySummary, withSecrets(ikeGatewaySecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_gateway_delete",
 		Description: "Delete an IKE gateway from the candidate config. Fails while an IPSec tunnel still references it. Run panos_commit to apply.",

@@ -33,10 +33,11 @@ const protocolKey = "protocol"
 // and update but never returned in a get or list. The device stores them
 // encrypted, so echoing them back would leak ciphertext; summaries report only a
 // has_<secret> boolean. On update, an omitted scalar secret is preserved
-// (read-modify-write); a provided server list, however, replaces the whole list,
-// so for the profiles whose servers carry a secret, each member's secret must be
-// re-supplied. Replacing the list also drops any unmodeled per-server XML the
-// device round-trips (see the follow-up on merge-by-name preservation).
+// (read-modify-write); a provided server list is merged by name, so a server
+// omitted from the list is removed while an untouched server keeps its stored
+// secret and any unmodeled per-server XML the device round-trips. A per-server
+// secret omitted on an existing server is likewise kept; supply it only to
+// change it. (#89)
 
 // ---------------------------------------------------------------------------
 // LDAP server profile (device/profiles/ldap)
@@ -94,13 +95,26 @@ type LdapProfileInput struct {
 	Ssl                     *bool             `json:"ssl,omitzero" jsonschema:"Require SSL/TLS to the directory"`
 	Disabled                *bool             `json:"disabled,omitzero" jsonschema:"Disable this profile"`
 	VerifyServerCertificate *bool             `json:"verify_server_certificate,omitzero" jsonschema:"Verify the server certificate for SSL/TLS"`
-	Servers                 []LdapServerInput `json:"servers,omitzero" jsonschema:"LDAP servers; replaces the whole list when provided"`
+	Servers                 []LdapServerInput `json:"servers,omitzero" jsonschema:"LDAP servers, merged by name; a server absent from the list is removed, an untouched server keeps its stored values"`
 }
 
-func ldapServers(in []LdapServerInput) []ldap.Server {
+// ldapServers merges the provided server inputs onto the existing list by name:
+// each output server is seeded from the same-named existing server, so any
+// unmodeled per-server XML (Misc/MiscAttributes) and, for the families that have
+// one, the stored write-only secret survive when the input omits it; the
+// provided fields are then overlaid. A server whose name is absent from in is
+// dropped, so the provided set still fully replaces the list. On create existing
+// is nil, so every server is built fresh. The other *Servers builders below
+// follow the same shape. (#89)
+func ldapServers(in []LdapServerInput, existing []ldap.Server) []ldap.Server {
+	prev := make(map[string]ldap.Server, len(existing))
+	for _, s := range existing {
+		prev[s.Name] = s
+	}
 	out := make([]ldap.Server, 0, len(in))
 	for _, s := range in {
-		srv := ldap.Server{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.Address, s.Address)
 		setPtr(&srv.Port, s.Port)
 		out = append(out, srv)
@@ -121,7 +135,7 @@ func applyLdapProfile(e *ldap.Entry, in LdapProfileInput) {
 	setPtr(&e.Disabled, in.Disabled)
 	setPtr(&e.VerifyServerCertificate, in.VerifyServerCertificate)
 	if in.Servers != nil {
-		e.Server = ldapServers(in.Servers)
+		e.Server = ldapServers(in.Servers, e.Server)
 	}
 }
 
@@ -192,13 +206,13 @@ func RegisterLdapProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ldap_profile_create",
 		Description: "Create an LDAP server profile in the candidate config. bind_password is write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create LDAP server profile"),
-	}, deviceCreateHandler(d, "panos_ldap_profile_create", svc, parts, scope, buildLdapProfile, ldapProfileSummary))
+	}, deviceCreateHandler(d, "panos_ldap_profile_create", svc, parts, scope, buildLdapProfile, ldapProfileSummary, withSecrets(ldapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ldap_profile_update",
-		Description: "Update an LDAP server profile: read-modify-write, only provided fields change. An omitted bind_password keeps the stored value; a provided servers list replaces the whole list. Run panos_commit to apply.",
+		Description: "Update an LDAP server profile: read-modify-write, only provided fields change. An omitted bind_password keeps the stored value; a provided servers list is merged by name, so a server absent from the list is removed and an untouched server keeps its stored values. Run panos_commit to apply.",
 		Annotations: updateTool("Update LDAP server profile"),
 	}, deviceUpdateHandler(d, "panos_ldap_profile_update", svc, parts, scope,
-		func(in LdapProfileInput) string { return in.Name }, overlayLdapProfile, ldapProfileSummary))
+		func(in LdapProfileInput) string { return in.Name }, overlayLdapProfile, ldapProfileSummary, withSecrets(ldapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ldap_profile_delete",
 		Description: "Delete an LDAP server profile from the candidate config. Fails while authentication profiles still reference it. Run panos_commit to apply.",
@@ -255,13 +269,18 @@ type TacacsProfileInput struct {
 	Protocol            *string             `json:"protocol,omitzero" jsonschema:"Authentication protocol: CHAP or PAP"`
 	Timeout             *int64              `json:"timeout,omitzero" jsonschema:"Timeout in seconds"`
 	UseSingleConnection *bool               `json:"use_single_connection,omitzero" jsonschema:"Use a single TCP connection for all authentication"`
-	Servers             []TacacsServerInput `json:"servers,omitzero" jsonschema:"TACACS+ servers; replaces the whole list when provided (re-supply each secret)"`
+	Servers             []TacacsServerInput `json:"servers,omitzero" jsonschema:"TACACS+ servers, merged by name; a server absent from the list is removed, and an omitted per-server secret keeps the stored value"`
 }
 
-func tacacsServers(in []TacacsServerInput) []tacacsplus.Server {
+func tacacsServers(in []TacacsServerInput, existing []tacacsplus.Server) []tacacsplus.Server {
+	prev := make(map[string]tacacsplus.Server, len(existing))
+	for _, s := range existing {
+		prev[s.Name] = s
+	}
 	out := make([]tacacsplus.Server, 0, len(in))
 	for _, s := range in {
-		srv := tacacsplus.Server{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.Address, s.Address)
 		setPtr(&srv.Secret, s.Secret)
 		setPtr(&srv.Port, s.Port)
@@ -276,7 +295,7 @@ func applyTacacsProfile(e *tacacsplus.Entry, in TacacsProfileInput) {
 	setPtr(&e.Timeout, in.Timeout)
 	setPtr(&e.UseSingleConnection, in.UseSingleConnection)
 	if in.Servers != nil {
-		e.Server = tacacsServers(in.Servers)
+		e.Server = tacacsServers(in.Servers, e.Server)
 	}
 }
 
@@ -339,13 +358,13 @@ func RegisterTacacsProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_tacacs_profile_create",
 		Description: "Create a TACACS+ server profile in the candidate config. Each server secret is write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create TACACS+ server profile"),
-	}, deviceCreateHandler(d, "panos_tacacs_profile_create", svc, parts, scope, buildTacacsProfile, tacacsProfileSummary))
+	}, deviceCreateHandler(d, "panos_tacacs_profile_create", svc, parts, scope, buildTacacsProfile, tacacsProfileSummary, withSecrets(tacacsProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tacacs_profile_update",
-		Description: "Update a TACACS+ server profile: read-modify-write, only provided fields change. A provided servers list replaces the whole list; because secrets are write-only, re-supply each server's secret. Run panos_commit to apply.",
+		Description: "Update a TACACS+ server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, and an omitted per-server secret keeps the stored value. Run panos_commit to apply.",
 		Annotations: updateTool("Update TACACS+ server profile"),
 	}, deviceUpdateHandler(d, "panos_tacacs_profile_update", svc, parts, scope,
-		func(in TacacsProfileInput) string { return in.Name }, overlayTacacsProfile, tacacsProfileSummary))
+		func(in TacacsProfileInput) string { return in.Name }, overlayTacacsProfile, tacacsProfileSummary, withSecrets(tacacsProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tacacs_profile_delete",
 		Description: "Delete a TACACS+ server profile from the candidate config. Fails while authentication profiles still reference it. Run panos_commit to apply.",
@@ -402,13 +421,18 @@ type RadiusProfileInput struct {
 	Name    string              `json:"name" jsonschema:"RADIUS server profile name"`
 	Retries *int64              `json:"retries,omitzero" jsonschema:"Number of retries before failover"`
 	Timeout *int64              `json:"timeout,omitzero" jsonschema:"Timeout in seconds"`
-	Servers []RadiusServerInput `json:"servers,omitzero" jsonschema:"RADIUS servers; replaces the whole list when provided (re-supply each secret)"`
+	Servers []RadiusServerInput `json:"servers,omitzero" jsonschema:"RADIUS servers, merged by name; a server absent from the list is removed, and an omitted per-server secret keeps the stored value"`
 }
 
-func radiusServers(in []RadiusServerInput) []radius.Server {
+func radiusServers(in []RadiusServerInput, existing []radius.Server) []radius.Server {
+	prev := make(map[string]radius.Server, len(existing))
+	for _, s := range existing {
+		prev[s.Name] = s
+	}
 	out := make([]radius.Server, 0, len(in))
 	for _, s := range in {
-		srv := radius.Server{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.IpAddress, s.IpAddress)
 		setPtr(&srv.Secret, s.Secret)
 		setPtr(&srv.Port, s.Port)
@@ -422,7 +446,7 @@ func applyRadiusProfile(e *radius.Entry, in RadiusProfileInput) {
 	setPtr(&e.Retries, in.Retries)
 	setPtr(&e.Timeout, in.Timeout)
 	if in.Servers != nil {
-		e.Server = radiusServers(in.Servers)
+		e.Server = radiusServers(in.Servers, e.Server)
 	}
 }
 
@@ -486,13 +510,13 @@ func RegisterRadiusProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_radius_profile_create",
 		Description: "Create a RADIUS server profile in the candidate config. Each server secret is write-only. The authentication protocol subtree is not settable here. Run panos_commit to apply.",
 		Annotations: createTool("Create RADIUS server profile"),
-	}, deviceCreateHandler(d, "panos_radius_profile_create", svc, parts, scope, buildRadiusProfile, radiusProfileSummary))
+	}, deviceCreateHandler(d, "panos_radius_profile_create", svc, parts, scope, buildRadiusProfile, radiusProfileSummary, withSecrets(radiusProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_radius_profile_update",
-		Description: "Update a RADIUS server profile: read-modify-write, only provided fields change. A provided servers list replaces the whole list; re-supply each server's secret. The authentication protocol subtree is preserved. Run panos_commit to apply.",
+		Description: "Update a RADIUS server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, and an omitted per-server secret keeps the stored value. The authentication protocol subtree is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update RADIUS server profile"),
 	}, deviceUpdateHandler(d, "panos_radius_profile_update", svc, parts, scope,
-		func(in RadiusProfileInput) string { return in.Name }, overlayRadiusProfile, radiusProfileSummary))
+		func(in RadiusProfileInput) string { return in.Name }, overlayRadiusProfile, radiusProfileSummary, withSecrets(radiusProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_radius_profile_delete",
 		Description: "Delete a RADIUS server profile from the candidate config. Fails while authentication profiles still reference it. Run panos_commit to apply.",
@@ -548,13 +572,18 @@ type SyslogServerInput struct {
 type SyslogProfileInput struct {
 	DeviceScopeInput
 	Name    string              `json:"name" jsonschema:"Syslog server profile name"`
-	Servers []SyslogServerInput `json:"servers,omitzero" jsonschema:"Syslog servers; replaces the whole list when provided"`
+	Servers []SyslogServerInput `json:"servers,omitzero" jsonschema:"Syslog servers, merged by name; a server absent from the list is removed, an untouched server keeps its stored values"`
 }
 
-func syslogServers(in []SyslogServerInput) []syslog.Server {
+func syslogServers(in []SyslogServerInput, existing []syslog.Server) []syslog.Server {
+	prev := make(map[string]syslog.Server, len(existing))
+	for _, s := range existing {
+		prev[s.Name] = s
+	}
 	out := make([]syslog.Server, 0, len(in))
 	for _, s := range in {
-		srv := syslog.Server{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.Server, s.Server)
 		setPtr(&srv.Transport, s.Transport)
 		setPtr(&srv.Port, s.Port)
@@ -568,7 +597,7 @@ func syslogServers(in []SyslogServerInput) []syslog.Server {
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder/overlay contract.
 func applySyslogProfile(e *syslog.Entry, in SyslogProfileInput) {
 	if in.Servers != nil {
-		e.Server = syslogServers(in.Servers)
+		e.Server = syslogServers(in.Servers, e.Server)
 	}
 }
 
@@ -636,7 +665,7 @@ func RegisterSyslogProfileTools(s *mcp.Server, d *Deps) {
 	}, deviceCreateHandler(d, "panos_syslog_profile_create", svc, parts, scope, buildSyslogProfile, syslogProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_syslog_profile_update",
-		Description: "Update a syslog server profile: read-modify-write, only provided fields change. A provided servers list replaces the whole list. The per-log-type format subtree is preserved. Run panos_commit to apply.",
+		Description: "Update a syslog server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, an untouched server keeps its stored values. The per-log-type format subtree is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update syslog server profile"),
 	}, deviceUpdateHandler(d, "panos_syslog_profile_update", svc, parts, scope,
 		func(in SyslogProfileInput) string { return in.Name }, overlaySyslogProfile, syslogProfileSummary))
@@ -706,14 +735,19 @@ type SnmpTrapProfileInput struct {
 	DeviceScopeInput
 	Name       string               `json:"name" jsonschema:"SNMP-trap server profile name"`
 	Version    string               `json:"version,omitzero" jsonschema:"SNMP version: v2c or v3. Required on create; on update, switching version clears the other version's receivers."`
-	V2cServers []SnmpV2cServerInput `json:"v2c_servers,omitzero" jsonschema:"SNMPv2c trap receivers (version v2c); replaces the whole list when provided (re-supply each community)"`
-	V3Servers  []SnmpV3ServerInput  `json:"v3_servers,omitzero" jsonschema:"SNMPv3 trap receivers (version v3); replaces the whole list when provided (re-supply each password)"`
+	V2cServers []SnmpV2cServerInput `json:"v2c_servers,omitzero" jsonschema:"SNMPv2c trap receivers (version v2c), merged by name; a receiver absent from the list is removed, and an omitted community keeps the stored value"`
+	V3Servers  []SnmpV3ServerInput  `json:"v3_servers,omitzero" jsonschema:"SNMPv3 trap receivers (version v3), merged by name; a receiver absent from the list is removed, and an omitted password keeps the stored value"`
 }
 
-func snmpV2cServers(in []SnmpV2cServerInput) []snmptrap.VersionV2cServer {
+func snmpV2cServers(in []SnmpV2cServerInput, existing []snmptrap.VersionV2cServer) []snmptrap.VersionV2cServer {
+	prev := make(map[string]snmptrap.VersionV2cServer, len(existing))
+	for _, s := range existing {
+		prev[s.Name] = s
+	}
 	out := make([]snmptrap.VersionV2cServer, 0, len(in))
 	for _, s := range in {
-		srv := snmptrap.VersionV2cServer{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.Manager, s.Manager)
 		setPtr(&srv.Community, s.Community)
 		out = append(out, srv)
@@ -721,10 +755,15 @@ func snmpV2cServers(in []SnmpV2cServerInput) []snmptrap.VersionV2cServer {
 	return out
 }
 
-func snmpV3Servers(in []SnmpV3ServerInput) []snmptrap.VersionV3Server {
+func snmpV3Servers(in []SnmpV3ServerInput, existing []snmptrap.VersionV3Server) []snmptrap.VersionV3Server {
+	prev := make(map[string]snmptrap.VersionV3Server, len(existing))
+	for _, s := range existing {
+		prev[s.Name] = s
+	}
 	out := make([]snmptrap.VersionV3Server, 0, len(in))
 	for _, s := range in {
-		srv := snmptrap.VersionV3Server{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.Manager, s.Manager)
 		setPtr(&srv.User, s.User)
 		setPtr(&srv.Engineid, s.EngineId)
@@ -771,13 +810,13 @@ func applySnmpTrapProfile(e *snmptrap.Entry, in SnmpTrapProfileInput) error {
 		if e.Version == nil || e.Version.V2c == nil {
 			return errors.New("v2c_servers requires the profile version to be v2c")
 		}
-		e.Version.V2c.Server = snmpV2cServers(in.V2cServers)
+		e.Version.V2c.Server = snmpV2cServers(in.V2cServers, e.Version.V2c.Server)
 	}
 	if in.V3Servers != nil {
 		if e.Version == nil || e.Version.V3 == nil {
 			return errors.New("v3_servers requires the profile version to be v3")
 		}
-		e.Version.V3.Server = snmpV3Servers(in.V3Servers)
+		e.Version.V3.Server = snmpV3Servers(in.V3Servers, e.Version.V3.Server)
 	}
 	return nil
 }
@@ -868,13 +907,13 @@ func RegisterSnmpTrapProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_snmptrap_profile_create",
 		Description: "Create an SNMP-trap server profile in the candidate config. version (v2c or v3) is required. Communities and v3 passwords are write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create SNMP-trap server profile"),
-	}, deviceCreateHandler(d, "panos_snmptrap_profile_create", svc, parts, scope, buildSnmpTrapProfile, snmpTrapProfileSummary))
+	}, deviceCreateHandler(d, "panos_snmptrap_profile_create", svc, parts, scope, buildSnmpTrapProfile, snmpTrapProfileSummary, withSecrets(snmpTrapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_snmptrap_profile_update",
-		Description: "Update an SNMP-trap server profile: read-modify-write, only provided fields change. Setting version switches branch and clears the other version's receivers. A provided receiver list replaces the whole list; re-supply each community or password. Run panos_commit to apply.",
+		Description: "Update an SNMP-trap server profile: read-modify-write, only provided fields change. Setting version switches branch and clears the other version's receivers. Within a version a provided receiver list is merged by name: a receiver absent from the list is removed, and an omitted community or password keeps the stored value. Run panos_commit to apply.",
 		Annotations: updateTool("Update SNMP-trap server profile"),
 	}, deviceUpdateHandler(d, "panos_snmptrap_profile_update", svc, parts, scope,
-		func(in SnmpTrapProfileInput) string { return in.Name }, overlaySnmpTrapProfile, snmpTrapProfileSummary))
+		func(in SnmpTrapProfileInput) string { return in.Name }, overlaySnmpTrapProfile, snmpTrapProfileSummary, withSecrets(snmpTrapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_snmptrap_profile_delete",
 		Description: "Delete an SNMP-trap server profile from the candidate config. Fails while log-forwarding profiles or log settings still reference it. Run panos_commit to apply.",
@@ -937,13 +976,18 @@ type EmailServerInput struct {
 type EmailProfileInput struct {
 	DeviceScopeInput
 	Name    string             `json:"name" jsonschema:"Email server profile name"`
-	Servers []EmailServerInput `json:"servers,omitzero" jsonschema:"SMTP servers; replaces the whole list when provided (re-supply each password)"`
+	Servers []EmailServerInput `json:"servers,omitzero" jsonschema:"SMTP servers, merged by name; a server absent from the list is removed, and an omitted password keeps the stored value"`
 }
 
-func emailServers(in []EmailServerInput) []email.Server {
+func emailServers(in []EmailServerInput, existing []email.Server) []email.Server {
+	prev := make(map[string]email.Server, len(existing))
+	for i := range existing {
+		prev[existing[i].Name] = existing[i]
+	}
 	out := make([]email.Server, 0, len(in))
 	for _, s := range in {
-		srv := email.Server{Name: s.Name}
+		srv := prev[s.Name]
+		srv.Name = s.Name
 		setPtr(&srv.DisplayName, s.DisplayName)
 		setPtr(&srv.From, s.From)
 		setPtr(&srv.To, s.To)
@@ -964,7 +1008,7 @@ func emailServers(in []EmailServerInput) []email.Server {
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder/overlay contract.
 func applyEmailProfile(e *email.Entry, in EmailProfileInput) {
 	if in.Servers != nil {
-		e.Server = emailServers(in.Servers)
+		e.Server = emailServers(in.Servers, e.Server)
 	}
 }
 
@@ -1036,13 +1080,13 @@ func RegisterEmailProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_email_profile_create",
 		Description: "Create an email server profile in the candidate config. Each SMTP password is write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create email server profile"),
-	}, deviceCreateHandler(d, "panos_email_profile_create", svc, parts, scope, buildEmailProfile, emailProfileSummary))
+	}, deviceCreateHandler(d, "panos_email_profile_create", svc, parts, scope, buildEmailProfile, emailProfileSummary, withSecrets(emailProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_email_profile_update",
-		Description: "Update an email server profile: read-modify-write, only provided fields change. A provided servers list replaces the whole list; re-supply each password. The per-log-type format subtree is preserved. Run panos_commit to apply.",
+		Description: "Update an email server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, and an omitted password keeps the stored value. The per-log-type format subtree is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update email server profile"),
 	}, deviceUpdateHandler(d, "panos_email_profile_update", svc, parts, scope,
-		func(in EmailProfileInput) string { return in.Name }, overlayEmailProfile, emailProfileSummary))
+		func(in EmailProfileInput) string { return in.Name }, overlayEmailProfile, emailProfileSummary, withSecrets(emailProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_email_profile_delete",
 		Description: "Delete an email server profile from the candidate config. Fails while log-forwarding profiles or log settings still reference it. Run panos_commit to apply.",
