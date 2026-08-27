@@ -4,10 +4,17 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// noSharedScopeProfiles lists the device-scoped profile families whose pango
+// location has no shared scope (deviceScopeParts.shared is nil for them), so a
+// shared request is rejected. It is the single source of truth for that list.
+// The DeviceScopeInput.Shared jsonschema tag and the doc comments in this file
+// repeat these names because a Go struct tag cannot reference a const; keep them
+// in sync with this value when a new no-shared family is added.
+const noSharedScopeProfiles = "syslog, snmp-trap and email"
 
 // DeviceScopeInput selects where a device server profile lives. The
 // device/profiles/* packages (LDAP, RADIUS, TACACS+, syslog, SNMP-trap, email)
@@ -91,7 +98,7 @@ func resolvePanoramaDeviceScope[L any](in DeviceScopeInput, p deviceScopeParts[L
 		}
 		return p.shared(), nil
 	default:
-		return zero, errors.New("on Panorama set template, template_stack, or shared (shared is unavailable for syslog, snmp-trap and email); list templates with panos_template_list")
+		return zero, errors.New("on Panorama set template, template_stack, or shared (shared is unavailable for " + noSharedScopeProfiles + "); list templates with panos_template_list")
 	}
 }
 
@@ -131,23 +138,7 @@ func deviceListHandler[L, E any](
 			}
 			entries = nil
 		}
-		if in.Filter != "" {
-			needle := strings.ToLower(in.Filter)
-			kept := entries[:0:0]
-			for _, e := range entries {
-				if strings.Contains(strings.ToLower(name(e)), needle) {
-					kept = append(kept, e)
-				}
-			}
-			entries = kept
-		}
-		total := len(entries)
-		lo, hi := clampList(in.Limit, in.Offset, total)
-		out := make([]any, 0, hi-lo)
-		for _, e := range entries[lo:hi] {
-			out = append(out, summarize(e))
-		}
-		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), entriesKey: out})
+		res, v := jsonResult(projectList(entries, in.Limit, in.Offset, in.Filter, name, summarize))
 		return res, v, nil
 	}
 }
@@ -210,6 +201,7 @@ func deviceCreateHandler[L, E, In any](
 	scope func(In) DeviceScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		entry, err := build(in)
@@ -225,8 +217,9 @@ func deviceCreateHandler[L, E, In any](
 		defer d.LockWrites()()
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		d.Logger.Info(tool + " succeeded")
@@ -243,6 +236,7 @@ func deviceUpdateHandler[L, E, In any](
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		n := name(in)
@@ -268,8 +262,9 @@ func deviceUpdateHandler[L, E, In any](
 		}
 		updated, err := svc.Update(ctx, loc, entry, n)
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		d.Logger.Info(tool+" succeeded", "name", n)

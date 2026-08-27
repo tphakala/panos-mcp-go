@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -101,23 +100,7 @@ func netListHandler[L, E any](
 			}
 			entries = nil
 		}
-		if in.Filter != "" {
-			needle := strings.ToLower(in.Filter)
-			kept := entries[:0:0]
-			for _, e := range entries {
-				if strings.Contains(strings.ToLower(name(e)), needle) {
-					kept = append(kept, e)
-				}
-			}
-			entries = kept
-		}
-		total := len(entries)
-		lo, hi := clampList(in.Limit, in.Offset, total)
-		out := make([]any, 0, hi-lo)
-		for _, e := range entries[lo:hi] {
-			out = append(out, summarize(e))
-		}
-		res, v := jsonResult(map[string]any{totalKey: total, offsetKey: lo, countKey: len(out), entriesKey: out})
+		res, v := jsonResult(projectList(entries, in.Limit, in.Offset, in.Filter, name, summarize))
 		return res, v, nil
 	}
 }
@@ -180,6 +163,7 @@ func netCreateHandler[L, E, In any](
 	scope func(In) NetScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		entry, err := build(in)
@@ -195,8 +179,9 @@ func netCreateHandler[L, E, In any](
 		defer d.LockWrites()()
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		d.Logger.Info(tool + " succeeded")
@@ -213,6 +198,7 @@ func netUpdateHandler[L, E, In any](
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		n := name(in)
@@ -238,8 +224,9 @@ func netUpdateHandler[L, E, In any](
 		}
 		updated, err := svc.Update(ctx, loc, entry, n)
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		d.Logger.Info(tool+" succeeded", "name", n)

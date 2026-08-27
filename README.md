@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 274 tools on Panorama and 258 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 109 on Panorama, 106 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 299 tools on Panorama and 283 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 119 on Panorama, 116 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -385,6 +385,23 @@ These network profiles and the two Layer 2 switching objects are net-scoped: on 
 | `panos_vlan_update` | write | Update a VLAN object: read-modify-write; a provided interfaces list replaces the members fully. |
 | `panos_vlan_delete` | write | Delete a VLAN object from the candidate config. |
 
+### DHCP and DNS proxy
+
+These net-scoped network services follow the same scoping as the interface tools: on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required. DNS proxy is template-only, so it needs a `template` or `template_stack` even on a firewall. A DHCP entry is named by its interface and is either a relay or a server, never both. Subtrees not modeled here (DHCP server options and reservations, IPv6 relay, DNS proxy cache and TCP/UDP query tuning) are preserved untouched across updates.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_dhcp_list` | read-only | List DHCP interface configurations at a location. |
+| `panos_dhcp_get` | read-only | Get one interface's DHCP configuration (relay or server). |
+| `panos_dhcp_create` | write | Create an interface DHCP relay or server in the candidate config. |
+| `panos_dhcp_update` | write | Update an interface's DHCP configuration: read-modify-write; switching between relay and server clears the other. |
+| `panos_dhcp_delete` | write | Delete an interface's DHCP configuration from the candidate config. |
+| `panos_dns_proxy_list` | read-only | List DNS proxy objects at a location (template or template_stack). |
+| `panos_dns_proxy_get` | read-only | Get one DNS proxy object (default servers, static entries, domain servers). |
+| `panos_dns_proxy_create` | write | Create a DNS proxy object in the candidate config. |
+| `panos_dns_proxy_update` | write | Update a DNS proxy object: read-modify-write; a provided static-entry or domain-server list replaces that list. |
+| `panos_dns_proxy_delete` | write | Delete a DNS proxy object from the candidate config. |
+
 ### Device server profiles
 
 These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the authentication profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope. Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
@@ -394,33 +411,55 @@ These authentication and log-forwarding server profiles are device-scoped: on a 
 | `panos_ldap_profile_list` | read-only | List LDAP server profiles at a location. |
 | `panos_ldap_profile_get` | read-only | Get one LDAP server profile (the bind password is never returned). |
 | `panos_ldap_profile_create` | write | Create an LDAP server profile; bind_password is write-only. |
-| `panos_ldap_profile_update` | write | Update an LDAP server profile: read-modify-write; an omitted bind_password is kept. |
+| `panos_ldap_profile_update` | write | Update an LDAP server profile: read-modify-write; an omitted bind_password is kept; a provided servers list is merged by name, so a server absent from the list is removed. |
 | `panos_ldap_profile_delete` | write | Delete an LDAP server profile from the candidate config. |
 | `panos_tacacs_profile_list` | read-only | List TACACS+ server profiles at a location. |
 | `panos_tacacs_profile_get` | read-only | Get one TACACS+ server profile (per-server secrets are never returned). |
 | `panos_tacacs_profile_create` | write | Create a TACACS+ server profile; server secrets are write-only. |
-| `panos_tacacs_profile_update` | write | Update a TACACS+ server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_tacacs_profile_update` | write | Update a TACACS+ server profile: read-modify-write; a provided servers list is merged by name, so an omitted per-server secret is kept and a server absent from the list is removed. |
 | `panos_tacacs_profile_delete` | write | Delete a TACACS+ server profile from the candidate config. |
 | `panos_radius_profile_list` | read-only | List RADIUS server profiles at a location. |
 | `panos_radius_profile_get` | read-only | Get one RADIUS server profile (per-server secrets are never returned). |
 | `panos_radius_profile_create` | write | Create a RADIUS server profile; server secrets are write-only. |
-| `panos_radius_profile_update` | write | Update a RADIUS server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_radius_profile_update` | write | Update a RADIUS server profile: read-modify-write; a provided servers list is merged by name, so an omitted per-server secret is kept and a server absent from the list is removed. |
 | `panos_radius_profile_delete` | write | Delete a RADIUS server profile from the candidate config. |
 | `panos_syslog_profile_list` | read-only | List syslog server profiles at a location. |
 | `panos_syslog_profile_get` | read-only | Get one syslog server profile (its servers). |
 | `panos_syslog_profile_create` | write | Create a syslog server profile in the candidate config. |
-| `panos_syslog_profile_update` | write | Update a syslog server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_syslog_profile_update` | write | Update a syslog server profile: read-modify-write; a provided servers list is merged by name, so a server absent from the list is removed. |
 | `panos_syslog_profile_delete` | write | Delete a syslog server profile from the candidate config. |
 | `panos_snmptrap_profile_list` | read-only | List SNMP-trap server profiles at a location. |
 | `panos_snmptrap_profile_get` | read-only | Get one SNMP-trap server profile (communities and v3 passwords are never returned). |
 | `panos_snmptrap_profile_create` | write | Create an SNMP-trap server profile; version (v2c or v3) is required, secrets are write-only. |
-| `panos_snmptrap_profile_update` | write | Update an SNMP-trap server profile: read-modify-write; switching version clears the other receivers. |
+| `panos_snmptrap_profile_update` | write | Update an SNMP-trap server profile: read-modify-write; switching version clears the other receivers; within a version a provided receiver list is merged by name, so an omitted community or password is kept and a receiver absent from the list is removed. |
 | `panos_snmptrap_profile_delete` | write | Delete an SNMP-trap server profile from the candidate config. |
 | `panos_email_profile_list` | read-only | List email server profiles at a location. |
 | `panos_email_profile_get` | read-only | Get one email server profile (SMTP passwords are never returned). |
 | `panos_email_profile_create` | write | Create an email server profile; SMTP passwords are write-only. |
-| `panos_email_profile_update` | write | Update an email server profile: read-modify-write; a provided servers list replaces the list. |
+| `panos_email_profile_update` | write | Update an email server profile: read-modify-write; a provided servers list is merged by name, so an omitted password is kept and a server absent from the list is removed. |
 | `panos_email_profile_delete` | write | Delete an email server profile from the candidate config. |
+
+### Local users and authentication profiles
+
+These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, or `shared` selection. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_local_user_list` | read-only | List local database users at a location. |
+| `panos_local_user_get` | read-only | Get one local user (enabled state; the password hash is never returned). |
+| `panos_local_user_create` | write | Create a local database user; password_hash is a write-only PHASH. |
+| `panos_local_user_update` | write | Update a local user: read-modify-write; an omitted password_hash is kept. |
+| `panos_local_user_delete` | write | Delete a local database user from the candidate config. |
+| `panos_saml_idp_profile_list` | read-only | List SAML identity provider profiles at a location. |
+| `panos_saml_idp_profile_get` | read-only | Get one SAML IdP profile (entity ID, SSO/SLO URLs, certificate). |
+| `panos_saml_idp_profile_create` | write | Create a SAML IdP profile in the candidate config. |
+| `panos_saml_idp_profile_update` | write | Update a SAML IdP profile: read-modify-write. |
+| `panos_saml_idp_profile_delete` | write | Delete a SAML IdP profile from the candidate config. |
+| `panos_mfa_profile_list` | read-only | List multi-factor authentication server profiles at a location. |
+| `panos_mfa_profile_get` | read-only | Get one MFA profile (certificate profile, vendor type, config item names; vendor config values are write-only and never returned). |
+| `panos_mfa_profile_create` | write | Create an MFA server profile in the candidate config. |
+| `panos_mfa_profile_update` | write | Update an MFA profile: read-modify-write; a provided config list replaces it. |
+| `panos_mfa_profile_delete` | write | Delete an MFA server profile from the candidate config. |
 
 ## Example MCP client configuration
 
