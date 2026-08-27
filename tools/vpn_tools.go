@@ -441,8 +441,11 @@ func ikeGatewayParts() netScopeParts[gateway.Location] {
 // IkeGatewayInput is the input for the IKE gateway create and update tools. It
 // models the practical peer/local address, protocol version, crypto-profile
 // reference and pre-shared-key subset; the deeper certificate-auth, DPD,
-// fragmentation and NAT-traversal subtrees are preserved verbatim across an
-// update through pango's Misc round-trip and are not managed here. The
+// fragmentation and NAT-traversal subtrees are not managed here. They are typed
+// pango fields rather than Misc, and they are preserved because the update path
+// is a read-modify-write that re-marshals the entry read back from the device
+// and the overlay never touches them. Truly unmodeled XML rides in Misc and
+// survives the same round-trip. The
 // pre-shared key is write-only: it is never returned by any tool.
 type IkeGatewayInput struct {
 	NetScopeInput
@@ -711,9 +714,10 @@ func ipsecTunnelParts() netScopeParts[ipsec.Location] {
 
 // IpsecTunnelInput is the input for the IPSec tunnel create and update tools. It
 // models the auto-key subset (bound IKE gateways and the IPSec crypto profile)
-// plus the tunnel interface and the option toggles. proxy-ids, manual-key and
-// GlobalProtect-satellite subtrees are preserved verbatim through Misc and are
-// not managed here.
+// plus the tunnel interface and the option toggles. The proxy-id, manual-key and
+// GlobalProtect-satellite subtrees are not managed here. They are typed pango
+// fields rather than Misc, and they survive because the update path is a
+// read-modify-write and the overlay never touches them.
 type IpsecTunnelInput struct {
 	NetScopeInput
 	Name                   string   `json:"name" jsonschema:"IPSec tunnel name"`

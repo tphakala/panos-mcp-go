@@ -15,10 +15,11 @@ import (
 // template-stack. pango also models template/template-stack/vsys variants, but
 // this server exposes only the three standard net-scope parts, mirroring the
 // VPN resources. The router's routing protocol subtree (BGP, OSPF, OSPFv3,
-// RIP), ECMP and multicast configuration are not managed here: they are
-// preserved verbatim across an update through pango's Misc round-trip, so an
-// overlay must apply only the caller-provided fields and never rebuild the
-// entry.
+// RIP), ECMP and multicast configuration are not managed here. They are typed
+// pango fields rather than Misc; they are preserved because the update path is a
+// read-modify-write and the overlay applies only the caller-provided fields and
+// never rebuilds the entry. Truly unmodeled XML rides in Misc and survives the
+// same round-trip.
 
 func newVirtualRouterService(d *Deps) nameFixAdapter[virtual_router.Location, virtual_router.Entry] {
 	return nameFixAdapter[virtual_router.Location, virtual_router.Entry]{
