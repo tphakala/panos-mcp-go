@@ -446,8 +446,19 @@ func TestStaticRouteV4BfdProfilePreservesMisc(t *testing.T) {
 // mention bfd_profile leaves the stored profile alone, so an unrelated edit
 // cannot detach BFD from a route.
 //
-// Sabotage: drop the "if in.BfdProfile != nil" guard in applyStaticRouteV4 so
-// the overlay runs unconditionally, and this goes red.
+// Sabotage, MEASURED rather than assumed because the obvious answers are both
+// wrong: this goes red only when BOTH protections are removed at once, that is
+// when applyStaticRouteV4's BFD block becomes a bare
+// e.Bfd = &srv4.Bfd{Profile: in.BfdProfile}.
+//
+// Dropping only the "if in.BfdProfile != nil" guard leaves this green, because
+// setPtr is a no-op on a nil source; that mutation reddens
+// TestStaticRouteBfdProfileNotAddedWhenAbsent. Replacing only the in-place
+// overlay also leaves it green, because the guard still skips the block; that
+// mutation reddens TestStaticRouteV4BfdProfilePreservesMisc.
+//
+// So this is a backstop rather than the primary pin for either protection, kept
+// because it states the caller-visible contract the other two only imply.
 func TestStaticRouteBfdProfileOmittedPreserved(t *testing.T) {
 	e := &srv4.Entry{Name: "r1", Bfd: &srv4.Bfd{Profile: new("bfd-a")}}
 	if err := overlayStaticRouteV4(e, StaticRouteInput{Name: "r1", Metric: new(int64(10))}); err != nil {
