@@ -302,6 +302,16 @@ func applyAdministratorRole(e *administrator.Entry, in AdministratorInput) error
 	// unmodeled XML. clearRoleBased nils it, so reading it afterwards is too
 	// late.
 	stored := rb.Custom
+
+	// The profile name IS the custom role, so the branch is meaningless without
+	// one. role_vsys alone on an administrator that has no stored profile would
+	// otherwise clear the existing role and write a custom branch naming no
+	// profile, which PAN-OS rejects at commit. Reject it here, before anything
+	// is cleared, so a failed request leaves the entry untouched.
+	if custom && in.RoleProfile == nil && (stored == nil || strVal(stored.Profile) == "") {
+		return errors.New("role_vsys requires role_profile: a custom role needs a profile name")
+	}
+
 	clearRoleBased(rb)
 
 	if custom {

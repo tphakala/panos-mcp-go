@@ -149,26 +149,41 @@ func TestAdministratorRoleOverlayExclusive(t *testing.T) {
 	}
 }
 
-// TestAdministratorRoleVsysAlsoSwitchesToCustom pins that role_vsys on its own
-// is a transition to the custom branch. Detecting the switch from role_profile
-// alone would leave a built-in role set alongside a vsys list.
-func TestAdministratorRoleVsysAlsoSwitchesToCustom(t *testing.T) {
-	e := &administrator.Entry{Name: "admin1"}
-	if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", Role: new(adminRoleDeviceAdmin)}); err != nil {
-		t.Fatal(err)
+// TestAdministratorRoleVsysAloneRequiresAProfile pins that role_vsys on its own
+// is rejected when nothing supplies a profile name. The profile IS the custom
+// role, so accepting this would clear the administrator's existing role and
+// write a custom branch naming no profile, which PAN-OS rejects at commit.
+//
+// The rejection must also leave the entry untouched: a failed request that has
+// already cleared the stored role is worse than one that changes nothing.
+func TestAdministratorRoleVsysAloneRequiresAProfile(t *testing.T) {
+	e := storedRoleBranch(adminRoleDeviceAdmin)
+	err := overlayAdministrator(e, AdministratorInput{Name: "admin1", RoleVsys: []string{"vsys1"}})
+	if err == nil {
+		t.Fatal("role_vsys with no profile name must be rejected")
 	}
-	if len(e.Permissions.RoleBased.Deviceadmin) == 0 {
-		t.Fatal("deviceadmin must be set")
+	if !strings.Contains(err.Error(), "role_vsys requires role_profile") {
+		t.Errorf("unexpected error: %q", err)
 	}
+	if got := setRoleBranches(e); len(got) != 1 || got[0] != adminRoleDeviceAdmin {
+		t.Errorf("a rejected request must leave the stored role untouched, got %v", got)
+	}
+}
+
+// TestAdministratorRoleVsysAloneSwitchesAStoredCustomRole pins the case that IS
+// valid: an administrator already holding a custom role can be rescoped by
+// naming only role_vsys, because the stored profile supplies the name.
+func TestAdministratorRoleVsysAloneSwitchesAStoredCustomRole(t *testing.T) {
+	e := storedRoleBranch("custom")
 	if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", RoleVsys: []string{"vsys1"}}); err != nil {
 		t.Fatal(err)
 	}
 	rb := e.Permissions.RoleBased
-	if len(rb.Deviceadmin) != 0 {
-		t.Error("role_vsys alone must clear a built-in role")
-	}
 	if rb.Custom == nil || len(rb.Custom.Vsys) != 1 || rb.Custom.Vsys[0] != "vsys1" {
-		t.Fatalf("role_vsys must land on the custom branch: %+v", rb.Custom)
+		t.Fatalf("role_vsys must be applied to the custom branch: %+v", rb.Custom)
+	}
+	if strVal(rb.Custom.Profile) != "stale-role" {
+		t.Errorf("the stored profile name must survive, got %q", strVal(rb.Custom.Profile))
 	}
 }
 
