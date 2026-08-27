@@ -23,10 +23,13 @@ const protocolKey = "protocol"
 // log settings.
 //
 // All six are device-scoped, resolved by resolveDeviceScope: a firewall vsys or
-// (for the authentication profiles) shared scope, or a Panorama template,
-// template-stack or shared scope. The three log-forwarding profiles (syslog,
-// snmptrap, email) have no shared scope; resolveDeviceScope rejects a shared
-// request for them.
+// (for the three authentication SERVER profiles) shared scope, or a Panorama
+// template, template-stack or shared scope. The three log-forwarding profiles
+// (syslog, snmptrap, email) have no shared scope; resolveDeviceScope rejects a
+// shared request for them. Do not read that as the complete no-shared set:
+// device/authprofile, the authentication PROFILE that references these server
+// profiles, also has none. noSharedScopeProfiles in device_scope.go is the
+// single source of truth.
 //
 // Secrets (LDAP bind password, TACACS+/RADIUS shared secrets, SNMP community and
 // v3 passwords, email SMTP password) are write-only: they are accepted on create

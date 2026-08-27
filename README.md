@@ -445,7 +445,7 @@ These net-scoped network services follow the same scoping as the interface tools
 
 ### Device server profiles
 
-These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the authentication profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope. Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
+These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the three authentication server profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope, and neither does the authentication profile that references these server profiles (see below). Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
 
 | Tool | Mode | Description |
 | --- | --- | --- |
