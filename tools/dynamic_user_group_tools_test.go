@@ -61,6 +61,26 @@ func TestBuildDynamicUserGroupEmptyName(t *testing.T) {
 	}
 }
 
+// TestBuildDynamicUserGroupNilTagsUnset pins that a create with nil Tags leaves
+// e.Tag nil, so applyDynamicUserGroup (shared by build and overlay) emits no
+// <tag> block: Tag is written only when the caller provides a list. This locks
+// the folded semantics, so a future change cannot fabricate a non-nil empty
+// slice on a bare create. Sabotage: making applyDynamicUserGroup's tag branch
+// assign a non-nil slice regardless of in.Tags turns this red.
+func TestBuildDynamicUserGroupNilTagsUnset(t *testing.T) {
+	e, err := buildDynamicUserGroup(DynamicUserGroupInput{Name: "dug1", Description: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Tag != nil {
+		t.Fatalf("nil tags on create must leave e.Tag nil, got: %v", e.Tag)
+	}
+	// The fold must not have disturbed the other managed fields.
+	if e.Description == nil || *e.Description != "d" {
+		t.Fatalf("description must still map through applyDynamicUserGroup: %v", e.Description)
+	}
+}
+
 // TestOverlayDynamicUserGroupReplacesAndPreserves pins the update contract: a
 // provided tags list replaces fully, an omitted filter keeps the stored value,
 // and a provided filter overwrites it. Sabotage: dropping the in.Tags != nil

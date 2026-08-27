@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
 	localdb "github.com/PaloAltoNetworks/pango/device/localdb/user"
 	mfa "github.com/PaloAltoNetworks/pango/device/profiles/mfa"
+	samlidp "github.com/PaloAltoNetworks/pango/device/profiles/samlidp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -388,5 +390,59 @@ func TestMfaProfileCreateSharedScope(t *testing.T) {
 	}
 	if !strings.Contains(joined, "/shared/") {
 		t.Fatalf("shared create must target the shared xpath: %s", joined)
+	}
+}
+
+// TestOverlaySamlIdpProfilePreserves pins the read-modify-write contract for the
+// pure-setPtr SAML IdP overlay: overlaying only sso_url must leave the untouched
+// managed sibling (entity_id) and the unmodeled MiscAttributes (which stand in
+// for the access-domain and admin-role import fields the input does not model)
+// intact, because overlaySamlIdpProfile applies onto the read-back entry and
+// never rebuilds it. Sabotage: rebuilding e in overlaySamlIdpProfile (e.g.
+// *e = samlidp.Entry{Name: e.Name}) drops both and turns this red.
+func TestOverlaySamlIdpProfilePreserves(t *testing.T) {
+	e := &samlidp.Entry{
+		Name:           "idp1",
+		EntityId:       new("urn:idp"),
+		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
+	}
+	if err := overlaySamlIdpProfile(e, SamlIdpProfileInput{Name: "idp1", SsoUrl: new("https://idp.example/sso")}); err != nil {
+		t.Fatal(err)
+	}
+	if e.EntityId == nil || *e.EntityId != "urn:idp" {
+		t.Fatalf("untouched entity_id must be preserved: %v", e.EntityId)
+	}
+	if e.SsoUrl == nil || *e.SsoUrl != "https://idp.example/sso" {
+		t.Fatalf("provided sso_url must be set: %v", e.SsoUrl)
+	}
+	if len(e.MiscAttributes) != 1 || e.MiscAttributes[0].Value != "keep-me" {
+		t.Fatalf("unmanaged MiscAttributes must survive the overlay: %+v", e.MiscAttributes)
+	}
+}
+
+// TestOverlayMfaProfilePreserves pins the read-modify-write contract for the
+// MFA server profile overlay; see TestOverlaySamlIdpProfilePreserves. Overlaying
+// only certificate_profile must leave the untouched managed sibling
+// (vendor_type) and the unmodeled MiscAttributes intact, because
+// overlayMfaProfile applies onto the read-back entry and never rebuilds it.
+// Sabotage: rebuilding e in overlayMfaProfile (e.g. *e = mfa.Entry{Name: e.Name})
+// drops both and turns this red.
+func TestOverlayMfaProfilePreserves(t *testing.T) {
+	e := &mfa.Entry{
+		Name:           "mfa1",
+		MfaVendorType:  new("PingID"),
+		MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}},
+	}
+	if err := overlayMfaProfile(e, MfaProfileInput{Name: "mfa1", CertificateProfile: new("cp1")}); err != nil {
+		t.Fatal(err)
+	}
+	if e.MfaVendorType == nil || *e.MfaVendorType != "PingID" {
+		t.Fatalf("untouched vendor_type must be preserved: %v", e.MfaVendorType)
+	}
+	if e.MfaCertProfile == nil || *e.MfaCertProfile != "cp1" {
+		t.Fatalf("provided certificate_profile must be set: %v", e.MfaCertProfile)
+	}
+	if len(e.MiscAttributes) != 1 || e.MiscAttributes[0].Value != "keep-me" {
+		t.Fatalf("unmanaged MiscAttributes must survive the overlay: %+v", e.MiscAttributes)
 	}
 }

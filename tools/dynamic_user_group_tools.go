@@ -49,6 +49,20 @@ type DynamicUserGroupInput struct {
 	Tags        []string      `json:"tags,omitempty" jsonschema:"Administrative tags on the group itself; a provided list replaces the current tags fully"`
 }
 
+// applyDynamicUserGroup overlays the managed fields (description, filter, tags)
+// onto e, applying only what the caller provided. It is shared by build and
+// overlay so create and update agree on the mapping, and it never rebuilds e.
+// description and filter are set only when non-empty, so neither can be cleared
+// in place; a provided tags list replaces the current tags fully, while a nil
+// tags list leaves the current value untouched.
+func applyDynamicUserGroup(e *dug.Entry, in *DynamicUserGroupInput) {
+	setStrPtr(&e.Description, in.Description)
+	setStrPtr(&e.Filter, in.Filter)
+	if in.Tags != nil {
+		e.Tag = in.Tags
+	}
+}
+
 // buildDynamicUserGroup validates a DynamicUserGroupInput and builds a create
 // entry; only the name is required. description and filter map to pointer fields
 // and are set only when non-empty, so a bare create omits them from the XML.
@@ -58,13 +72,8 @@ func buildDynamicUserGroup(in DynamicUserGroupInput) (*dug.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
 	}
-	e := &dug.Entry{Name: in.Name, Tag: in.Tags}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
-	if in.Filter != "" {
-		e.Filter = new(in.Filter)
-	}
+	e := &dug.Entry{Name: in.Name}
+	applyDynamicUserGroup(e, &in)
 	return e, nil
 }
 
@@ -75,15 +84,7 @@ func buildDynamicUserGroup(in DynamicUserGroupInput) (*dug.Entry, error) {
 //
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract.
 func overlayDynamicUserGroup(e *dug.Entry, in DynamicUserGroupInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
-	if in.Filter != "" {
-		e.Filter = new(in.Filter)
-	}
-	if in.Tags != nil {
-		e.Tag = in.Tags
-	}
+	applyDynamicUserGroup(e, &in)
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -472,4 +473,73 @@ func TestMonitorProfileReadOnlyGating(t *testing.T) {
 	assertReadOnlyGating(t, RegisterMonitorProfileTools,
 		[]string{base + "_list", base + "_get"},
 		[]string{base + "_create", base + "_update", base + "_delete"})
+}
+
+// keepMiscAttr is the sentinel unmanaged XML attribute the overlay
+// preserve tests seed and then assert survives a read-modify-write. It stands
+// in for any field the input struct does not model.
+func keepMiscAttr() []xml.Attr {
+	return []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "keep-me"}}
+}
+
+// assertKeptMisc fails unless the seeded sentinel unmanaged attribute is still
+// intact after an overlay.
+func assertKeptMisc(t *testing.T, got []xml.Attr) {
+	t.Helper()
+	if len(got) != 1 || got[0].Value != "keep-me" {
+		t.Fatalf("unmanaged MiscAttributes must survive the overlay: %+v", got)
+	}
+}
+
+// TestOverlayLldpProfilePreserves pins the read-modify-write contract for the
+// pure-setPtr LLDP overlay: overlaying only snmp_syslog_notification must leave
+// the untouched managed sibling (mode) and the unmodeled MiscAttributes intact,
+// because overlayLldpProfile applies onto the read-back entry and never rebuilds
+// it. Sabotage: rebuilding e in overlayLldpProfile (e.g. *e = lldp.Entry{Name:
+// e.Name}) drops both and turns this red.
+func TestOverlayLldpProfilePreserves(t *testing.T) {
+	e := &lldp.Entry{Name: "lldp1", Mode: new("transmit-receive"), MiscAttributes: keepMiscAttr()}
+	if err := overlayLldpProfile(e, LldpProfileInput{Name: "lldp1", SnmpSyslogNotification: new(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Mode == nil || *e.Mode != "transmit-receive" {
+		t.Fatalf("untouched mode must be preserved: %v", e.Mode)
+	}
+	mustBoolPtr(t, e.SnmpSyslogNotification, true, "snmp_syslog_notification")
+	assertKeptMisc(t, e.MiscAttributes)
+}
+
+// TestOverlayBfdProfilePreserves pins the same contract for the BFD overlay:
+// overlaying only hold_time leaves mode and the unmodeled MiscAttributes intact.
+// Sabotage: rebuilding e in overlayBfdProfile drops both and turns this red.
+func TestOverlayBfdProfilePreserves(t *testing.T) {
+	e := &bfd.Entry{Name: "bfd1", Mode: new("active"), MiscAttributes: keepMiscAttr()}
+	if err := overlayBfdProfile(e, BfdProfileInput{Name: "bfd1", HoldTime: new(int64(50))}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Mode == nil || *e.Mode != "active" {
+		t.Fatalf("untouched mode must be preserved: %v", e.Mode)
+	}
+	if e.HoldTime == nil || *e.HoldTime != 50 {
+		t.Fatalf("provided hold_time must be set: %v", e.HoldTime)
+	}
+	assertKeptMisc(t, e.MiscAttributes)
+}
+
+// TestOverlayMonitorProfilePreserves pins the same contract for the monitor
+// overlay: overlaying only interval leaves action and the unmodeled
+// MiscAttributes intact. Sabotage: rebuilding e in overlayMonitorProfile drops
+// both and turns this red.
+func TestOverlayMonitorProfilePreserves(t *testing.T) {
+	e := &monitor.Entry{Name: "mon1", Action: new("wait-recover"), MiscAttributes: keepMiscAttr()}
+	if err := overlayMonitorProfile(e, MonitorProfileInput{Name: "mon1", Interval: new(int64(3))}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Action == nil || *e.Action != "wait-recover" {
+		t.Fatalf("untouched action must be preserved: %v", e.Action)
+	}
+	if e.Interval == nil || *e.Interval != 3 {
+		t.Fatalf("provided interval must be set: %v", e.Interval)
+	}
+	assertKeptMisc(t, e.MiscAttributes)
 }

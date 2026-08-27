@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 313 tools on Panorama and 297 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 125 on Panorama, 122 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 343 tools on Panorama and 327 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 137 on Panorama, 134 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -362,6 +362,33 @@ These network-configuration tools are net-scoped: on a firewall they act on the 
 | `panos_interface_mgmt_profile_update` | write | Update an interface management profile: read-modify-write; a provided permitted_ip list replaces the entries fully. |
 | `panos_interface_mgmt_profile_delete` | write | Delete an interface management profile from the candidate config. |
 
+### Static routes and Layer 3 subinterfaces
+
+These tools are net-scoped (on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required) and parent-scoped: a static route requires its parent `virtual_router`, and a subinterface requires its `parent_interface`. Static routes manage the destination, egress interface, administrative distance, metric and a one-of next hop; the path-monitor, BFD and route-table subtrees are preserved untouched across updates. Subinterfaces manage the 802.1q `tag` plus the common Layer 3 surface (addresses, MTU, management profile, IPv6 enable); other subtrees (ARP, DHCP client, PPPoE, the full IPv6 address list) are preserved untouched.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_static_route_list` | read-only | List IPv4 static routes under a virtual router. |
+| `panos_static_route_get` | read-only | Get one IPv4 static route (destination, interface, admin distance, metric, next hop). |
+| `panos_static_route_create` | write | Create an IPv4 static route under a virtual router; the next hop is a one-of. |
+| `panos_static_route_update` | write | Update an IPv4 static route: read-modify-write; path-monitor, BFD and route-table settings are preserved. |
+| `panos_static_route_delete` | write | Delete an IPv4 static route from the candidate config. |
+| `panos_static_route_v6_list` | read-only | List IPv6 static routes under a virtual router. |
+| `panos_static_route_v6_get` | read-only | Get one IPv6 static route (destination, interface, admin distance, metric, next hop). |
+| `panos_static_route_v6_create` | write | Create an IPv6 static route under a virtual router; the next hop is a one-of. |
+| `panos_static_route_v6_update` | write | Update an IPv6 static route: read-modify-write; path-monitor, BFD and route-table settings are preserved. |
+| `panos_static_route_v6_delete` | write | Delete an IPv6 static route from the candidate config. |
+| `panos_ethernet_subinterface_list` | read-only | List Layer 3 ethernet subinterfaces under a parent interface. |
+| `panos_ethernet_subinterface_get` | read-only | Get one ethernet subinterface (tag, comment, mtu, ips, management profile, ipv6). |
+| `panos_ethernet_subinterface_create` | write | Create a Layer 3 ethernet subinterface under a parent interface. |
+| `panos_ethernet_subinterface_update` | write | Update an ethernet subinterface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_ethernet_subinterface_delete` | write | Delete an ethernet subinterface from the candidate config. |
+| `panos_aggregate_subinterface_list` | read-only | List Layer 3 aggregate (ae) subinterfaces under a parent interface. |
+| `panos_aggregate_subinterface_get` | read-only | Get one aggregate subinterface (tag, comment, mtu, ips, management profile, ipv6). |
+| `panos_aggregate_subinterface_create` | write | Create a Layer 3 aggregate subinterface under a parent interface. |
+| `panos_aggregate_subinterface_update` | write | Update an aggregate subinterface: read-modify-write; a provided ips list replaces the addresses fully. |
+| `panos_aggregate_subinterface_delete` | write | Delete an aggregate subinterface from the candidate config. |
+
 ### LLDP, BFD, monitor profiles, and Layer 2 switching
 
 These network profiles and the two Layer 2 switching objects are net-scoped: on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required. Optional subtrees (LLDP TLVs, BFD multihop, virtual-wire link-state and multicast, the VLAN virtual-interface) are preserved untouched across updates but are not settable here. The `panos_vlan_*` tools manage the Layer 2 VLAN object, distinct from the Layer 3 VLAN interface (`panos_vlan_interface_*`).
@@ -474,6 +501,23 @@ These device-scoped identity objects resolve the same way as the server profiles
 | `panos_mfa_profile_create` | write | Create an MFA server profile in the candidate config. |
 | `panos_mfa_profile_update` | write | Update an MFA profile: read-modify-write; a provided config list replaces it. |
 | `panos_mfa_profile_delete` | write | Delete an MFA server profile from the candidate config. |
+
+### SSL/TLS and certificate profiles
+
+These decryption-support profiles resolve to the shared scope on a firewall (they have no firewall `vsys` scope); on Panorama choose `shared`, `panorama`, a `template`, or a `template_stack` (optionally down to a `template_vsys`). An SSL/TLS service profile names a server certificate and sets the allowed TLS versions and algorithms. A certificate profile names its CA certificates and revocation settings; all certificate references are names of imported certificates, never key material.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_ssl_tls_profile_list` | read-only | List SSL/TLS service profiles at a location. |
+| `panos_ssl_tls_profile_get` | read-only | Get one SSL/TLS service profile (certificate, min/max TLS version, allowed algorithms). |
+| `panos_ssl_tls_profile_create` | write | Create an SSL/TLS service profile in the candidate config. |
+| `panos_ssl_tls_profile_update` | write | Update an SSL/TLS service profile: read-modify-write; only provided fields change. |
+| `panos_ssl_tls_profile_delete` | write | Delete an SSL/TLS service profile from the candidate config. |
+| `panos_certificate_profile_list` | read-only | List certificate profiles at a location. |
+| `panos_certificate_profile_get` | read-only | Get one certificate profile (domain, username fields, revocation settings, CA list). |
+| `panos_certificate_profile_create` | write | Create a certificate profile in the candidate config. |
+| `panos_certificate_profile_update` | write | Update a certificate profile: read-modify-write; a provided CA list replaces it fully. |
+| `panos_certificate_profile_delete` | write | Delete a certificate profile from the candidate config. |
 
 ## Example MCP client configuration
 

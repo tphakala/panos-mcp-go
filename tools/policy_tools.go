@@ -146,15 +146,9 @@ func buildSecurityRuleEntry(in SecurityRuleInput) (*security.Entry, error) {
 		Tag:         in.Tags,
 		Disabled:    in.Disabled,
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
-	if in.Schedule != "" {
-		e.Schedule = new(in.Schedule)
-	}
-	if in.LogSetting != "" {
-		e.LogSetting = new(in.LogSetting)
-	}
+	setStrPtr(&e.Description, in.Description)
+	setStrPtr(&e.Schedule, in.Schedule)
+	setStrPtr(&e.LogSetting, in.LogSetting)
 	applyRuleProfileGroup(e, in.ProfileGroup)
 	return e, nil
 }
@@ -195,15 +189,9 @@ func overlaySecurityRule(e *security.Entry, in SecurityRuleInput) error {
 	if len(in.Service) > 0 {
 		e.Service = in.Service
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
-	if in.Schedule != "" {
-		e.Schedule = new(in.Schedule)
-	}
-	if in.LogSetting != "" {
-		e.LogSetting = new(in.LogSetting)
-	}
+	setStrPtr(&e.Description, in.Description)
+	setStrPtr(&e.Schedule, in.Schedule)
+	setStrPtr(&e.LogSetting, in.LogSetting)
 	if in.Tags != nil {
 		e.Tag = in.Tags
 	}
@@ -728,15 +716,9 @@ func buildNatRuleEntry(in NatRuleInput) (*nat.Entry, error) {
 		Tag:         in.Tags,
 		Disabled:    in.Disabled,
 	}
-	if in.NatType != "" {
-		e.NatType = new(in.NatType)
-	}
-	if in.ToInterface != "" {
-		e.ToInterface = new(in.ToInterface)
-	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.NatType, in.NatType)
+	setStrPtr(&e.ToInterface, in.ToInterface)
+	setStrPtr(&e.Description, in.Description)
 	if err := applyNatTranslations(e, in); err != nil {
 		return nil, err
 	}
@@ -772,15 +754,9 @@ func overlayNatRule(e *nat.Entry, in NatRuleInput) error {
 	if len(in.Destination) > 0 {
 		e.Destination = in.Destination
 	}
-	if in.Service != "" {
-		e.Service = new(in.Service)
-	}
-	if in.ToInterface != "" {
-		e.ToInterface = new(in.ToInterface)
-	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Service, in.Service)
+	setStrPtr(&e.ToInterface, in.ToInterface)
+	setStrPtr(&e.Description, in.Description)
 	if in.Tags != nil {
 		e.Tag = in.Tags
 	}
