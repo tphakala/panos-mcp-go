@@ -69,7 +69,7 @@ func TestParentFixAdapterDeleteViaMultiConfig(t *testing.T) {
 	cs := connectInMemory(t, srv)
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
 		Name:      "panos_static_route_delete",
-		Arguments: map[string]any{"name": "r1", "virtual_router": "vr1"},
+		Arguments: map[string]any{"name": "route-a", "virtual_router": "vr1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,8 +83,13 @@ func TestParentFixAdapterDeleteViaMultiConfig(t *testing.T) {
 			continue
 		}
 		el := req.Get("element")
+		// The child route name "route-a" is asserted specifically: it is not a
+		// substring of the parent "vr1", so this fails for a collection-level
+		// delete that drops the child component (a plain "r1" would be satisfied
+		// by the parent predicate entry[@name='vr1'] and prove nothing).
 		if strings.Contains(el, "<delete") && strings.Contains(el, "virtual-router") &&
-			strings.Contains(el, "vr1") && strings.Contains(el, "static-route") {
+			strings.Contains(el, "vr1") && strings.Contains(el, "static-route") &&
+			strings.Contains(el, "route-a") {
 			sawDelete = true
 			break
 		}
