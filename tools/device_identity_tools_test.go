@@ -53,7 +53,7 @@ func TestLocalUserCreateXpath(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "panos_local_user_create",
-		Arguments: map[string]any{"name": "alice", "disabled": true},
+		Arguments: map[string]any{"name": "alice", "disabled": true, "password_hash": "PHASHVAL"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestLocalUserCreateSharedScope(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "panos_local_user_create",
-		Arguments: map[string]any{"name": "alice", "shared": true},
+		Arguments: map[string]any{"name": "alice", "shared": true, "password_hash": "PHASHVAL"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -162,6 +162,44 @@ func TestLocalUserHasPasswordHashNoLeak(t *testing.T) {
 	m2 := asMap(t, localUserSummary(&localdb.Entry{Name: "alice"}))
 	if m2["has_password_hash"] != false {
 		t.Fatalf("has_password_hash must be false when unset: %v", m2["has_password_hash"])
+	}
+}
+
+// TestBuildLocalUserRequiresPasswordHash pins that create rejects a local user
+// with no password_hash. PAN-OS requires a phash for every local database user
+// (verified live: validate full fails with "... user -> <name> is missing
+// 'phash'" on 11.1.16-h1), so buildLocalUser guards it client-side with a clear
+// message. Sabotage: removing the phash guard in buildLocalUser makes the
+// no-hash and empty-hash cases return a nil error.
+func TestBuildLocalUserRequiresPasswordHash(t *testing.T) {
+	if _, err := buildLocalUser(LocalUserInput{Name: "alice"}); err == nil {
+		t.Fatal("create without password_hash must be rejected")
+	}
+	empty := ""
+	if _, err := buildLocalUser(LocalUserInput{Name: "alice", PasswordHash: &empty}); err == nil {
+		t.Fatal("create with an empty password_hash must be rejected")
+	}
+	e, err := buildLocalUser(LocalUserInput{Name: "alice", PasswordHash: new("PHASHVAL")})
+	if err != nil {
+		t.Fatalf("create with a password_hash must succeed: %v", err)
+	}
+	if e.Phash == nil || *e.Phash != "PHASHVAL" {
+		t.Fatalf("built entry must carry the phash: %v", e.Phash)
+	}
+}
+
+// TestOverlayLocalUserAllowsOmittedPasswordHash pins that update (overlay) stays
+// lenient: an omitted password_hash is neither rejected nor cleared, so an
+// existing user can be edited without re-supplying its phash. Sabotage: moving
+// the create-path phash guard into applyLocalUser/overlayLocalUser would make
+// this return an error or nil out the stored phash.
+func TestOverlayLocalUserAllowsOmittedPasswordHash(t *testing.T) {
+	e := &localdb.Entry{Name: "alice", Phash: new("EXISTING")}
+	if err := overlayLocalUser(e, LocalUserInput{Name: "alice", Disabled: new(true)}); err != nil {
+		t.Fatalf("update with an omitted password_hash must succeed: %v", err)
+	}
+	if e.Phash == nil || *e.Phash != "EXISTING" {
+		t.Fatalf("omitted password_hash must keep the stored value, got %v", e.Phash)
 	}
 }
 
