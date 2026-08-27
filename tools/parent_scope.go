@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/PaloAltoNetworks/pango/util"
 	"github.com/PaloAltoNetworks/pango/xmlapi"
@@ -84,15 +83,12 @@ func (a parentFixAdapter[L, E]) Read(ctx context.Context, ps parentScopeLoc[L], 
 	return a.svc.ReadWithXpath(ctx, util.AsXpath(path), action)
 }
 
-// Update edits the child entry in place at the full two-component path,
-// mirroring nameFixAdapter.Update's rename guard: the update tool never renames
-// (overlays do not touch Name) and updateCore passes name equal to the entry's
-// name, so a differing name can only come from a direct-caller misuse; it is
-// rejected rather than driving pango's rename path.
+// Update edits the child entry in place at the full two-component path, behind
+// the shared checkNoRename guard that nameFixAdapter.Update also uses.
 func (a parentFixAdapter[L, E]) Update(ctx context.Context, ps parentScopeLoc[L], entry *E, name string) (*E, error) {
 	entryName := a.name(entry)
-	if name != "" && name != entryName {
-		return nil, fmt.Errorf("renaming is not supported: the update name %q must match the entry name %q", name, entryName)
+	if err := checkNoRename(name, entryName); err != nil {
+		return nil, err
 	}
 	vn := a.client.Versioning()
 	path, err := ps.loc.XpathWithComponents(vn, util.AsEntryXpath(ps.parent), util.AsEntryXpath(entryName))
