@@ -23,10 +23,13 @@ const protocolKey = "protocol"
 // log settings.
 //
 // All six are device-scoped, resolved by resolveDeviceScope: a firewall vsys or
-// (for the authentication profiles) shared scope, or a Panorama template,
-// template-stack or shared scope. The three log-forwarding profiles (syslog,
-// snmptrap, email) have no shared scope; resolveDeviceScope rejects a shared
-// request for them.
+// (for the three authentication SERVER profiles) shared scope, or a Panorama
+// template, template-stack or shared scope. The three log-forwarding profiles
+// (syslog, snmptrap, email) have no shared scope; resolveDeviceScope rejects a
+// shared request for them. Do not read that as the complete no-shared set:
+// device/authprofile, the authentication PROFILE that references these server
+// profiles, also has none. noSharedScopeProfiles in device_scope.go is the
+// single source of truth.
 //
 // Secrets (LDAP bind password, TACACS+/RADIUS shared secrets, SNMP community and
 // v3 passwords, email SMTP password) are write-only: they are accepted on create
@@ -107,10 +110,7 @@ type LdapProfileInput struct {
 // is nil, so every server is built fresh. The other *Servers builders below
 // follow the same shape. (#89)
 func ldapServers(in []LdapServerInput, existing []ldap.Server) []ldap.Server {
-	prev := make(map[string]ldap.Server, len(existing))
-	for _, s := range existing {
-		prev[s.Name] = s
-	}
+	prev := indexByName(existing, func(s ldap.Server) string { return s.Name })
 	out := make([]ldap.Server, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]
@@ -272,10 +272,7 @@ type TacacsProfileInput struct {
 }
 
 func tacacsServers(in []TacacsServerInput, existing []tacacsplus.Server) []tacacsplus.Server {
-	prev := make(map[string]tacacsplus.Server, len(existing))
-	for _, s := range existing {
-		prev[s.Name] = s
-	}
+	prev := indexByName(existing, func(s tacacsplus.Server) string { return s.Name })
 	out := make([]tacacsplus.Server, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]
@@ -423,10 +420,7 @@ type RadiusProfileInput struct {
 }
 
 func radiusServers(in []RadiusServerInput, existing []radius.Server) []radius.Server {
-	prev := make(map[string]radius.Server, len(existing))
-	for _, s := range existing {
-		prev[s.Name] = s
-	}
+	prev := indexByName(existing, func(s radius.Server) string { return s.Name })
 	out := make([]radius.Server, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]
@@ -573,10 +567,7 @@ type SyslogProfileInput struct {
 }
 
 func syslogServers(in []SyslogServerInput, existing []syslog.Server) []syslog.Server {
-	prev := make(map[string]syslog.Server, len(existing))
-	for _, s := range existing {
-		prev[s.Name] = s
-	}
+	prev := indexByName(existing, func(s syslog.Server) string { return s.Name })
 	out := make([]syslog.Server, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]
@@ -736,10 +727,7 @@ type SnmpTrapProfileInput struct {
 }
 
 func snmpV2cServers(in []SnmpV2cServerInput, existing []snmptrap.VersionV2cServer) []snmptrap.VersionV2cServer {
-	prev := make(map[string]snmptrap.VersionV2cServer, len(existing))
-	for _, s := range existing {
-		prev[s.Name] = s
-	}
+	prev := indexByName(existing, func(s snmptrap.VersionV2cServer) string { return s.Name })
 	out := make([]snmptrap.VersionV2cServer, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]
@@ -752,10 +740,7 @@ func snmpV2cServers(in []SnmpV2cServerInput, existing []snmptrap.VersionV2cServe
 }
 
 func snmpV3Servers(in []SnmpV3ServerInput, existing []snmptrap.VersionV3Server) []snmptrap.VersionV3Server {
-	prev := make(map[string]snmptrap.VersionV3Server, len(existing))
-	for _, s := range existing {
-		prev[s.Name] = s
-	}
+	prev := indexByName(existing, func(s snmptrap.VersionV3Server) string { return s.Name })
 	out := make([]snmptrap.VersionV3Server, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]
@@ -975,10 +960,7 @@ type EmailProfileInput struct {
 }
 
 func emailServers(in []EmailServerInput, existing []email.Server) []email.Server {
-	prev := make(map[string]email.Server, len(existing))
-	for i := range existing {
-		prev[existing[i].Name] = existing[i]
-	}
+	prev := indexByName(existing, func(s email.Server) string { return s.Name })
 	out := make([]email.Server, 0, len(in))
 	for _, s := range in {
 		srv := prev[s.Name]

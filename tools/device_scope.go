@@ -8,13 +8,21 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// noSharedScopeProfiles lists the device-scoped profile families whose pango
-// location has no shared scope (deviceScopeParts.shared is nil for them), so a
-// shared request is rejected. It is the single source of truth for that list.
+// noSharedScopeProfiles lists the device-scoped profile families this server
+// does not expose a shared scope for (deviceScopeParts.shared is nil for them),
+// so a shared request is rejected. It is the single source of truth for that list.
+//
+// The reason differs by family, and the list deliberately does not say which is
+// which, because the rejection is the same either way. pango models no shared
+// location at all for snmp-trap, email and the authentication profile. It DOES
+// model one for syslog (device/profiles/syslog/location.go declares Shared with
+// its own xpath), and this server nonetheless does not expose it; whether PAN-OS
+// accepts a shared syslog profile is NOT MEASURED, so the scope stays withheld
+// rather than being added on an assumption.
 // The DeviceScopeInput.Shared jsonschema tag and the doc comments in this file
 // repeat these names because a Go struct tag cannot reference a const; keep them
 // in sync with this value when a new no-shared family is added.
-const noSharedScopeProfiles = "syslog, snmp-trap and email"
+const noSharedScopeProfiles = "syslog, snmp-trap, email and authentication profiles"
 
 // DeviceScopeInput selects where a device server profile lives. The
 // device/profiles/* packages (LDAP, RADIUS, TACACS+, syslog, SNMP-trap, email)
@@ -24,11 +32,13 @@ const noSharedScopeProfiles = "syslog, snmp-trap and email"
 // template-stack (optionally down to a specific vsys within it), or the Panorama
 // shared scope. This gets its own resolver, resolveDeviceScope.
 //
-// Not every profile type supports every scope: the log-settings profiles
-// (syslog, SNMP-trap, email) have no shared scope, so requesting shared for one
-// of them is rejected rather than silently retargeted.
+// Not every profile type is offered every scope here: the log-settings profiles
+// (syslog, SNMP-trap, email) and the authentication profile have no shared scope
+// on this server, so requesting shared for one of them is rejected rather than
+// silently retargeted. See noSharedScopeProfiles for why syslog differs from the
+// other three.
 type DeviceScopeInput struct {
-	Shared        bool   `json:"shared,omitzero" jsonschema:"Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for syslog, snmp-trap and email profiles."`
+	Shared        bool   `json:"shared,omitzero" jsonschema:"Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for syslog, snmp-trap, email and authentication profiles."`
 	Vsys          string `json:"vsys,omitzero" jsonschema:"Firewall vsys name (firewall only; default vsys1)"`
 	Template      string `json:"template,omitzero" jsonschema:"Panorama template name (Panorama only; mutually exclusive with template_stack)"`
 	TemplateStack string `json:"template_stack,omitzero" jsonschema:"Panorama template-stack name (Panorama only; mutually exclusive with template)"`
@@ -41,9 +51,11 @@ type DeviceScopeInput struct {
 func (in DeviceScopeInput) deviceScope() DeviceScopeInput { return in }
 
 // deviceScopeParts supplies the per-resource pango location constructors for
-// resolveDeviceScope. shared may be nil for a resource pango does not model at a
-// shared scope (the log-settings profiles: syslog, SNMP-trap, email), which makes
-// a shared request an error rather than a silently invalid location.
+// resolveDeviceScope. shared may be nil for a resource this server does not offer
+// at a shared scope (the log-settings profiles syslog, SNMP-trap and email, and
+// the authentication profile), which makes a shared request an error rather than
+// a silently invalid location. See noSharedScopeProfiles: for three of those four
+// pango models no shared location at all, while syslog is withheld deliberately.
 type deviceScopeParts[L any] struct {
 	shared func() L
 	vsys   func(ngfw, vsys string) L

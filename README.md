@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 353 tools on Panorama and 337 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 141 on Panorama, 138 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 358 tools on Panorama and 342 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 143 on Panorama, 140 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -364,19 +364,19 @@ These network-configuration tools are net-scoped: on a firewall they act on the 
 
 ### Static routes and Layer 3 subinterfaces
 
-These tools are net-scoped (on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required) and parent-scoped: a static route requires its parent `virtual_router`, and a subinterface requires its `parent_interface`. Static routes manage the destination, egress interface, administrative distance, metric and a one-of next hop; the path-monitor, BFD and route-table subtrees are preserved untouched across updates. Subinterfaces manage the 802.1q `tag` plus the common Layer 3 surface (addresses, MTU, management profile, IPv6 enable); other subtrees (ARP, DHCP client, PPPoE, the full IPv6 address list) are preserved untouched.
+These tools are net-scoped (on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required) and parent-scoped: a static route requires its parent `virtual_router`, and a subinterface requires its `parent_interface`. Static routes manage the destination, egress interface, administrative distance, metric, a one-of next hop and the BFD profile name (`bfd_profile`, naming a profile from `panos_bfd_profile_create`); the path-monitor and route-table subtrees, and everything under BFD other than the profile name, are preserved untouched across updates. Subinterfaces manage the 802.1q `tag` plus the common Layer 3 surface (addresses, MTU, management profile, IPv6 enable); other subtrees (ARP, DHCP client, PPPoE, the full IPv6 address list) are preserved untouched.
 
 | Tool | Mode | Description |
 | --- | --- | --- |
 | `panos_static_route_list` | read-only | List IPv4 static routes under a virtual router. |
-| `panos_static_route_get` | read-only | Get one IPv4 static route (destination, interface, admin distance, metric, next hop). |
+| `panos_static_route_get` | read-only | Get one IPv4 static route (destination, interface, admin distance, metric, next hop, BFD profile). |
 | `panos_static_route_create` | write | Create an IPv4 static route under a virtual router; the next hop is a one-of. |
-| `panos_static_route_update` | write | Update an IPv4 static route: read-modify-write; path-monitor, BFD and route-table settings are preserved. |
+| `panos_static_route_update` | write | Update an IPv4 static route: read-modify-write; path-monitor and route-table settings are preserved, as is any BFD setting other than the profile name. |
 | `panos_static_route_delete` | write | Delete an IPv4 static route from the candidate config. |
 | `panos_static_route_v6_list` | read-only | List IPv6 static routes under a virtual router. |
-| `panos_static_route_v6_get` | read-only | Get one IPv6 static route (destination, interface, admin distance, metric, next hop). |
+| `panos_static_route_v6_get` | read-only | Get one IPv6 static route (destination, interface, admin distance, metric, next hop, BFD profile). |
 | `panos_static_route_v6_create` | write | Create an IPv6 static route under a virtual router; the next hop is a one-of. |
-| `panos_static_route_v6_update` | write | Update an IPv6 static route: read-modify-write; path-monitor, BFD and route-table settings are preserved. |
+| `panos_static_route_v6_update` | write | Update an IPv6 static route: read-modify-write; path-monitor and route-table settings are preserved, as is any BFD setting other than the profile name. |
 | `panos_static_route_v6_delete` | write | Delete an IPv6 static route from the candidate config. |
 | `panos_ethernet_subinterface_list` | read-only | List Layer 3 ethernet subinterfaces under a parent interface. |
 | `panos_ethernet_subinterface_get` | read-only | Get one ethernet subinterface (tag, comment, mtu, ips, management profile, ipv6). |
@@ -445,7 +445,7 @@ These net-scoped network services follow the same scoping as the interface tools
 
 ### Device server profiles
 
-These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the authentication profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope. Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
+These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the three authentication server profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope, and neither does the authentication profile that references these server profiles (see below). Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
 
 | Tool | Mode | Description |
 | --- | --- | --- |
@@ -482,7 +482,7 @@ These authentication and log-forwarding server profiles are device-scoped: on a 
 
 ### Local users and authentication profiles
 
-These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, or `shared` selection. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
+These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, or `shared` selection. The authentication profile is the exception: pango models no shared location for it, so a `shared` request is rejected there. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
 
 | Tool | Mode | Description |
 | --- | --- | --- |
@@ -501,6 +501,11 @@ These device-scoped identity objects resolve the same way as the server profiles
 | `panos_mfa_profile_create` | write | Create an MFA server profile in the candidate config. |
 | `panos_mfa_profile_update` | write | Update an MFA profile: read-modify-write; a provided config list replaces it. |
 | `panos_mfa_profile_delete` | write | Delete an MFA server profile from the candidate config. |
+| `panos_auth_profile_list` | read-only | List authentication profiles at a location. |
+| `panos_auth_profile_get` | read-only | Get one authentication profile (active method and its settings, lockout, MFA, Kerberos SSO; the keytab is never returned). |
+| `panos_auth_profile_create` | write | Create an authentication profile; set at most one method_* branch. |
+| `panos_auth_profile_update` | write | Update an authentication profile: read-modify-write; setting one method clears the others, and omitting them all keeps the stored method. |
+| `panos_auth_profile_delete` | write | Delete an authentication profile from the candidate config. |
 
 ### SSL/TLS and certificate profiles
 

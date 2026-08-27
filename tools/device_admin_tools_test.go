@@ -2,6 +2,8 @@ package tools
 
 import (
 	"encoding/xml"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,6 +100,15 @@ func TestPasswordProfileSummaryOmitsAbsentSettings(t *testing.T) {
 	if set["expiration_period"] != int64(90) {
 		t.Errorf("a set value must be reported, got %v", set["expiration_period"])
 	}
+}
+
+// TestPasswordProfileReadOnlyGating pins read-only tool gating for password profiles.
+// Sabotage: deleting the if d.ReadOnly guard in RegisterPasswordProfileTools exposes write tools in read-only mode and fails this test.
+func TestPasswordProfileReadOnlyGating(t *testing.T) {
+	base := "panos_password_profile"
+	assertReadOnlyGating(t, RegisterPasswordProfileTools,
+		[]string{base + "_list", base + "_get"},
+		[]string{base + "_create", base + "_update", base + "_delete"})
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +487,15 @@ func TestAdministratorUpdateRedactsPasswordHashOnError(t *testing.T) {
 	}
 }
 
+// TestAdministratorReadOnlyGating pins read-only tool gating for administrators.
+// Sabotage: deleting the if d.ReadOnly guard in RegisterAdministratorTools exposes write tools in read-only mode and fails this test.
+func TestAdministratorReadOnlyGating(t *testing.T) {
+	base := "panos_administrator"
+	assertReadOnlyGating(t, RegisterAdministratorTools,
+		[]string{base + "_list", base + "_get"},
+		[]string{base + "_create", base + "_update", base + "_delete"})
+}
+
 // storedRoleBranch returns an entry carrying exactly one role branch, named by
 // role. It covers all seven branches pango models, including the two per-vsys
 // ones this server never accepts as input but must still clear and report.
@@ -616,6 +636,22 @@ func TestAdministratorSummaryReportsEveryStoredBranch(t *testing.T) {
 			if m["role"] != role {
 				t.Errorf("a stored %s must be reported as %s, got %v", role, role, m["role"])
 			}
+		})
+	}
+}
+
+// TestSetBuiltinRoleCoversBuiltinAdminRoles pins that every role accepted by
+// builtinAdminRoles is mapped to a role branch in setBuiltinRole.
+// Sabotage: deleting any case in setBuiltinRole leaves that role unset and fails this test.
+func TestSetBuiltinRoleCoversBuiltinAdminRoles(t *testing.T) {
+	for _, role := range slices.Sorted(maps.Keys(builtinAdminRoles)) {
+		t.Run(role, func(t *testing.T) {
+			rb := &administrator.PermissionsRoleBased{}
+			setBuiltinRole(rb, role)
+			e := &administrator.Entry{
+				Permissions: &administrator.Permissions{RoleBased: rb},
+			}
+			assertExactlyOneRole(t, e, "fresh", role)
 		})
 	}
 }

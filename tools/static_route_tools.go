@@ -18,12 +18,19 @@ import (
 // the parent virtual-router name carried in parentScopeLoc.parent.
 //
 // This server manages the route's destination, egress interface, administrative
-// distance, metric and next hop. The path-monitor, BFD and route-table subtrees
-// are TYPED pango fields this server does not set; they are not stored in Misc,
-// but they survive an update because the update path is a read-modify-write that
+// distance, metric, next hop and BFD profile. Of the BFD subtree only the profile
+// name is set; the path-monitor and route-table subtrees are not set at all.
+// These are TYPED pango fields, not Misc, but the ones this server leaves alone
+// survive an update because the update path is a read-modify-write that
 // re-marshals the full entry read back from the device, and the overlay never
 // touches them. Truly unmodeled XML rides in Entry.Misc and survives the same
-// round-trip.
+// round-trip. The same applies within the BFD subtree: setting bfd_profile
+// overlays Bfd.Profile in place and preserves any Bfd.Misc alongside it.
+//
+// bfd_profile names a BFD profile managed by panos_bfd_profile_create. That is
+// the legacy virtual-router BFD profile at network/profiles/bfd-profile, which is
+// a different object from the advanced-routing profile at
+// network/routing-profile/bfd that this server does not wrap.
 //
 // Nexthop is a one-of: at most one of nexthop_ip_address / nexthop_next_vr /
 // nexthop_fqdn / nexthop_discard may be provided. Providing one sets that branch
@@ -46,6 +53,11 @@ type StaticRouteInput struct {
 	NexthopNextVr    *string `json:"nexthop_next_vr,omitzero" jsonschema:"Next hop next-vr name (mutually exclusive)"`
 	NexthopFqdn      *string `json:"nexthop_fqdn,omitzero" jsonschema:"Next hop FQDN (mutually exclusive; ipv4 only)"`
 	NexthopDiscard   *bool   `json:"nexthop_discard,omitzero" jsonschema:"Discard traffic (mutually exclusive)"`
+	// BfdProfile names an existing BFD profile (see panos_bfd_profile_list). How
+	// PAN-OS spells "no BFD" as a stored value is NOT MEASURED, so this schema
+	// does not tell a caller to send a sentinel; to detach BFD, clear the profile
+	// on the device.
+	BfdProfile *string `json:"bfd_profile,omitzero" jsonschema:"BFD profile name for this route (see panos_bfd_profile_list)"`
 }
 
 // StaticRouteListInput is the list input for both static route families.
@@ -142,12 +154,21 @@ func applyStaticRouteV4Nexthop(e *srv4.Entry, in *StaticRouteInput) error {
 
 // applyStaticRouteV4 overlays the managed fields onto e, applying only what the
 // caller provided. Shared by build and overlay; it never rebuilds e, so the
-// deferred path-monitor, BFD and route-table subtrees survive an update.
+// deferred path-monitor and route-table subtrees survive an update, as does any
+// Bfd.Misc alongside the profile name this server does set.
 func applyStaticRouteV4(e *srv4.Entry, in *StaticRouteInput) error {
 	setPtr(&e.Destination, in.Destination)
 	setPtr(&e.Interface, in.Interface)
 	setPtr(&e.AdminDist, in.AdminDist)
 	setPtr(&e.Metric, in.Metric)
+	if in.BfdProfile != nil {
+		// Overlay in place rather than replacing e.Bfd, so any unmodeled XML the
+		// device stores under <bfd> survives the read-modify-write.
+		if e.Bfd == nil {
+			e.Bfd = &srv4.Bfd{}
+		}
+		setPtr(&e.Bfd.Profile, in.BfdProfile)
+	}
 	return applyStaticRouteV4Nexthop(e, in)
 }
 
@@ -176,6 +197,9 @@ func staticRouteV4Summary(e *srv4.Entry) any {
 	}
 	putInt(m, "admin_dist", e.AdminDist)
 	putInt(m, "metric", e.Metric)
+	if e.Bfd != nil {
+		m["bfd_profile"] = strVal(e.Bfd.Profile)
+	}
 	if e.Nexthop != nil {
 		switch {
 		case e.Nexthop.IpAddress != nil:
@@ -210,7 +234,7 @@ func RegisterStaticRouteV4Tools(s *mcp.Server, d *Deps) {
 		svc.name, staticRouteV4Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_get",
-		Description: "Get one IPv4 static route (destination, interface, admin distance, metric, next hop). Read-only.",
+		Description: "Get one IPv4 static route (destination, interface, admin distance, metric, next hop, BFD profile). Read-only.",
 		Annotations: readOnlyTool("Get IPv4 static route"),
 	}, parentGetHandler(d, "panos_static_route_get", svc, parts, nameParent,
 		func(in StaticRouteNameInput) string { return in.Name }, staticRouteV4Summary))
@@ -224,7 +248,7 @@ func RegisterStaticRouteV4Tools(s *mcp.Server, d *Deps) {
 	}, parentCreateHandler(d, "panos_static_route_create", svc, parts, parent, buildStaticRouteV4, staticRouteV4Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_update",
-		Description: "Update an IPv4 static route: read-modify-write, only provided fields change. Providing a next hop replaces it; path-monitor, BFD and route-table settings are preserved. Run panos_commit to apply.",
+		Description: "Update an IPv4 static route: read-modify-write, only provided fields change. Providing a next hop replaces it; path-monitor and route-table settings, and any BFD setting other than the profile name, are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IPv4 static route"),
 	}, parentUpdateHandler(d, "panos_static_route_update", svc, parts, parent,
 		func(in StaticRouteInput) string { return in.Name }, overlayStaticRouteV4, staticRouteV4Summary))
@@ -300,6 +324,13 @@ func applyStaticRouteV6(e *srv6.Entry, in *StaticRouteInput) error {
 	setPtr(&e.Interface, in.Interface)
 	setPtr(&e.AdminDist, in.AdminDist)
 	setPtr(&e.Metric, in.Metric)
+	if in.BfdProfile != nil {
+		// Overlay in place; see applyStaticRouteV4 for why e.Bfd is not replaced.
+		if e.Bfd == nil {
+			e.Bfd = &srv6.Bfd{}
+		}
+		setPtr(&e.Bfd.Profile, in.BfdProfile)
+	}
 	return applyStaticRouteV6Nexthop(e, in)
 }
 
@@ -328,6 +359,9 @@ func staticRouteV6Summary(e *srv6.Entry) any {
 	}
 	putInt(m, "admin_dist", e.AdminDist)
 	putInt(m, "metric", e.Metric)
+	if e.Bfd != nil {
+		m["bfd_profile"] = strVal(e.Bfd.Profile)
+	}
 	if e.Nexthop != nil {
 		switch {
 		case e.Nexthop.Ipv6Address != nil:
@@ -359,7 +393,7 @@ func RegisterStaticRouteV6Tools(s *mcp.Server, d *Deps) {
 		svc.name, staticRouteV6Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_v6_get",
-		Description: "Get one IPv6 static route (destination, interface, admin distance, metric, next hop). Read-only.",
+		Description: "Get one IPv6 static route (destination, interface, admin distance, metric, next hop, BFD profile). Read-only.",
 		Annotations: readOnlyTool("Get IPv6 static route"),
 	}, parentGetHandler(d, "panos_static_route_v6_get", svc, parts, nameParent,
 		func(in StaticRouteNameInput) string { return in.Name }, staticRouteV6Summary))
@@ -373,7 +407,7 @@ func RegisterStaticRouteV6Tools(s *mcp.Server, d *Deps) {
 	}, parentCreateHandler(d, "panos_static_route_v6_create", svc, parts, parent, buildStaticRouteV6, staticRouteV6Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_v6_update",
-		Description: "Update an IPv6 static route: read-modify-write, only provided fields change. Providing a next hop replaces it; path-monitor, BFD and route-table settings are preserved. Run panos_commit to apply.",
+		Description: "Update an IPv6 static route: read-modify-write, only provided fields change. Providing a next hop replaces it; path-monitor and route-table settings, and any BFD setting other than the profile name, are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IPv6 static route"),
 	}, parentUpdateHandler(d, "panos_static_route_v6_update", svc, parts, parent,
 		func(in StaticRouteInput) string { return in.Name }, overlayStaticRouteV6, staticRouteV6Summary))

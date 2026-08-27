@@ -125,6 +125,10 @@ func localUserSecrets(in *LocalUserInput) []string { return secretVals(in.Passwo
 
 func administratorSecrets(in *AdministratorInput) []string { return secretVals(in.PasswordHash) }
 
+func authProfileSecrets(in *AuthProfileInput) []string {
+	return secretVals(in.SsoKerberosKeytab)
+}
+
 func mfaProfileSecrets(in *MfaProfileInput) []string {
 	return collectSecrets(in.Config, func(c MfaVendorConfigInput) *string { return c.Value })
 }

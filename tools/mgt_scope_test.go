@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PaloAltoNetworks/pango/device/profiles/password"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -131,6 +132,63 @@ func TestPasswordProfileFirewallScope(t *testing.T) {
 	if loc.Panorama != nil || loc.Template != nil || loc.TemplateStack != nil {
 		t.Fatalf("a bare firewall request must reach no Panorama location: %+v", loc)
 	}
+}
+
+// TestPasswordProfilePanoramaScope pins the Panorama, template and
+// template-stack constructors in passwordProfileParts. Only the administrator
+// family's parts are exercised by the resolver tests, so without this a wrong
+// constructor here would be invisible.
+//
+// Sabotage: returning a zero Location from any of the three Panorama
+// constructors in passwordProfileParts turns the matching subtest red.
+func TestPasswordProfilePanoramaScope(t *testing.T) {
+	d, _ := newTestDeps(t, "Panorama")
+	parts := passwordProfileParts()
+
+	for _, tc := range []struct {
+		name string
+		in   MgtScopeInput
+		// want reports whether the expected branch is set and carries the
+		// expected values; each case checks only its own branch.
+		want func(password.Location) bool
+	}{
+		{"panorama", MgtScopeInput{Panorama: true}, func(l password.Location) bool {
+			return l.Panorama != nil
+		}},
+		{"template", MgtScopeInput{Template: "t1"}, func(l password.Location) bool {
+			return l.Template != nil && l.Template.Template == "t1" &&
+				l.Template.PanoramaDevice == defaultPanoramaDevice
+		}},
+		{"template stack", MgtScopeInput{TemplateStack: "s1"}, func(l password.Location) bool {
+			return l.TemplateStack != nil && l.TemplateStack.TemplateStack == "s1" &&
+				l.TemplateStack.PanoramaDevice == defaultPanoramaDevice
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loc, err := resolveMgtScope(d, tc.in, parts)
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if !tc.want(loc) {
+				t.Fatalf("wrong or empty location: %+v", loc)
+			}
+			if n := mgtLocationBranches(loc); n != 1 {
+				t.Fatalf("exactly one branch must be set, got %d: %+v", n, loc)
+			}
+		})
+	}
+}
+
+// mgtLocationBranches counts the set branches of a password profile location, so
+// a test can assert that resolving one scope did not also populate another.
+func mgtLocationBranches(l password.Location) int {
+	n := 0
+	for _, set := range []bool{l.Ngfw != nil, l.Panorama != nil, l.Template != nil, l.TemplateStack != nil} {
+		if set {
+			n++
+		}
+	}
+	return n
 }
 
 // TestMgtScopeGatingThroughTool pins that a registered management-plane tool

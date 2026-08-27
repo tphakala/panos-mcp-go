@@ -124,6 +124,23 @@ func names[T any](s []T, get func(T) string) []string {
 	return out
 }
 
+// indexByName maps each element of s by key(v). It is only an index; the callers
+// are what make a merge-by-name update work, by seeding each output element from
+// prev[name] and overlaying with setPtr so a field the caller omitted, including
+// a write-only secret and any unmodeled Misc, survives. See ldapServers for the
+// shape. A caller that builds its output element fresh instead gains nothing
+// from this helper.
+//
+// Named indexByName rather than byName to avoid shadowing the byName local in
+// op_tools.go's joinInterfaces; the two would compile side by side.
+func indexByName[T any](s []T, key func(T) string) map[string]T {
+	out := make(map[string]T, len(s))
+	for _, v := range s {
+		out[key(v)] = v
+	}
+	return out
+}
+
 // setPtr assigns src to *dst when src is non-nil, leaving *dst untouched
 // otherwise. It collapses the read-modify-write "set only when provided" guard
 // used across the overlay builders for optional pointer fields.
@@ -636,6 +653,18 @@ func deleteHandler[L, E any](
 // writeOption secret extractor: no object family carries a write-only secret, so
 // there is nothing to redact from its device-error output (issue #92). A future
 // secret-bearing object family would thread the same opts seam through here.
+//
+// It also still takes an explicit location closure, where the net, device,
+// profile and mgt scopes replaced theirs with a promoted accessor. That is not
+// an oversight and it is not finishable: every object input names its scope
+// (Location LocationInput) rather than embedding it, so nothing is promoted and
+// there is no interface for the handler to constrain on. Switching the field to
+// an embed would flatten location into top-level shared/vsys/device_group
+// properties on every object tool, which is a client-visible break that
+// TestObjectScopeSchemaUnchanged in scope_schema_test.go correctly pins against.
+// Declaring the accessor on each of the roughly thirty object input structs
+// would trade thirty closures for thirty methods and win nothing. The same
+// applies to updateHandler below.
 func createHandler[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
 	resolve func(LocationInput) (L, error),
@@ -733,6 +762,7 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterLocalUserTools(s, d)
 	RegisterSamlIdpProfileTools(s, d)
 	RegisterMfaProfileTools(s, d)
+	RegisterAuthProfileTools(s, d)
 	// SSL/TLS and certificate profiles (profile-scoped: firewall shared or
 	// Panorama shared/panorama/template/template_stack).
 	RegisterSslTlsProfileTools(s, d)
