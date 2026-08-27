@@ -135,15 +135,9 @@ func buildAntivirusDecoders(in []AntivirusDecoderInput) ([]antivirus.Decoder, er
 			return nil, errors.New("each decoder requires a name")
 		}
 		d := antivirus.Decoder{Name: dec.Name}
-		if dec.Action != "" {
-			d.Action = new(dec.Action)
-		}
-		if dec.WildfireAction != "" {
-			d.WildfireAction = new(dec.WildfireAction)
-		}
-		if dec.MlavAction != "" {
-			d.MlavAction = new(dec.MlavAction)
-		}
+		setStrPtr(&d.Action, dec.Action)
+		setStrPtr(&d.WildfireAction, dec.WildfireAction)
+		setStrPtr(&d.MlavAction, dec.MlavAction)
 		out = append(out, d)
 	}
 	return out, nil
@@ -159,17 +153,13 @@ func buildAntivirusEntry(in AntivirusProfileInput) (*antivirus.Entry, error) {
 		return nil, err
 	}
 	e := &antivirus.Entry{Name: in.Name, PacketCapture: in.PacketCapture, Decoder: decoders}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	return e, nil
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayAntivirus(e *antivirus.Entry, in AntivirusProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.PacketCapture != nil {
 		e.PacketCapture = in.PacketCapture
 	}
@@ -287,18 +277,14 @@ func buildVulnerabilityEntry(in VulnerabilityProfileInput) (*vulnerability.Entry
 		return nil, errors.New("name is required")
 	}
 	e := &vulnerability.Entry{Name: in.Name}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	applyVulnerabilityInline(e, &in)
 	return e, nil
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayVulnerability(e *vulnerability.Entry, in VulnerabilityProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	applyVulnerabilityInline(e, &in)
 	return nil
 }
@@ -420,18 +406,14 @@ func buildSpywareEntry(in SpywareProfileInput) (*spyware.Entry, error) {
 		return nil, errors.New("name is required")
 	}
 	e := &spyware.Entry{Name: in.Name}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	applySpywareInline(e, &in)
 	return e, nil
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlaySpyware(e *spyware.Entry, in SpywareProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	applySpywareInline(e, &in)
 	return nil
 }
@@ -550,9 +532,7 @@ func buildURLFilteringEntry(in URLFilteringProfileInput) (*urlfiltering.Entry, e
 		LogHttpHdrUserAgent:   in.LogHTTPHeaderUserAgent,
 		LogHttpHdrReferer:     in.LogHTTPHeaderReferer,
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	applyURLFilteringCategories(e, &in)
 	return e, nil
 }
@@ -582,9 +562,7 @@ func applyURLFilteringCategories(e *urlfiltering.Entry, in *URLFilteringProfileI
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayURLFiltering(e *urlfiltering.Entry, in URLFilteringProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.SafeSearchEnforcement != nil {
 		e.SafeSearchEnforcement = in.SafeSearchEnforcement
 	}
@@ -714,12 +692,8 @@ func buildFileBlockingRules(in []FileBlockingRuleInput) ([]fileblocking.Rules, e
 			return nil, errors.New("each rule requires a name")
 		}
 		rule := fileblocking.Rules{Name: r.Name, Application: r.Applications, FileType: r.FileTypes}
-		if r.Direction != "" {
-			rule.Direction = new(r.Direction)
-		}
-		if r.Action != "" {
-			rule.Action = new(r.Action)
-		}
+		setStrPtr(&rule.Direction, r.Direction)
+		setStrPtr(&rule.Action, r.Action)
 		out = append(out, rule)
 	}
 	return out, nil
@@ -735,17 +709,13 @@ func buildFileBlockingEntry(in FileBlockingProfileInput) (*fileblocking.Entry, e
 		return nil, err
 	}
 	e := &fileblocking.Entry{Name: in.Name, Rules: rules}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	return e, nil
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayFileBlocking(e *fileblocking.Entry, in FileBlockingProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	rules, err := buildFileBlockingRules(in.Rules)
 	if err != nil {
 		return err
@@ -873,12 +843,8 @@ func buildWildfireAnalysisRules(in []WildfireAnalysisRuleInput) ([]wildfireanaly
 			return nil, errors.New("each rule requires a name")
 		}
 		rule := wildfireanalysis.Rules{Name: r.Name, Application: r.Applications, FileType: r.FileTypes}
-		if r.Direction != "" {
-			rule.Direction = new(r.Direction)
-		}
-		if r.Analysis != "" {
-			rule.Analysis = new(r.Analysis)
-		}
+		setStrPtr(&rule.Direction, r.Direction)
+		setStrPtr(&rule.Analysis, r.Analysis)
 		out = append(out, rule)
 	}
 	return out, nil
@@ -894,17 +860,13 @@ func buildWildfireAnalysisEntry(in WildfireAnalysisProfileInput) (*wildfireanaly
 		return nil, err
 	}
 	e := &wildfireanalysis.Entry{Name: in.Name, Rules: rules}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	return e, nil
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayWildfireAnalysis(e *wildfireanalysis.Entry, in WildfireAnalysisProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	rules, err := buildWildfireAnalysisRules(in.Rules)
 	if err != nil {
 		return err
@@ -1192,9 +1154,7 @@ func buildLogForwardingEntry(in LogForwardingProfileInput) (*logforwarding.Entry
 		return nil, err
 	}
 	e := &logforwarding.Entry{Name: in.Name, MatchList: mls}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.EnhancedApplicationLogging != nil {
 		e.EnhancedApplicationLogging = in.EnhancedApplicationLogging
 	}
@@ -1203,9 +1163,7 @@ func buildLogForwardingEntry(in LogForwardingProfileInput) (*logforwarding.Entry
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract; see buildAddressEntry.
 func overlayLogForwarding(e *logforwarding.Entry, in LogForwardingProfileInput) error {
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.EnhancedApplicationLogging != nil {
 		e.EnhancedApplicationLogging = in.EnhancedApplicationLogging
 	}
@@ -1342,12 +1300,8 @@ func applyDecryptionProfileSslVersions(e *decryption.Entry, in *DecryptionProfil
 		ps = &decryption.SslProtocolSettings{}
 		e.SslProtocolSettings = ps
 	}
-	if in.SslMinVersion != "" {
-		ps.MinVersion = new(in.SslMinVersion)
-	}
-	if in.SslMaxVersion != "" {
-		ps.MaxVersion = new(in.SslMaxVersion)
-	}
+	setStrPtr(&ps.MinVersion, in.SslMinVersion)
+	setStrPtr(&ps.MaxVersion, in.SslMaxVersion)
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract; see buildAddressEntry.

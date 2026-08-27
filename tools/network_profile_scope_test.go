@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -8,77 +9,74 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// LLDP profile (network/profiles/lldp)
+// Net-scoped profile scope tests (lldp, bfd, monitor)
 // ---------------------------------------------------------------------------
-
-// TestLldpProfileCreateFirewallXpath drives a registered firewall create and
-// pins that the set request targets the lldp-profile node. Sabotage: pointing
-// lldpProfileParts at a different pango resource shifts the xpath and this fails.
-func TestLldpProfileCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
-		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="lldp1"/></result></response>`},
-	)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterLldpProfileTools(srv, d)
-	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      "panos_lldp_profile_create",
-		Arguments: map[string]any{"name": "lldp1", "mode": "transmit-receive"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("create failed: %s", textContent(t, res))
-	}
-	var sawSet bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "set" {
-			sawSet = true
-			if xp := req.Get("xpath"); !strings.Contains(xp, "lldp-profile") {
-				t.Fatalf("create must target the lldp-profile xpath: %s", xp)
-			}
-		}
-	}
-	if !sawSet {
-		t.Fatal("no config set recorded")
-	}
+//
+// The three families (network/profiles/{lldp,bfd,monitor}) share the
+// resolveNetScope gating and the {Ngfw|Template|TemplateStack} location model,
+// differing only in their Register function, tool-name prefix, target xpath
+// segment and the extra create argument each requires. The scope behaviour is
+// therefore exercised once, table-driven, rather than in three copied blocks.
+type netProfileScopeCase struct {
+	name         string                   // subtest label
+	register     func(*mcp.Server, *Deps) // family Register* entry point
+	toolPrefix   string                   // e.g. "panos_lldp_profile"
+	xpathSegment string                   // e.g. "lldp-profile"
+	entryName    string                   // create name + get-response entry name
+	createArgs   map[string]any           // extra create args beyond name/template
 }
 
-// TestLldpProfileCreatePanoramaTemplateXpath drives a registered Panorama
-// create under a template and pins that the set request reaches the
-// lldp-profile node inside that template's config. Sabotage: dropping the
-// template branch of lldpProfileParts (or the template arg wiring) drops the
-// "template" segment and this fails.
-func TestLldpProfileCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
-		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
-		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="lldp1"/></result></response>`},
-	)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterLldpProfileTools(srv, d)
-	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      "panos_lldp_profile_create",
-		Arguments: map[string]any{"name": "lldp1", "template": "tmpl-a"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("panorama create failed: %s", textContent(t, res))
-	}
+var netProfileScopeCases = []netProfileScopeCase{
+	{
+		name:         "lldp",
+		register:     RegisterLldpProfileTools,
+		toolPrefix:   "panos_lldp_profile",
+		xpathSegment: "lldp-profile",
+		entryName:    "lldp1",
+		createArgs:   map[string]any{"mode": "transmit-receive"},
+	},
+	{
+		name:         "bfd",
+		register:     RegisterBfdProfileTools,
+		toolPrefix:   "panos_bfd_profile",
+		xpathSegment: "bfd-profile",
+		entryName:    "bfd1",
+		createArgs:   map[string]any{"mode": "active"},
+	},
+	{
+		name:         "monitor",
+		register:     RegisterMonitorProfileTools,
+		toolPrefix:   "panos_monitor_profile",
+		xpathSegment: "monitor-profile",
+		entryName:    "mon1",
+		createArgs:   map[string]any{"action": "wait-recover"},
+	},
+}
+
+// createArguments merges the row's fixed create args with the per-test extras
+// (e.g. a template) on top of the required name.
+func (c *netProfileScopeCase) createArguments(extra map[string]any) map[string]any {
+	args := map[string]any{"name": c.entryName}
+	maps.Copy(args, c.createArgs)
+	maps.Copy(args, extra)
+	return args
+}
+
+// assertSetXpath asserts a config set was recorded and every want substring is
+// present in its xpath. This is the pin shared by the firewall and Panorama
+// create bodies: the firewall row asserts only the profile segment, the
+// Panorama row also asserts the template scope.
+func assertSetXpath(t *testing.T, f *fakeAPI, want ...string) {
+	t.Helper()
 	var sawSet bool
 	for _, req := range f.Requests() {
 		if req.Get("action") == "set" {
 			sawSet = true
 			xp := req.Get("xpath")
-			if !strings.Contains(xp, "lldp-profile") {
-				t.Fatalf("create must target the lldp-profile xpath: %s", xp)
-			}
-			if !strings.Contains(xp, "template") || !strings.Contains(xp, "tmpl-a") {
-				t.Fatalf("panorama create must resolve into the template scope: %s", xp)
+			for _, sub := range want {
+				if !strings.Contains(xp, sub) {
+					t.Fatalf("set xpath missing %q: %s", sub, xp)
+				}
 			}
 		}
 	}
@@ -87,288 +85,98 @@ func TestLldpProfileCreatePanoramaTemplateXpath(t *testing.T) {
 	}
 }
 
-// TestLldpProfileNetScopeGating pins the two rejection paths the net-scope
-// resolver enforces for this family: Panorama with no template/template_stack,
+// TestNetProfileCreateFirewallXpath drives a registered firewall create for
+// each family and pins that the set request targets the family's profile node.
+// Sabotage: pointing a family's *Parts at a different pango resource shifts the
+// xpath and that row fails.
+func TestNetProfileCreateFirewallXpath(t *testing.T) {
+	for _, c := range netProfileScopeCases {
+		t.Run(c.name, func(t *testing.T) {
+			d, f := newTestDeps(t, "PA-VM",
+				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+				fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="` + c.entryName + `"/></result></response>`},
+			)
+			srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+			c.register(srv, d)
+			cs := connectInMemory(t, srv)
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+				Name:      c.toolPrefix + "_create",
+				Arguments: c.createArguments(nil),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.IsError {
+				t.Fatalf("create failed: %s", textContent(t, res))
+			}
+			assertSetXpath(t, f, c.xpathSegment)
+		})
+	}
+}
+
+// TestNetProfileCreatePanoramaTemplateXpath drives a registered Panorama create
+// under a template for each family and pins that the set request reaches the
+// family's profile node inside that template's config. Sabotage: dropping the
+// template branch of a family's *Parts (or the template arg wiring) drops the
+// "template" segment and that row fails.
+func TestNetProfileCreatePanoramaTemplateXpath(t *testing.T) {
+	for _, c := range netProfileScopeCases {
+		t.Run(c.name, func(t *testing.T) {
+			d, f := newTestDeps(t, "Panorama",
+				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
+				fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="` + c.entryName + `"/></result></response>`},
+			)
+			srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+			c.register(srv, d)
+			cs := connectInMemory(t, srv)
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+				Name:      c.toolPrefix + "_create",
+				Arguments: c.createArguments(map[string]any{"template": "tmpl-a"}),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.IsError {
+				t.Fatalf("panorama create failed: %s", textContent(t, res))
+			}
+			assertSetXpath(t, f, c.xpathSegment, "template", "tmpl-a")
+		})
+	}
+}
+
+// assertListRejects registers the family on a device of the given model, calls
+// its list tool with the given args, and asserts the result is an error whose
+// message contains want. It is the shared body of the two gating checks.
+func (c *netProfileScopeCase) assertListRejects(t *testing.T, model string, args map[string]any, want string) {
+	t.Helper()
+	d, _ := newTestDeps(t, model)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	c.register(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: c.toolPrefix + "_list", Arguments: args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatalf("%s must error", want)
+	}
+	if msg := textContent(t, res); !strings.Contains(msg, want) {
+		t.Fatalf("wrong error: want %q, got %s", want, msg)
+	}
+}
+
+// TestNetProfileNetScopeGating pins the two rejection paths the net-scope
+// resolver enforces for each family: Panorama with no template/template_stack,
 // and a template supplied against a firewall.
-func TestLldpProfileNetScopeGating(t *testing.T) {
-	t.Run("panorama without template errors", func(t *testing.T) {
-		d, _ := newTestDeps(t, "Panorama")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		RegisterLldpProfileTools(srv, d)
-		cs := connectInMemory(t, srv)
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-			Name: "panos_lldp_profile_list", Arguments: map[string]any{},
+func TestNetProfileNetScopeGating(t *testing.T) {
+	for _, c := range netProfileScopeCases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Run("panorama without template errors", func(t *testing.T) {
+				c.assertListRejects(t, "Panorama", map[string]any{}, "template or template_stack is required on Panorama")
+			})
+			t.Run("template on firewall errors", func(t *testing.T) {
+				c.assertListRejects(t, "PA-VM", map[string]any{"template": "tmpl-a"}, "template requires a Panorama connection")
+			})
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("Panorama list without a template must error")
-		}
-		if msg := textContent(t, res); !strings.Contains(msg, "template or template_stack is required on Panorama") {
-			t.Fatalf("wrong error for Panorama-no-template: %s", msg)
-		}
-	})
-	t.Run("template on firewall errors", func(t *testing.T) {
-		d, _ := newTestDeps(t, "PA-VM")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		RegisterLldpProfileTools(srv, d)
-		cs := connectInMemory(t, srv)
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-			Name: "panos_lldp_profile_list", Arguments: map[string]any{"template": "tmpl-a"},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("a template against a firewall must error")
-		}
-		if msg := textContent(t, res); !strings.Contains(msg, "template requires a Panorama connection") {
-			t.Fatalf("wrong error for template-on-firewall: %s", msg)
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
-// BFD profile (network/profiles/bfd)
-// ---------------------------------------------------------------------------
-
-// TestBfdProfileCreateFirewallXpath drives a registered firewall create and
-// pins that the set request targets the bfd-profile node. Sabotage: pointing
-// bfdProfileParts at a different pango resource shifts the xpath and this fails.
-func TestBfdProfileCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
-		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="bfd1"/></result></response>`},
-	)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterBfdProfileTools(srv, d)
-	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      "panos_bfd_profile_create",
-		Arguments: map[string]any{"name": "bfd1", "mode": "active"},
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	if res.IsError {
-		t.Fatalf("create failed: %s", textContent(t, res))
-	}
-	var sawSet bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "set" {
-			sawSet = true
-			if xp := req.Get("xpath"); !strings.Contains(xp, "bfd-profile") {
-				t.Fatalf("create must target the bfd-profile xpath: %s", xp)
-			}
-		}
-	}
-	if !sawSet {
-		t.Fatal("no config set recorded")
-	}
-}
-
-// TestBfdProfileCreatePanoramaTemplateXpath drives a registered Panorama
-// create under a template and pins that the set request reaches the
-// bfd-profile node inside that template's config. Sabotage: dropping the
-// template branch of bfdProfileParts (or the template arg wiring) drops the
-// "template" segment and this fails.
-func TestBfdProfileCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
-		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
-		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="bfd1"/></result></response>`},
-	)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterBfdProfileTools(srv, d)
-	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      "panos_bfd_profile_create",
-		Arguments: map[string]any{"name": "bfd1", "template": "tmpl-a"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("panorama create failed: %s", textContent(t, res))
-	}
-	var sawSet bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "set" {
-			sawSet = true
-			xp := req.Get("xpath")
-			if !strings.Contains(xp, "bfd-profile") {
-				t.Fatalf("create must target the bfd-profile xpath: %s", xp)
-			}
-			if !strings.Contains(xp, "template") || !strings.Contains(xp, "tmpl-a") {
-				t.Fatalf("panorama create must resolve into the template scope: %s", xp)
-			}
-		}
-	}
-	if !sawSet {
-		t.Fatal("no config set recorded")
-	}
-}
-
-// TestBfdProfileNetScopeGating pins the two rejection paths the net-scope
-// resolver enforces for this family: Panorama with no template/template_stack,
-// and a template supplied against a firewall.
-func TestBfdProfileNetScopeGating(t *testing.T) {
-	t.Run("panorama without template errors", func(t *testing.T) {
-		d, _ := newTestDeps(t, "Panorama")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		RegisterBfdProfileTools(srv, d)
-		cs := connectInMemory(t, srv)
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-			Name: "panos_bfd_profile_list", Arguments: map[string]any{},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("Panorama list without a template must error")
-		}
-		if msg := textContent(t, res); !strings.Contains(msg, "template or template_stack is required on Panorama") {
-			t.Fatalf("wrong error for Panorama-no-template: %s", msg)
-		}
-	})
-	t.Run("template on firewall errors", func(t *testing.T) {
-		d, _ := newTestDeps(t, "PA-VM")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		RegisterBfdProfileTools(srv, d)
-		cs := connectInMemory(t, srv)
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-			Name: "panos_bfd_profile_list", Arguments: map[string]any{"template": "tmpl-a"},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("a template against a firewall must error")
-		}
-		if msg := textContent(t, res); !strings.Contains(msg, "template requires a Panorama connection") {
-			t.Fatalf("wrong error for template-on-firewall: %s", msg)
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Monitor profile (network/profiles/monitor)
-// ---------------------------------------------------------------------------
-
-// TestMonitorProfileCreateFirewallXpath drives a registered firewall create and
-// pins that the set request targets the monitor-profile node. Sabotage: pointing
-// monitorProfileParts at a different pango resource shifts the xpath and this fails.
-func TestMonitorProfileCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
-		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="mon1"/></result></response>`},
-	)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterMonitorProfileTools(srv, d)
-	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      "panos_monitor_profile_create",
-		Arguments: map[string]any{"name": "mon1", "action": "wait-recover"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("create failed: %s", textContent(t, res))
-	}
-	var sawSet bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "set" {
-			sawSet = true
-			if xp := req.Get("xpath"); !strings.Contains(xp, "monitor-profile") {
-				t.Fatalf("create must target the monitor-profile xpath: %s", xp)
-			}
-		}
-	}
-	if !sawSet {
-		t.Fatal("no config set recorded")
-	}
-}
-
-// TestMonitorProfileCreatePanoramaTemplateXpath drives a registered Panorama
-// create under a template and pins that the set request reaches the
-// monitor-profile node inside that template's config. Sabotage: dropping the
-// template branch of monitorProfileParts (or the template arg wiring) drops the
-// "template" segment and this fails.
-func TestMonitorProfileCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
-		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
-		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="mon1"/></result></response>`},
-	)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	RegisterMonitorProfileTools(srv, d)
-	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-		Name:      "panos_monitor_profile_create",
-		Arguments: map[string]any{"name": "mon1", "template": "tmpl-a"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("panorama create failed: %s", textContent(t, res))
-	}
-	var sawSet bool
-	for _, req := range f.Requests() {
-		if req.Get("action") == "set" {
-			sawSet = true
-			xp := req.Get("xpath")
-			if !strings.Contains(xp, "monitor-profile") {
-				t.Fatalf("create must target the monitor-profile xpath: %s", xp)
-			}
-			if !strings.Contains(xp, "template") || !strings.Contains(xp, "tmpl-a") {
-				t.Fatalf("panorama create must resolve into the template scope: %s", xp)
-			}
-		}
-	}
-	if !sawSet {
-		t.Fatal("no config set recorded")
-	}
-}
-
-// TestMonitorProfileNetScopeGating pins the two rejection paths the net-scope
-// resolver enforces for this family: Panorama with no template/template_stack,
-// and a template supplied against a firewall.
-func TestMonitorProfileNetScopeGating(t *testing.T) {
-	t.Run("panorama without template errors", func(t *testing.T) {
-		d, _ := newTestDeps(t, "Panorama")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		RegisterMonitorProfileTools(srv, d)
-		cs := connectInMemory(t, srv)
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-			Name: "panos_monitor_profile_list", Arguments: map[string]any{},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("Panorama list without a template must error")
-		}
-		if msg := textContent(t, res); !strings.Contains(msg, "template or template_stack is required on Panorama") {
-			t.Fatalf("wrong error for Panorama-no-template: %s", msg)
-		}
-	})
-	t.Run("template on firewall errors", func(t *testing.T) {
-		d, _ := newTestDeps(t, "PA-VM")
-		srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		RegisterMonitorProfileTools(srv, d)
-		cs := connectInMemory(t, srv)
-		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
-			Name: "panos_monitor_profile_list", Arguments: map[string]any{"template": "tmpl-a"},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("a template against a firewall must error")
-		}
-		if msg := textContent(t, res); !strings.Contains(msg, "template requires a Panorama connection") {
-			t.Fatalf("wrong error for template-on-firewall: %s", msg)
-		}
-	})
 }

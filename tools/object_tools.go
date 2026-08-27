@@ -105,9 +105,7 @@ func buildAddressEntry(in AddressInput) (*address.Entry, error) {
 	if in.FQDN != "" {
 		e.Fqdn = new(in.FQDN)
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	return e, nil
 }
 
@@ -140,9 +138,7 @@ func overlayAddress(e *address.Entry, in AddressInput) error {
 	if in.FQDN != "" {
 		e.IpNetmask, e.IpRange, e.Fqdn, e.IpWildcard = nil, nil, new(in.FQDN), nil
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.Tags != nil {
 		e.Tag = in.Tags
 	}
@@ -262,9 +258,7 @@ func buildAddressGroupEntry(in AddressGroupInput) (*address_group.Entry, error) 
 	} else {
 		e.Dynamic = &address_group.Dynamic{Filter: new(in.DynamicFilter)}
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	return e, nil
 }
 
@@ -293,9 +287,7 @@ func overlayAddressGroup(e *address_group.Entry, in AddressGroupInput) error {
 	if hasDynamic {
 		e.Static, e.Dynamic = nil, &address_group.Dynamic{Filter: new(in.DynamicFilter)}
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.Tags != nil {
 		e.Tag = in.Tags
 	}
@@ -405,15 +397,11 @@ func buildServiceProtocol(in ServiceInput) (*service.Protocol, error) {
 	switch in.Protocol {
 	case "tcp":
 		p := &service.ProtocolTcp{Port: new(in.Port)}
-		if in.SourcePort != "" {
-			p.SourcePort = new(in.SourcePort)
-		}
+		setStrPtr(&p.SourcePort, in.SourcePort)
 		return &service.Protocol{Tcp: p}, nil
 	case "udp":
 		p := &service.ProtocolUdp{Port: new(in.Port)}
-		if in.SourcePort != "" {
-			p.SourcePort = new(in.SourcePort)
-		}
+		setStrPtr(&p.SourcePort, in.SourcePort)
 		return &service.Protocol{Udp: p}, nil
 	default:
 		return nil, fmt.Errorf("protocol must be \"tcp\" or \"udp\", got %q", in.Protocol)
@@ -432,9 +420,7 @@ func buildServiceEntry(in ServiceInput) (*service.Entry, error) {
 		return nil, err
 	}
 	e := &service.Entry{Name: in.Name, Tag: in.Tags, Protocol: proto}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	return e, nil
 }
 
@@ -462,9 +448,7 @@ func overlayService(e *service.Entry, in ServiceInput) error {
 		carryServiceOverride(proto, e.Protocol)
 		e.Protocol = proto
 	}
-	if in.Description != "" {
-		e.Description = new(in.Description)
-	}
+	setStrPtr(&e.Description, in.Description)
 	if in.Tags != nil {
 		e.Tag = in.Tags
 	}
@@ -683,12 +667,8 @@ func buildTagEntry(in TagInput) (*admintag.Entry, error) {
 		return nil, errors.New("name is required")
 	}
 	e := &admintag.Entry{Name: in.Name}
-	if in.Color != "" {
-		e.Color = new(in.Color)
-	}
-	if in.Comments != "" {
-		e.Comments = new(in.Comments)
-	}
+	setStrPtr(&e.Color, in.Color)
+	setStrPtr(&e.Comments, in.Comments)
 	return e, nil
 }
 
@@ -700,12 +680,8 @@ func buildTagEntry(in TagInput) (*admintag.Entry, error) {
 //
 //nolint:gocritic // hugeParam: In is by value to satisfy the generic builder contract; see buildAddressEntry.
 func overlayTag(e *admintag.Entry, in TagInput) error {
-	if in.Color != "" {
-		e.Color = new(in.Color)
-	}
-	if in.Comments != "" {
-		e.Comments = new(in.Comments)
-	}
+	setStrPtr(&e.Color, in.Color)
+	setStrPtr(&e.Comments, in.Comments)
 	return nil
 }
 

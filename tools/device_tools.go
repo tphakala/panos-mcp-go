@@ -477,12 +477,8 @@ func applyZoneNetwork(e *zone.Entry, in *ZoneWriteInput) error {
 		n = &zone.Network{}
 		e.Network = n
 	}
-	if in.ZoneProtectionProfile != "" {
-		n.ZoneProtectionProfile = new(in.ZoneProtectionProfile)
-	}
-	if in.LogSetting != "" {
-		n.LogSetting = new(in.LogSetting)
-	}
+	setStrPtr(&n.ZoneProtectionProfile, in.ZoneProtectionProfile)
+	setStrPtr(&n.LogSetting, in.LogSetting)
 	if in.EnablePacketBufferProtection != nil {
 		n.EnablePacketBufferProtection = in.EnablePacketBufferProtection
 	}

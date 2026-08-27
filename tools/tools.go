@@ -359,6 +359,12 @@ const (
 	// interfaceKey is the shared summary map key for an interface name, used by
 	// the op tools and the VPN local-address projections.
 	interfaceKey = "interface"
+	// destinationKey is the shared summary map key for a destination prefix, used
+	// by the static route projections.
+	destinationKey = "destination"
+	// valueKey is the shared summary map key for a scalar value, used by the
+	// static route next-hop projection.
+	valueKey = "value"
 )
 
 // replaceListOrRejectEmpty applies a replace-or-keep overlay for a list field
@@ -687,11 +693,15 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterTemplateVariableTools(s, d)
 	// Tier 4: L3 network configuration (net-scoped to firewall, template, or template stack).
 	RegisterEthernetInterfaceTools(s, d)
+	RegisterEthernetSubinterfaceTools(s, d)
 	RegisterAggregateInterfaceTools(s, d)
+	RegisterAggregateSubinterfaceTools(s, d)
 	RegisterLoopbackInterfaceTools(s, d)
 	RegisterVlanInterfaceTools(s, d)
 	RegisterTunnelInterfaceTools(s, d)
 	RegisterVirtualRouterTools(s, d)
+	RegisterStaticRouteV4Tools(s, d)
+	RegisterStaticRouteV6Tools(s, d)
 	RegisterLogicalRouterTools(s, d)
 	RegisterInterfaceManagementProfileTools(s, d)
 	RegisterLldpProfileTools(s, d)
@@ -713,5 +723,9 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterLocalUserTools(s, d)
 	RegisterSamlIdpProfileTools(s, d)
 	RegisterMfaProfileTools(s, d)
+	// SSL/TLS and certificate profiles (profile-scoped: firewall shared or
+	// Panorama shared/panorama/template/template_stack).
+	RegisterSslTlsProfileTools(s, d)
+	RegisterCertificateProfileTools(s, d)
 	RegisterOpTools(s, d)
 }
