@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/xml"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -277,20 +278,22 @@ func TestAuthProfileLockoutAndMfa(t *testing.T) {
 	}
 }
 
-// TestAuthProfileSummaryProjectsActiveBranch pins authProfileMethodDetail for
-// EVERY modeled branch, and pins that its arm order matches
-// authProfileMethodString. Both matter: pango does not enforce the method
+// TestAuthProfileSummaryProjectsActiveBranch pins authProfileMethodDetail's
+// per-field projection for every modeled branch. It does not pin the arm order;
+// see the note below. Order matters here because pango does not enforce the method
 // choice, so an entry read back from a device can carry two branches, and if the
 // two switches disagree a summary reports one method name beside another
 // branch's detail. A leading combined case for the three field-free branches did
 // exactly that, reporting "kerberos" with an empty detail.
 //
-// Sabotage: delete any line from any arm of authProfileMethodDetail, or delete
-// the method_detail attachment in authProfileSummary, and a subtest goes red.
+// Sabotage: delete any detail[...] or put* line from any arm of
+// authProfileMethodDetail, or delete the method_detail attachment in
+// authProfileSummary, and a subtest goes red. Deleting a bare case line instead
+// is caught by TestAuthProfileMethodPrecedenceExhaustive, not here.
 //
 // This test does NOT pin the arm ORDER on its own. It carries one two-branch
 // case, so it catches only a reordering that crosses the kerberos and
-// local-database pair; most other permutations stay green here. The order is
+// local-database pair; every other permutation stays green here. The order is
 // pinned exhaustively by TestAuthProfileMethodPrecedenceExhaustive below, which
 // is what makes the invariant structural rather than comment-enforced.
 func TestAuthProfileSummaryProjectsActiveBranch(t *testing.T) {
@@ -369,13 +372,16 @@ func TestAuthProfileSummaryProjectsActiveBranch(t *testing.T) {
 // inspection were both wrong: the first left them in different orders, and the
 // fix for that collapsed the three field-free branches into one leading case,
 // which promoted local-database and none above kerberos and ldap. Neither error
-// was visible to a hand-written table, and pango does not enforce the choice, so
-// a device really can hand back an entry with several branches set.
+// was visible to the tests that existed at the time, and pango does not enforce
+// the choice, so a device really can hand back an entry with several branches
+// set.
 //
 // The check is by construction rather than by example: for each subset it
 // compares the detail against the detail of a method carrying ONLY the named
-// branch. Any reordering of authProfileMethodDetail's arms relative to
-// authProfileMethodString turns some subset red.
+// branch. Every reordering of authProfileMethodDetail's arms relative to
+// authProfileMethodString turns some subset red, except transposing
+// local-database and none, which is undetectable because both project nothing
+// and is why they may share an arm.
 func TestAuthProfileMethodPrecedenceExhaustive(t *testing.T) {
 	// Ordered as authProfileMethodString evaluates them.
 	branches := []struct {
@@ -410,6 +416,15 @@ func TestAuthProfileMethodPrecedenceExhaustive(t *testing.T) {
 			}
 		}
 		return m
+	}
+
+	// Tie the list to the struct. Without this, a ninth pango branch wired
+	// inconsistently into the two switches leaves both tests green, because
+	// neither ever looks at authprofile.Method's actual field set.
+	if got := reflect.TypeFor[authprofile.Method]().NumField(); got != len(branches)+2 {
+		t.Fatalf("authprofile.Method has %d fields, so it no longer carries exactly the %d branches "+
+			"this test enumerates plus Misc and MiscAttributes; add the new branch here, to "+
+			"authProfileMethodString and to authProfileMethodDetail", got, len(branches))
 	}
 
 	for mask := 1; mask < 1<<len(branches); mask++ {

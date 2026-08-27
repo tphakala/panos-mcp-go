@@ -372,11 +372,12 @@ func authProfileMethodDetail(m *authprofile.Method) map[string]any {
 	// several branches; matching the order is what keeps method and method_detail
 	// describing the same one. Collapsing the field-free branches into a single
 	// leading case would reorder them ahead of kerberos and ldap and reintroduce
-	// exactly that disagreement, which is a bug this file has already shipped
-	// once. local-database and none share one arm only because they are adjacent
-	// in that order and both project nothing; give either a modeled field and
-	// they must be split. TestAuthProfileMethodPrecedenceExhaustive checks every
-	// one of the 255 branch combinations, so a reordering cannot pass unnoticed.
+	// exactly that disagreement, which this file got wrong once already.
+	// local-database and none share one arm only because they are adjacent in
+	// that order and both project nothing; give either a modeled field and they
+	// must be split. TestAuthProfileMethodPrecedenceExhaustive checks all 255
+	// branch combinations, so any reordering except transposing those two
+	// adjacent empty branches turns some combination red.
 	switch {
 	case m.Cloud != nil:
 		// No modeled fields to project.
