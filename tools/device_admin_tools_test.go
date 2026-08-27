@@ -379,30 +379,22 @@ func TestAdministratorCustomRolePartialUpdatePreserves(t *testing.T) {
 	})
 }
 
-// TestAdministratorRoleSwitchClearsPerVsysBranches pins that the two role
-// branches this server does not offer as inputs are still cleared on a switch.
-// They are siblings of the rest, so leaving one set beside a newly chosen role
-// is exactly the two-branch config PAN-OS rejects.
+// TestAdministratorRoleSwitchClearsPerVsysBranches pins that BOTH role branches
+// this server does not offer as inputs are cleared on a switch. They are
+// siblings of the rest, so leaving one set beside a newly chosen role is exactly
+// the two-branch config the clear exists to prevent. Naming only one of them
+// here would leave the other's clear line dead to the suite.
 func TestAdministratorRoleSwitchClearsPerVsysBranches(t *testing.T) {
-	e := &administrator.Entry{
-		Name: "admin1",
-		Permissions: &administrator.Permissions{
-			RoleBased: &administrator.PermissionsRoleBased{
-				Vsysadmin: []administrator.PermissionsRoleBasedVsysadmin{
-					{Name: "localhost.localdomain", Vsys: []string{"vsys1"}},
-				},
-			},
-		},
-	}
-	if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", Role: new(adminRoleSuperuser)}); err != nil {
-		t.Fatal(err)
-	}
-	rb := e.Permissions.RoleBased
-	if len(rb.Vsysadmin) != 0 {
-		t.Errorf("switching roles must clear the per-vsys admin branch, got %+v", rb.Vsysadmin)
-	}
-	if rb.Superuser == nil {
-		t.Error("the chosen role must be set")
+	for _, role := range []string{adminRoleVsysAdmin, adminRoleVsysReader} {
+		t.Run(role, func(t *testing.T) {
+			e := storedRoleBranch(role)
+			if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", Role: new(adminRoleSuperuser)}); err != nil {
+				t.Fatal(err)
+			}
+			if got := setRoleBranches(e); len(got) != 1 || got[0] != adminRoleSuperuser {
+				t.Fatalf("switching from %s must leave only the chosen role, got %v", role, got)
+			}
+		})
 	}
 }
 

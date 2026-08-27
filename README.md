@@ -521,7 +521,7 @@ These decryption-support profiles resolve to the shared scope on a firewall (the
 
 ### Administrators and password profiles
 
-Administrators and password profiles live under `mgt-config`, which is device-wide rather than per-vsys. On a firewall they resolve to the device's own management configuration and no scope field is needed. On Panorama choose `panorama` for Panorama's own administrators, or a `template` or `template_stack` to push them to managed firewalls. A password hash is write-only and is never returned; `has_password_hash` reports only whether one is set, and `has_public_key` does the same for an SSH public key this server does not otherwise touch. An administrator carries either a built-in `role` or a custom `role_profile`, never both.
+Administrators and password profiles live under `mgt-config`, which is device-wide rather than per-vsys. On a firewall they resolve to the device's own management configuration and no scope field is needed. On Panorama choose `panorama` for Panorama's own administrators, or a `template` or `template_stack` to push them to managed firewalls. A password hash is write-only and is never returned; `has_password_hash` reports only whether one is set, and `has_public_key` does the same for an SSH public key this server does not otherwise touch. An administrator carries either a built-in `role` or a custom `role_profile`, never both. A get can also report `vsysadmin` or `vsysreader`, the two per-vsys roles PAN-OS supports but these tools do not set; switching such an administrator to another role clears its per-vsys grants.
 
 | Tool | Mode | Description |
 | --- | --- | --- |

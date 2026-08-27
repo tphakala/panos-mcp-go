@@ -15,19 +15,20 @@ import (
 // MCP schema), a resolver, and thin handler wrappers over the generic *Core
 // functions in tools.go.
 //
-// The resolvers stay separate on purpose. They are not four copies of one
-// function: the input structs expose different tiers (the device scope has a
-// vsys, the profile scope has a panorama scope, the net scope has neither), the
-// firewall rejection messages are per-field in the net scope but combined in the
-// device scope, and the cross-tier rules genuinely differ (the profile scope
-// rejects a template combined with shared, while the device scope resolves it to
-// the template). Merging them would either change tool input schemas, which are
-// this server's public API, or change behaviour no test pins. Issue #98 allows
-// that documented decision.
+// The resolvers stay separate on purpose. They are not copies of one function:
+// the input structs expose different tiers (the device scope has a vsys, the
+// profile scope has a panorama scope, the net scope has neither), the firewall
+// rejection messages are per-field in the net scope but combined in the device
+// scope, and the cross-tier rules differ. On that last point the device scope is
+// the outlier: given a template combined with shared it resolves to the
+// template, where the profile and management scopes reject the combination.
+// That divergence is pinned by a test rather than settled; see issue #98.
+// Merging the resolvers would either change tool input schemas, which are this
+// server's public API, or change behaviour no test pins.
 //
 // What IS shared lives here: the scope accessors that let a handler pull a scope
-// off any input that embeds one, and the Panorama template tier that the device
-// and profile scopes implement identically.
+// off any input that embeds one, and the Panorama template tier that several of
+// the scopes implement the same way.
 
 // The scope accessor constraints. Every family input embeds its scope struct, so
 // the single method defined on each scope struct is promoted to all of them and

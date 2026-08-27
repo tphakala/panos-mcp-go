@@ -172,9 +172,9 @@ const (
 	adminRolePanoramaAdmin = "panorama-admin"
 	adminRoleDeviceAdmin   = "deviceadmin"
 	adminRoleDeviceReader  = "devicereader"
-	// Reported by a get, never accepted as input: pango models these as
-	// per-vsys member lists rather than a flag, and this server does not offer
-	// them as a role choice.
+	// Reported by a get, never accepted as input: pango models each of these as
+	// a list of per-device entries carrying their own vsys list, a shape
+	// AdministratorInput does not express.
 	adminRoleVsysAdmin  = "vsysadmin"
 	adminRoleVsysReader = "vsysreader"
 )
@@ -195,7 +195,7 @@ type AdministratorInput struct {
 	AuthenticationProfile *string  `json:"authentication_profile,omitzero" jsonschema:"Authentication profile name used to authenticate this administrator"`
 	PasswordProfile       *string  `json:"password_profile,omitzero" jsonschema:"Password profile name applied to this administrator (see panos_password_profile_list)"`
 	ClientCertificateOnly *bool    `json:"client_certificate_only,omitzero" jsonschema:"Authenticate with a client certificate only, without a password"`
-	Role                  *string  `json:"role,omitzero" jsonschema:"Built-in role: superuser, superreader, panorama-admin, deviceadmin or devicereader. Mutually exclusive with role_profile: setting this clears a custom role."`
+	Role                  *string  `json:"role,omitzero" jsonschema:"Built-in role: superuser, superreader, panorama-admin, deviceadmin or devicereader. Mutually exclusive with role_profile: setting this clears a custom role, and it also clears a per-vsys vsysadmin or vsysreader grant, which a get can report but these tools cannot set."`
 	RoleProfile           *string  `json:"role_profile,omitzero" jsonschema:"Custom admin-role profile name. Mutually exclusive with role: setting this clears a built-in role."`
 	RoleVsys              []string `json:"role_vsys,omitzero" jsonschema:"vsys the custom role profile applies to. Only meaningful with role_profile."`
 }
@@ -213,9 +213,12 @@ var builtinAdminRoles = map[string]struct{}{
 // clearRoleBased blanks every role branch pango models under role-based
 // permissions. PAN-OS role permissions are exactly-one, so the caller sets the
 // branch it wants immediately after. Vsysadmin and Vsysreader are branches this
-// server does not offer as inputs, but they are siblings of the rest: leaving
-// one set beside a newly chosen role is the config PAN-OS rejects, so switching
-// a per-vsys administrator to any other role must clear them too.
+// server does not offer as inputs, but they are siblings of the rest under the
+// same role-based node, so switching a per-vsys administrator to another role
+// clears them too. NOT MEASURED against a device: pango models all eight
+// branches as independent optional fields, so the exactly-one rule is PAN-OS's,
+// not the SDK's. Clearing is the conservative reading, and it means a role
+// switch discards the per-vsys grants, which these tools cannot recreate.
 func clearRoleBased(rb *administrator.PermissionsRoleBased) {
 	rb.Superuser = nil
 	rb.Superreader = nil
@@ -418,7 +421,7 @@ func RegisterAdministratorTools(s *mcp.Server, d *Deps) {
 	}, mgtCreateHandler(d, "panos_administrator_create", svc, parts, buildAdministrator, administratorSummary, withSecrets(administratorSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_administrator_update",
-		Description: "Update an administrator: read-modify-write, only provided fields change, and an omitted password_hash keeps the stored value. Roles are mutually exclusive, so providing role clears a custom role and providing role_profile or role_vsys clears a built-in one. Run panos_commit to apply.",
+		Description: "Update an administrator: read-modify-write, only provided fields change, and an omitted password_hash keeps the stored value. Roles are mutually exclusive, so providing role clears a custom role and providing role_profile or role_vsys clears a built-in one. If the administrator holds a per-vsys role (vsysadmin or vsysreader), switching it discards those per-vsys grants, which these tools cannot recreate. Run panos_commit to apply.",
 		Annotations: updateTool("Update administrator"),
 	}, mgtUpdateHandler(d, "panos_administrator_update", svc, parts,
 		func(in AdministratorInput) string { return in.Name }, overlayAdministrator, administratorSummary, withSecrets(administratorSecrets)))

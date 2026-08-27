@@ -115,9 +115,27 @@ func TestResolveMgtScopeRejectsPanoramaWithTemplate(t *testing.T) {
 	}
 }
 
-// TestMgtScopeGatingThroughTool pins the firewall rejection through a REGISTERED
-// tool rather than the resolver alone, so a miswired handler (a family wired to
-// the wrong resolver, or a scope never reaching it) turns this red.
+// TestPasswordProfileFirewallScope pins the password-profile family's own
+// firewall wiring: its parts must build the device's mgt-config location, not a
+// Panorama one. Only the administrator family's parts are exercised by the
+// resolver tests, so without this a wrong constructor here is invisible.
+func TestPasswordProfileFirewallScope(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM")
+	loc, err := resolveMgtScope(d, MgtScopeInput{}, passwordProfileParts())
+	if err != nil {
+		t.Fatalf("firewall password profile scope: %v", err)
+	}
+	if loc.Ngfw == nil {
+		t.Fatalf("password profiles must resolve to the device mgt-config on a firewall: %+v", loc)
+	}
+	if loc.Panorama != nil || loc.Template != nil || loc.TemplateStack != nil {
+		t.Fatalf("a bare firewall request must reach no Panorama location: %+v", loc)
+	}
+}
+
+// TestMgtScopeGatingThroughTool pins that a registered management-plane tool
+// actually reaches the resolver, so its rejection surfaces as a tool error
+// rather than being lost on the way in.
 func TestMgtScopeGatingThroughTool(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
