@@ -516,7 +516,7 @@ These decryption-support profiles resolve to the shared scope on a firewall (the
 | `panos_certificate_profile_list` | read-only | List certificate profiles at a location. |
 | `panos_certificate_profile_get` | read-only | Get one certificate profile (domain, username fields, revocation settings, CA list). |
 | `panos_certificate_profile_create` | write | Create a certificate profile in the candidate config. |
-| `panos_certificate_profile_update` | write | Update a certificate profile: read-modify-write; a provided CA list replaces it fully. |
+| `panos_certificate_profile_update` | write | Update a certificate profile: read-modify-write; a provided CA list is merged by name. |
 | `panos_certificate_profile_delete` | write | Delete a certificate profile from the candidate config. |
 
 ## Example MCP client configuration

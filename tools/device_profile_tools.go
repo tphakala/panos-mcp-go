@@ -224,9 +224,9 @@ type CertificateAuthorityInput struct {
 }
 
 // CertificateProfileInput is the input for the certificate profile create and
-// update tools. The CA list, when provided, replaces the profile's CA list
-// fully; when omitted it is left untouched. All certificate references are
-// names, not secret blobs.
+// update tools. The CA list, when provided, is merged onto the stored list by
+// name and a CA absent from it is removed; when omitted the list is left
+// untouched. All certificate references are names, not secret blobs.
 type CertificateProfileInput struct {
 	ProfileScopeInput
 	Name                    string  `json:"name" jsonschema:"Certificate profile name"`
@@ -247,16 +247,25 @@ type CertificateProfileInput struct {
 	CrlReceiveTimeout        *int64 `json:"crl_receive_timeout,omitzero" jsonschema:"CRL receive timeout in seconds"`
 	OcspReceiveTimeout       *int64 `json:"ocsp_receive_timeout,omitzero" jsonschema:"OCSP receive timeout in seconds"`
 
-	CertificateAuthorities []CertificateAuthorityInput `json:"certificate_authorities,omitzero" jsonschema:"CA certificate list; a provided list replaces the profile's CA list fully, an omitted one leaves it unchanged"`
+	CertificateAuthorities []CertificateAuthorityInput `json:"certificate_authorities,omitzero" jsonschema:"CA certificate list, merged by name; a CA absent from a provided list is removed, and an omitted list leaves the CA list unchanged"`
 }
 
-// buildCertificateAuthorities maps the input CA list to pango's CA slice in
-// order, preserving the caller's ordering.
-func buildCertificateAuthorities(in []CertificateAuthorityInput) []certprof.Certificate {
+// certificateAuthorities maps the input CA list to pango's CA slice in order,
+// preserving the caller's ordering and merging each entry by name onto the
+// stored one. Seeding from the existing entry keeps whatever this server does
+// not model on a CA (its Misc and MiscAttributes XML) instead of dropping it,
+// matching the server-list builders in server_profile_tools.go. A CA absent
+// from the input is removed.
+func certificateAuthorities(in []CertificateAuthorityInput, existing []certprof.Certificate) []certprof.Certificate {
+	prev := make(map[string]certprof.Certificate, len(existing))
+	for _, c := range existing {
+		prev[c.Name] = c
+	}
 	cas := make([]certprof.Certificate, 0, len(in))
 	for i := range in {
 		ca := &in[i]
-		c := certprof.Certificate{Name: ca.Name}
+		c := prev[ca.Name]
+		c.Name = ca.Name
 		setPtr(&c.DefaultOcspUrl, ca.DefaultOcspUrl)
 		setPtr(&c.OcspVerifyCertificate, ca.OcspVerifyCertificate)
 		setPtr(&c.TemplateName, ca.TemplateName)
@@ -268,9 +277,10 @@ func buildCertificateAuthorities(in []CertificateAuthorityInput) []certprof.Cert
 // applyCertificateProfile overlays the managed fields onto e, applying only what
 // the caller provided. Shared by build and overlay; it never rebuilds e, so an
 // unmodeled Misc / MiscAttributes and any scalar the caller did not touch
-// round-trip untouched. A non-nil CertificateAuthorities replaces e.Certificate
-// fully; a nil one preserves the existing CA list. UsernameField is allocated on
-// demand.
+// round-trip untouched. A non-nil CertificateAuthorities is merged onto
+// e.Certificate by name, so a CA absent from the list is removed while a CA that
+// stays keeps its unmodeled XML; a nil one preserves the existing CA list.
+// UsernameField is allocated on demand.
 func applyCertificateProfile(e *certprof.Entry, in *CertificateProfileInput) {
 	setPtr(&e.Domain, in.Domain)
 	setPtr(&e.UseCrl, in.UseCrl)
@@ -291,7 +301,7 @@ func applyCertificateProfile(e *certprof.Entry, in *CertificateProfileInput) {
 		setPtr(&e.UsernameField.SubjectAlt, in.UsernameFieldSubjectAlt)
 	}
 	if in.CertificateAuthorities != nil {
-		e.Certificate = buildCertificateAuthorities(in.CertificateAuthorities)
+		e.Certificate = certificateAuthorities(in.CertificateAuthorities, e.Certificate)
 	}
 }
 
@@ -373,7 +383,7 @@ func RegisterCertificateProfileTools(s *mcp.Server, d *Deps) {
 	}, profileCreateHandler(d, "panos_certificate_profile_create", svc, parts, scope, buildCertificateProfile, certificateProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_certificate_profile_update",
-		Description: "Update a certificate profile: read-modify-write, only provided fields change. A provided certificate_authorities list replaces the CA list fully. Run panos_commit to apply.",
+		Description: "Update a certificate profile: read-modify-write, only provided fields change. A provided certificate_authorities list is merged by name, and a CA absent from it is removed. Run panos_commit to apply.",
 		Annotations: updateTool("Update certificate profile"),
 	}, profileUpdateHandler(d, "panos_certificate_profile_update", svc, parts, scope,
 		func(in CertificateProfileInput) string { return in.Name }, overlayCertificateProfile, certificateProfileSummary))
