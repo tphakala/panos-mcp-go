@@ -29,10 +29,12 @@ func storedLdapProfile() *authprofile.Entry {
 // family: PAN-OS allows exactly one child under <method> and pango enforces
 // nothing, so the overlay must clear every sibling when it sets a branch.
 //
-// Sabotage: delete either of the two clearing assignment lines in
-// applyAuthProfileMethod (the ones setting m.Cloud, m.Kerberos, m.Ldap,
-// m.LocalDatabase and m.None, m.Radius, m.SamlIdp, m.Tacplus to nil) and the
+// Sabotage: delete the first clearing assignment in applyAuthProfileMethod (the
+// one setting m.Cloud, m.Kerberos, m.Ldap and m.LocalDatabase to nil) and the
 // stored LDAP branch survives beside the new RADIUS branch, turning this red.
+// The second clearing assignment is pinned separately by
+// TestAuthProfileSwitchFromLateBranchClearsIt, because a switch away from LDAP
+// never exercises it.
 func TestAuthProfileMethodSwitchClearsSiblings(t *testing.T) {
 	e := storedLdapProfile()
 	in := AuthProfileInput{Name: "ap1", MethodRadius: &AuthMethodRadiusInput{ServerProfile: new("rad1")}}
@@ -71,6 +73,45 @@ func TestAuthProfileSwitchAwayFromCloudClearsIt(t *testing.T) {
 	}
 	if e.Method.Ldap == nil {
 		t.Fatal("ldap branch not set")
+	}
+}
+
+// TestAuthProfileSwitchFromLateBranchClearsIt covers the second of the two
+// clearing assignments. Every other switch test starts from LDAP, which the
+// first assignment clears, so without this the line nilling m.None, m.Radius,
+// m.SamlIdp and m.Tacplus is not pinned by anything and could be deleted with
+// the suite still green.
+//
+// Sabotage: delete the assignment setting m.None, m.Radius, m.SamlIdp and
+// m.Tacplus to nil in applyAuthProfileMethod and each subtest goes red.
+func TestAuthProfileSwitchFromLateBranchClearsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stored *authprofile.Method
+		check  func(*authprofile.Method) bool
+	}{
+		{"radius", &authprofile.Method{Radius: &authprofile.MethodRadius{ServerProfile: new("rad1")}},
+			func(m *authprofile.Method) bool { return m.Radius == nil }},
+		{"tacplus", &authprofile.Method{Tacplus: &authprofile.MethodTacplus{ServerProfile: new("tac1")}},
+			func(m *authprofile.Method) bool { return m.Tacplus == nil }},
+		{"saml idp", &authprofile.Method{SamlIdp: &authprofile.MethodSamlIdp{ServerProfile: new("idp1")}},
+			func(m *authprofile.Method) bool { return m.SamlIdp == nil }},
+		{"none", &authprofile.Method{None: &authprofile.MethodNone{}},
+			func(m *authprofile.Method) bool { return m.None == nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &authprofile.Entry{Name: "ap1", Method: tc.stored}
+			in := AuthProfileInput{Name: "ap1", MethodLdap: &AuthMethodLdapInput{ServerProfile: new("ldap1")}}
+			if err := overlayAuthProfile(e, in); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.check(e.Method) {
+				t.Fatalf("the stored %s branch must be cleared when ldap is selected: %+v", tc.name, e.Method)
+			}
+			if e.Method.Ldap == nil {
+				t.Fatal("the ldap branch must be set")
+			}
+		})
 	}
 }
 
