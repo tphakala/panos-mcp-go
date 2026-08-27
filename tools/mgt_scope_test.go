@@ -3,6 +3,8 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TestResolveMgtScopeFirewall pins the firewall branch of resolveMgtScope. A
@@ -92,21 +94,47 @@ func TestResolveMgtScopeErrors(t *testing.T) {
 	}
 }
 
-// TestMgtScopeGating pins that the management-plane tools reject a
-// Panorama-only scope on a firewall through the registered handler, not only
-// through the resolver in isolation.
-func TestMgtScopeGating(t *testing.T) {
-	d, _ := newTestDeps(t, "PA-VM")
-	parts := passwordProfileParts()
+// TestResolveMgtScopeRejectsPanoramaWithTemplate pins that naming both panorama
+// and a template tier is an error rather than a precedence question. Resolving
+// it silently would write the entry into the template, which pushes it to every
+// managed firewall using that template, while the caller believes it landed on
+// Panorama. The profile scope rejects the same combination.
+func TestResolveMgtScopeRejectsPanoramaWithTemplate(t *testing.T) {
+	d, _ := newTestDeps(t, "Panorama")
+	parts := administratorParts()
 
-	if _, err := resolveMgtScope(d, MgtScopeInput{Template: "t1"}, parts); err == nil {
-		t.Fatal("a template on a firewall must be rejected for password profiles too")
+	for _, in := range []MgtScopeInput{
+		{Panorama: true, Template: "t1"},
+		{Panorama: true, TemplateStack: "s1"},
+	} {
+		if _, err := resolveMgtScope(d, in, parts); err == nil {
+			t.Errorf("%+v must be rejected, not silently resolved to the template", in)
+		} else if !strings.Contains(err.Error(), "cannot be combined with panorama") {
+			t.Errorf("%+v: unexpected error %q", in, err)
+		}
 	}
-	loc, err := resolveMgtScope(d, MgtScopeInput{}, parts)
+}
+
+// TestMgtScopeGatingThroughTool pins the firewall rejection through a REGISTERED
+// tool rather than the resolver alone, so a miswired handler (a family wired to
+// the wrong resolver, or a scope never reaching it) turns this red.
+func TestMgtScopeGatingThroughTool(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterPasswordProfileTools(srv, d)
+	cs := connectInMemory(t, srv)
+
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      "panos_password_profile_list",
+		Arguments: map[string]any{"template": "t1"},
+	})
 	if err != nil {
-		t.Fatalf("firewall password profile scope: %v", err)
+		t.Fatal(err)
 	}
-	if loc.Ngfw == nil {
-		t.Fatalf("password profiles must resolve to the device mgt-config on a firewall: %+v", loc)
+	if !res.IsError {
+		t.Fatal("a template on a firewall must surface as a tool error")
+	}
+	if out := textContent(t, res); !strings.Contains(out, "require a Panorama connection") {
+		t.Errorf("unexpected error text: %q", out)
 	}
 }

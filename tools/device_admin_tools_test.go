@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -83,6 +84,19 @@ func TestPasswordProfileSummaryOmitsAbsentSettings(t *testing.T) {
 	}
 	if _, present := m["expiration_period"]; present {
 		t.Errorf("an absent setting must be omitted, not coerced: %+v", m)
+	}
+
+	// The absence check above passes just as happily if the projection were
+	// deleted outright, so pin that a populated setting IS reported.
+	set, ok := passwordProfileSummary(&password.Entry{
+		Name:           "pp1",
+		PasswordChange: &password.PasswordChange{ExpirationPeriod: new(int64(90))},
+	}).(map[string]any)
+	if !ok {
+		t.Fatal("summary must be a map")
+	}
+	if set["expiration_period"] != int64(90) {
+		t.Errorf("a set value must be reported, got %v", set["expiration_period"])
 	}
 }
 
@@ -257,6 +271,21 @@ func TestAdministratorSummaryOmitsAbsentToggle(t *testing.T) {
 	if m["has_password_hash"] != false {
 		t.Error("has_password_hash must be false when no hash is stored")
 	}
+
+	// Same reasoning as the password profile: an absence assertion alone would
+	// survive deleting the projection, so pin the present-false and present-true
+	// readings that make this field tri-state rather than boolean.
+	for _, tc := range []struct{ stored, want bool }{{stored: false}, {stored: true, want: true}} {
+		set, ok := administratorSummary(&administrator.Entry{
+			Name: "admin1", ClientCertificateOnly: new(tc.stored),
+		}).(map[string]any)
+		if !ok {
+			t.Fatal("summary must be a map")
+		}
+		if set["client_certificate_only"] != tc.want {
+			t.Errorf("a stored %v must be reported as %v, got %v", tc.stored, tc.want, set["client_certificate_only"])
+		}
+	}
 }
 
 // TestAdministratorCreateRedactsPasswordHashOnError drives the create tool
@@ -286,6 +315,144 @@ func TestAdministratorCreateRedactsPasswordHashOnError(t *testing.T) {
 	out := textContent(t, res)
 	if strings.Contains(out, phash) {
 		t.Fatalf("the submitted password hash leaked into the tool error: %q", out)
+	}
+	if !strings.Contains(out, redactedPlaceholder) {
+		t.Fatalf("expected the redaction placeholder in the error: %q", out)
+	}
+}
+
+// TestAdministratorCustomRolePartialUpdatePreserves pins the read-modify-write
+// contract INSIDE the custom role branch. The branch has two fields and either
+// one alone triggers it, so building it fresh silently dropped whichever the
+// caller did not name, along with the branch's own unmodeled XML. That
+// contradicted the tool's "only provided fields change" description in the one
+// place a caller could not see it.
+func TestAdministratorCustomRolePartialUpdatePreserves(t *testing.T) {
+	stored := func() *administrator.Entry {
+		return &administrator.Entry{
+			Name: "admin1",
+			Permissions: &administrator.Permissions{
+				RoleBased: &administrator.PermissionsRoleBased{
+					Custom: &administrator.PermissionsRoleBasedCustom{
+						Profile:        new("ReadOnlyRole"),
+						Vsys:           []string{"vsys1", "vsys2"},
+						Misc:           []generic.Xml{{}},
+						MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "custom-uuid"}},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("naming only role_vsys keeps the role profile", func(t *testing.T) {
+		e := stored()
+		if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", RoleVsys: []string{"vsys1", "vsys2", "vsys3"}}); err != nil {
+			t.Fatal(err)
+		}
+		c := e.Permissions.RoleBased.Custom
+		if strVal(c.Profile) != "ReadOnlyRole" {
+			t.Errorf("the stored role profile must survive, got %q", strVal(c.Profile))
+		}
+		if len(c.Vsys) != 3 {
+			t.Errorf("the provided vsys list must be applied, got %v", c.Vsys)
+		}
+		if len(c.Misc) != 1 || len(c.MiscAttributes) != 1 {
+			t.Errorf("the custom branch's unmodeled XML must survive, got %+v", c)
+		}
+	})
+
+	t.Run("naming only role_profile keeps the vsys scoping", func(t *testing.T) {
+		e := stored()
+		if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", RoleProfile: new("ReadWriteRole")}); err != nil {
+			t.Fatal(err)
+		}
+		c := e.Permissions.RoleBased.Custom
+		if strVal(c.Profile) != "ReadWriteRole" {
+			t.Errorf("the provided role profile must be applied, got %q", strVal(c.Profile))
+		}
+		if len(c.Vsys) != 2 {
+			t.Errorf("the stored vsys scoping must survive, got %v", c.Vsys)
+		}
+		if len(c.Misc) != 1 {
+			t.Errorf("the custom branch's unmodeled XML must survive, got %+v", c.Misc)
+		}
+	})
+}
+
+// TestAdministratorRoleSwitchClearsPerVsysBranches pins that the two role
+// branches this server does not offer as inputs are still cleared on a switch.
+// They are siblings of the rest, so leaving one set beside a newly chosen role
+// is exactly the two-branch config PAN-OS rejects.
+func TestAdministratorRoleSwitchClearsPerVsysBranches(t *testing.T) {
+	e := &administrator.Entry{
+		Name: "admin1",
+		Permissions: &administrator.Permissions{
+			RoleBased: &administrator.PermissionsRoleBased{
+				Vsysadmin: []administrator.PermissionsRoleBasedVsysadmin{
+					{Name: "localhost.localdomain", Vsys: []string{"vsys1"}},
+				},
+			},
+		},
+	}
+	if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", Role: new(adminRoleSuperuser)}); err != nil {
+		t.Fatal(err)
+	}
+	rb := e.Permissions.RoleBased
+	if len(rb.Vsysadmin) != 0 {
+		t.Errorf("switching roles must clear the per-vsys admin branch, got %+v", rb.Vsysadmin)
+	}
+	if rb.Superuser == nil {
+		t.Error("the chosen role must be set")
+	}
+}
+
+// TestAdministratorSummaryReportsPerVsysRole pins that an administrator
+// configured with a per-vsys role elsewhere does not read back as having no role
+// at all. Reporting nothing would present a privileged account as unprivileged.
+func TestAdministratorSummaryReportsPerVsysRole(t *testing.T) {
+	m, ok := administratorSummary(&administrator.Entry{
+		Name: "admin1",
+		Permissions: &administrator.Permissions{
+			RoleBased: &administrator.PermissionsRoleBased{
+				Vsysadmin: []administrator.PermissionsRoleBasedVsysadmin{{Name: "d", Vsys: []string{"vsys1"}}},
+			},
+		},
+	}).(map[string]any)
+	if !ok {
+		t.Fatal("summary must be a map")
+	}
+	if m["role"] != adminRoleVsysAdmin {
+		t.Errorf("a per-vsys administrator must report its role, got %v", m["role"])
+	}
+}
+
+// TestAdministratorUpdateRedactsPasswordHashOnError is the update-path twin of
+// the create redaction test. Without it, deleting withSecrets from the update
+// registration leaves the whole suite green, so the seam is registered but
+// unproven on the verb that carries a read-modify-write.
+func TestAdministratorUpdateRedactsPasswordHashOnError(t *testing.T) {
+	const phash = "$1$updatesalt$UPDATESECRETHASH"
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="admin1"/></result></response>`},
+		fakeRoute{Match: configAction("multi-config"), Body: `<response status="error"><msg><line>validation error for phash ` + phash + `</line></msg></response>`},
+		fakeRoute{Match: configAction("edit"), Body: `<response status="error"><msg><line>validation error for phash ` + phash + `</line></msg></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterAdministratorTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_administrator_update", Arguments: map[string]any{
+		"name":          "admin1",
+		"password_hash": phash,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected the device error to surface as a tool error")
+	}
+	out := textContent(t, res)
+	if strings.Contains(out, phash) {
+		t.Fatalf("the submitted password hash leaked into the update error: %q", out)
 	}
 	if !strings.Contains(out, redactedPlaceholder) {
 		t.Fatalf("expected the redaction placeholder in the error: %q", out)

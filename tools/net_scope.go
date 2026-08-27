@@ -85,16 +85,12 @@ type NetListInput struct {
 // page exposes the paging triplet to the shared list handler. The value
 // receiver is required: the constraint is satisfied by the input value the
 // handler is given, not by a pointer to it.
-//
-//nolint:gocritic // hugeParam: the receiver is by value to satisfy the listInput constraint.
 func (in NetListInput) page() (limit, offset int, filter string) {
 	return in.Limit, in.Offset, in.Filter
 }
 
 // entryName exposes the entry name to the shared get and delete handlers. The
 // value receiver is required for the same reason as page.
-//
-//nolint:gocritic // hugeParam: the receiver is by value to satisfy the nameInput constraint.
 func (in NetNameInput) entryName() string { return in.Name }
 
 // netListHandler mirrors listHandler for the net-scope resolver: fetch all

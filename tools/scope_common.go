@@ -10,10 +10,10 @@ import (
 // Shared scope machinery
 // ---------------------------------------------------------------------------
 //
-// Four scope families answer the same question in four different location
-// trees: which pango location does this request name? Each owns a *ScopeInput
-// struct (its public MCP schema), a resolver, and five thin handler wrappers
-// over the generic *Core functions in tools.go.
+// Several families answer the same question in different location trees: which
+// pango location does this request name? Each owns an input struct (its public
+// MCP schema), a resolver, and thin handler wrappers over the generic *Core
+// functions in tools.go.
 //
 // The resolvers stay separate on purpose. They are not four copies of one
 // function: the input structs expose different tiers (the device scope has a
@@ -31,9 +31,9 @@ import (
 
 // The scope accessor constraints. Every family input embeds its scope struct, so
 // the single method defined on each scope struct is promoted to all of them and
-// every input satisfies the matching constraint for free. That is what lets the
-// create and update handlers take the scope off the input directly instead of
-// each of the 45 registration sites passing a closure that does the same thing.
+// every input satisfies the matching constraint for free. That is what lets a
+// handler take the scope off the input directly, instead of every registration
+// passing a closure that does the same thing.
 type (
 	netScoped     interface{ netScope() NetScopeInput }
 	deviceScoped  interface{ deviceScope() DeviceScopeInput }
@@ -41,10 +41,11 @@ type (
 	mgtScoped     interface{ mgtScope() MgtScopeInput }
 )
 
-// The paging and single-entry accessors. Each scope family's list input carries
-// the same limit/offset/filter triplet and each name input the same entry name,
-// so the three read handlers below are written once against these rather than
-// once per family.
+// The paging and single-entry accessors. A list input carries the same
+// limit/offset/filter triplet whichever family it belongs to, and a name input
+// the same entry name, so the three read handlers below are written once against
+// these rather than once per family. The object family implements them too, so
+// these constraints are not limited to the scope families above.
 type (
 	listInput interface {
 		page() (limit, offset int, filter string)
@@ -85,9 +86,10 @@ func scopedDeleteHandler[NI nameInput, L, E any](
 }
 
 // templateScopeParts is the Panorama template and template-stack half of a
-// scope, optionally narrowed to a vsys within the template. The device and
-// profile scopes implement this tier identically, so they embed this rather than
-// each declaring the same four constructors. The net scope deliberately does not:
+// scope, optionally narrowed to a vsys within the template. Every scope whose
+// pango locations take a (panorama, template) pair embeds this rather than
+// redeclaring the constructors; a scope with no vsys level leaves the two
+// vsys-narrowed constructors nil. The net scope deliberately does not embed it:
 // pango gives it a single-argument template constructor, a different shape.
 type templateScopeParts[L any] struct {
 	template          func(panorama, template string) L
@@ -96,10 +98,10 @@ type templateScopeParts[L any] struct {
 	templateStackVsys func(panorama, stack, ngfw, vsys string) L
 }
 
-// validateTemplateExclusivity enforces the two template-tier input rules the
-// device and profile scopes share verbatim. Both spelled these out separately
-// before; the messages are unchanged. A family with further cross-tier rules
-// checks those itself.
+// validateTemplateExclusivity enforces the two template-tier input rules its
+// callers share verbatim. The device and profile scopes spelled these out
+// separately before; the messages are unchanged. A family with further
+// cross-tier rules checks those itself.
 func validateTemplateExclusivity(template, stack, vsys string) error {
 	switch {
 	case template != "" && stack != "":

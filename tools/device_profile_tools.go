@@ -224,8 +224,10 @@ type CertificateAuthorityInput struct {
 
 // CertificateProfileInput is the input for the certificate profile create and
 // update tools. The CA list, when provided, is merged onto the stored list by
-// name and a CA absent from it is removed; when omitted the list is left
-// untouched. All certificate references are names, not secret blobs.
+// name and a CA absent from it is removed; a CA that stays keeps any field the
+// caller did not provide, so a field cannot be cleared in place. When the list
+// is omitted it is left untouched. All certificate references are names, not
+// secret blobs.
 type CertificateProfileInput struct {
 	ProfileScopeInput
 	Name                    string  `json:"name" jsonschema:"Certificate profile name"`
@@ -246,7 +248,7 @@ type CertificateProfileInput struct {
 	CrlReceiveTimeout        *int64 `json:"crl_receive_timeout,omitzero" jsonschema:"CRL receive timeout in seconds"`
 	OcspReceiveTimeout       *int64 `json:"ocsp_receive_timeout,omitzero" jsonschema:"OCSP receive timeout in seconds"`
 
-	CertificateAuthorities []CertificateAuthorityInput `json:"certificate_authorities,omitzero" jsonschema:"CA certificate list, merged by name; a CA absent from a provided list is removed, and an omitted list leaves the CA list unchanged"`
+	CertificateAuthorities []CertificateAuthorityInput `json:"certificate_authorities,omitzero" jsonschema:"CA certificate list, merged by name; a CA absent from a provided list is removed, a CA that stays keeps any field you do not provide, and an omitted list leaves the CA list unchanged"`
 }
 
 // certificateAuthorities maps the input CA list to pango's CA slice in order,
@@ -381,7 +383,7 @@ func RegisterCertificateProfileTools(s *mcp.Server, d *Deps) {
 	}, profileCreateHandler(d, "panos_certificate_profile_create", svc, parts, buildCertificateProfile, certificateProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_certificate_profile_update",
-		Description: "Update a certificate profile: read-modify-write, only provided fields change. A provided certificate_authorities list is merged by name, and a CA absent from it is removed. Run panos_commit to apply.",
+		Description: "Update a certificate profile: read-modify-write, only provided fields change. A provided certificate_authorities list is merged by name: a CA absent from it is removed, and a CA that stays keeps any field you do not provide. Run panos_commit to apply.",
 		Annotations: updateTool("Update certificate profile"),
 	}, profileUpdateHandler(d, "panos_certificate_profile_update", svc, parts,
 		func(in CertificateProfileInput) string { return in.Name }, overlayCertificateProfile, certificateProfileSummary))

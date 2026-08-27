@@ -199,8 +199,6 @@ func (in ListInput) page() (limit, offset int, filter string) {
 
 // entryName exposes the entry name to the shared get and delete handlers. The
 // value receiver is required for the same reason as page.
-//
-//nolint:gocritic // hugeParam: the receiver is by value to satisfy the nameInput constraint.
 func (in NameInput) entryName() string { return in.Name }
 
 // normalizeRulebase maps the tool-level pre/post values onto the PAN-OS

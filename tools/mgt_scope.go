@@ -50,6 +50,14 @@ func resolveMgtScope[L any](d *Deps, in MgtScopeInput, p mgtScopeParts[L]) (L, e
 	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, ""); err != nil {
 		return zero, err
 	}
+	// panorama and a template tier are different destinations, so naming both is
+	// a client error rather than a precedence question. Resolving it silently
+	// would create the entry inside the template, which pushes it to every
+	// managed firewall using that template, while the caller believes it landed
+	// on Panorama. The profile scope rejects the same combination.
+	if in.Panorama && (in.Template != "" || in.TemplateStack != "") {
+		return zero, errors.New("set exactly one scope: template or template_stack cannot be combined with panorama")
+	}
 	if !d.IsPanorama {
 		if in.Panorama || in.Template != "" || in.TemplateStack != "" {
 			return zero, errors.New("panorama, template and template_stack require a Panorama connection; on a firewall these live in the device's own mgt-config")
@@ -82,16 +90,12 @@ type MgtListInput struct {
 // page exposes the paging triplet to the shared list handler. The value receiver
 // is required: the constraint is satisfied by the input value the handler is
 // given, not by a pointer to it.
-//
-//nolint:gocritic // hugeParam: the receiver is by value to satisfy the listInput constraint.
 func (in MgtListInput) page() (limit, offset int, filter string) {
 	return in.Limit, in.Offset, in.Filter
 }
 
 // entryName exposes the entry name to the shared get and delete handlers. The
 // value receiver is required for the same reason as page.
-//
-//nolint:gocritic // hugeParam: the receiver is by value to satisfy the nameInput constraint.
 func (in MgtNameInput) entryName() string { return in.Name }
 
 // mgtListHandler mirrors deviceListHandler for the management-plane resolver.

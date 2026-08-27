@@ -15,9 +15,12 @@ import (
 // inferred from the tool input structs by jsonschema-go, so a refactor of the
 // shared scope machinery can move them without touching a single tag.
 //
-// These tests pin one representative tool per scope family against a literal.
-// They exist to make a scope refactor prove it changed nothing, so a diff here
-// is either a deliberate, reviewed API change or a bug.
+// These tests pin one representative tool per scope family against a literal:
+// its exact top-level property set, its exact required set, and the wording of
+// the scope-derived descriptions. They exist to make a scope refactor prove it
+// changed nothing, so a diff here is either a deliberate, reviewed API change or
+// a bug. Pinning the exact property SET is what makes an ADDED field fail too,
+// not only a renamed or removed one.
 
 // toolSchema is the part of a tool's inferred input schema these tests pin.
 type toolSchema struct {
@@ -96,6 +99,9 @@ func assertDescriptions(t *testing.T, tool string, got toolSchema, want map[stri
 func TestNetScopeSchemaUnchanged(t *testing.T) {
 	const tool = "panos_bfd_profile_create"
 	got := inputSchema(t, tool)
+	assertProperties(t, tool, got,
+		[]string{"name", "template", "template_stack", "mode", "min_rx_interval", "min_tx_interval", "detection_multiplier", "hold_time"},
+		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
 		"template_stack": "Panorama template-stack name (Panorama only; mutually exclusive with template)",
@@ -111,6 +117,11 @@ func TestNetScopeSchemaUnchanged(t *testing.T) {
 func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 	const tool = "panos_ldap_profile_create"
 	got := inputSchema(t, tool)
+	assertProperties(t, tool, got,
+		[]string{"name", "vsys", "shared", "template", "template_stack", "template_vsys",
+			"base", "bind_dn", "bind_password", "bind_timelimit", "disabled", "ldap_type",
+			"retry_interval", "servers", "ssl", "timelimit", "verify_server_certificate"},
+		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
 		"template_stack": "Panorama template-stack name (Panorama only; mutually exclusive with template)",
@@ -128,6 +139,13 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 func TestProfileScopeSchemaUnchanged(t *testing.T) {
 	const tool = "panos_certificate_profile_create"
 	got := inputSchema(t, tool)
+	assertProperties(t, tool, got,
+		[]string{"name", "shared", "panorama", "template", "template_stack", "template_vsys",
+			"block_expired_certificate", "block_timeout_certificate", "block_unauthenticated_certificate",
+			"block_unknown_certificate", "certificate_authorities", "certificate_status_timeout",
+			"crl_receive_timeout", "domain", "ocsp_exclude_nonce", "ocsp_receive_timeout",
+			"use_crl", "use_ocsp", "username_field_subject", "username_field_subject_alt"},
+		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
 		"shared":        "Use the shared scope (the only scope on a firewall; on Panorama pushed to all device groups)",
 		"panorama":      "Use the Panorama management-plane scope (Panorama only)",
@@ -152,6 +170,11 @@ func TestObjectScopeSchemaUnchanged(t *testing.T) {
 func TestMgtScopeSchemaUnchanged(t *testing.T) {
 	const tool = "panos_administrator_create"
 	got := inputSchema(t, tool)
+	assertProperties(t, tool, got,
+		[]string{"name", "panorama", "template", "template_stack",
+			"authentication_profile", "client_certificate_only", "password_hash",
+			"password_profile", "role", "role_profile", "role_vsys"},
+		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
 		"panorama":       "Use the Panorama management-plane scope (Panorama only)",
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",

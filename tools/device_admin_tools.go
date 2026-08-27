@@ -172,6 +172,11 @@ const (
 	adminRolePanoramaAdmin = "panorama-admin"
 	adminRoleDeviceAdmin   = "deviceadmin"
 	adminRoleDeviceReader  = "devicereader"
+	// Reported by a get, never accepted as input: pango models these as
+	// per-vsys member lists rather than a flag, and this server does not offer
+	// them as a role choice.
+	adminRoleVsysAdmin  = "vsysadmin"
+	adminRoleVsysReader = "vsysreader"
 )
 
 // AdministratorInput is the input for the administrator create and update tools.
@@ -195,10 +200,8 @@ type AdministratorInput struct {
 	RoleVsys              []string `json:"role_vsys,omitzero" jsonschema:"vsys the custom role profile applies to. Only meaningful with role_profile."`
 }
 
-// builtinAdminRoles maps a role name onto the pango field that expresses it. The
-// first three are presence flags carrying the string "yes"; the last two are
-// member lists. Keeping the set in one table is what lets the exclusivity logic
-// below clear every sibling without naming them twice.
+// builtinAdminRoles is the set of role names accepted as input, used only to
+// reject an unknown one.
 var builtinAdminRoles = map[string]struct{}{
 	adminRoleSuperuser:     {},
 	adminRoleSuperreader:   {},
@@ -207,30 +210,23 @@ var builtinAdminRoles = map[string]struct{}{
 	adminRoleDeviceReader:  {},
 }
 
-// clearRoleBased blanks every role branch. PAN-OS role permissions are
-// exactly-one, so the caller sets the branch it wants immediately after.
+// clearRoleBased blanks every role branch pango models under role-based
+// permissions. PAN-OS role permissions are exactly-one, so the caller sets the
+// branch it wants immediately after. Vsysadmin and Vsysreader are branches this
+// server does not offer as inputs, but they are siblings of the rest: leaving
+// one set beside a newly chosen role is the config PAN-OS rejects, so switching
+// a per-vsys administrator to any other role must clear them too.
 func clearRoleBased(rb *administrator.PermissionsRoleBased) {
 	rb.Superuser = nil
 	rb.Superreader = nil
 	rb.PanoramaAdmin = nil
 	rb.Deviceadmin = nil
 	rb.Devicereader = nil
+	rb.Vsysadmin = nil
+	rb.Vsysreader = nil
 	rb.Custom = nil
 }
 
-// applyAdministratorRole writes the requested role branch, clearing the others.
-//
-// This is a deliberate exception to the read-modify-write rule that an overlay
-// touches only what the caller provided: the branches are mutually exclusive in
-// PAN-OS, so leaving a stale sibling set produces a config the device rejects.
-// A transition is detected by field PRESENCE, not by a non-empty value, so
-// role: "" is a rejected value rather than a silently ignored one, and it is
-// detected in BOTH directions: role clears a custom profile, and either
-// role_profile or role_vsys clears a built-in role.
-//
-// Providing neither role, role_profile nor role_vsys leaves Permissions
-// untouched, including any unmodeled XML it carries.
-//
 // setBuiltinRole writes the pango field expressing one built-in role. The first
 // three branches are presence flags carrying "yes"; the last two are member
 // lists. The caller has already cleared every branch.
@@ -298,12 +294,22 @@ func applyAdministratorRole(e *administrator.Entry, in AdministratorInput) error
 		e.Permissions.RoleBased = &administrator.PermissionsRoleBased{}
 	}
 	rb := e.Permissions.RoleBased
+	// Capture the stored custom branch before clearing, so a caller who names
+	// only one of its two fields keeps the other and keeps the branch's own
+	// unmodeled XML. clearRoleBased nils it, so reading it afterwards is too
+	// late.
+	stored := rb.Custom
 	clearRoleBased(rb)
 
 	if custom {
-		rb.Custom = &administrator.PermissionsRoleBasedCustom{}
+		if stored == nil {
+			stored = &administrator.PermissionsRoleBasedCustom{}
+		}
+		rb.Custom = stored
 		setPtr(&rb.Custom.Profile, in.RoleProfile)
-		rb.Custom.Vsys = in.RoleVsys
+		if in.RoleVsys != nil {
+			rb.Custom.Vsys = in.RoleVsys
+		}
 		return nil
 	}
 	setBuiltinRole(rb, *in.Role)
@@ -337,7 +343,9 @@ func overlayAdministrator(e *administrator.Entry, in AdministratorInput) error {
 }
 
 // administratorRole reports the built-in role an entry carries, or "" when it
-// carries a custom profile or none.
+// carries a custom profile or no role at all. It reports the two per-vsys roles
+// as well: those cannot be SET through these tools, but an administrator
+// configured with one elsewhere must not read back as having no role.
 func administratorRole(rb *administrator.PermissionsRoleBased) string {
 	switch {
 	case rb == nil:
@@ -352,6 +360,10 @@ func administratorRole(rb *administrator.PermissionsRoleBased) string {
 		return adminRoleDeviceAdmin
 	case len(rb.Devicereader) > 0:
 		return adminRoleDeviceReader
+	case len(rb.Vsysadmin) > 0:
+		return adminRoleVsysAdmin
+	case len(rb.Vsysreader) > 0:
+		return adminRoleVsysReader
 	}
 	return ""
 }
