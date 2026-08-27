@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -145,5 +146,30 @@ func TestObjectScopeSchemaUnchanged(t *testing.T) {
 		[]string{"name"})
 	if _, ok := got.Properties["template"]; ok {
 		t.Errorf("%s must not expose template: object scope nests its scope under location", tool)
+	}
+}
+
+func TestMgtScopeSchemaUnchanged(t *testing.T) {
+	const tool = "panos_administrator_create"
+	got := inputSchema(t, tool)
+	assertDescriptions(t, tool, got, map[string]string{
+		"panorama":       "Use the Panorama management-plane scope (Panorama only)",
+		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
+		"template_stack": "Panorama template-stack name (Panorama only; mutually exclusive with template)",
+	})
+	// mgt-config is device-wide, so neither vsys tier may appear: an
+	// administrator cannot be narrowed to a vsys the way a server profile can.
+	for _, prop := range []string{"vsys", "template_vsys", "shared"} {
+		if _, ok := got.Properties[prop]; ok {
+			t.Errorf("%s must not expose %q: mgt-config has no such tier", tool, prop)
+		}
+	}
+	// The password hash is an input, never an output. Its presence here with the
+	// documented write-only wording is what the summary projection is trusted
+	// against.
+	if p, ok := got.Properties["password_hash"]; !ok {
+		t.Errorf("%s must accept password_hash", tool)
+	} else if !strings.Contains(p.Description, "never returned") {
+		t.Errorf("%s password_hash must document that it is never returned, got %q", tool, p.Description)
 	}
 }

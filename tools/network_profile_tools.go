@@ -295,6 +295,16 @@ func RegisterLldpProfileTools(s *mcp.Server, d *Deps) {
 // optional multihop settings are not modeled here and are preserved across
 // updates. Net-scoped: {Ngfw | Template | TemplateStack}.
 
+// Note for anyone adding the advanced routing engine's own BFD profile:
+// network/routing-profile/bfd is a DIFFERENT pango package from the
+// network/profiles/bfd wrapped here. The two carry an identical Entry but sit at
+// different xpaths (network/routing-profile/bfd versus
+// network/profiles/bfd-profile), so the advanced-routing one is a genuine
+// addition rather than a duplicate. It needs an import alias and a distinct tool
+// name. The rest of network/routing-profile (BGP, OSPF, OSPFv3 and the route
+// filters) shares the net scope used here, so nothing about this scope
+// machinery blocks it; it waits on the logical-router VRF configuration that
+// would reference those profiles.
 func newBfdProfileService(d *Deps) nameFixAdapter[bfd.Location, bfd.Entry] {
 	return nameFixAdapter[bfd.Location, bfd.Entry]{
 		svc:    bfd.NewService(d.Client),
