@@ -162,8 +162,18 @@ func TestAdministratorRoleVsysAloneRequiresAProfile(t *testing.T) {
 	if err == nil {
 		t.Fatal("role_vsys with no profile name must be rejected")
 	}
-	if !strings.Contains(err.Error(), "role_vsys requires role_profile") {
+	if !strings.Contains(err.Error(), "custom role needs a non-empty role_profile") {
 		t.Errorf("unexpected error: %q", err)
+	}
+	if got := setRoleBranches(e); len(got) != 1 || got[0] != adminRoleDeviceAdmin {
+		t.Errorf("a rejected request must leave the stored role untouched, got %v", got)
+	}
+
+	// An explicit empty role_profile is non-nil, so a guard keyed on presence
+	// rather than on the effective name would let this one through.
+	e = storedRoleBranch(adminRoleDeviceAdmin)
+	if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", RoleProfile: new("")}); err == nil {
+		t.Error("an explicit empty role_profile must be rejected")
 	}
 	if got := setRoleBranches(e); len(got) != 1 || got[0] != adminRoleDeviceAdmin {
 		t.Errorf("a rejected request must leave the stored role untouched, got %v", got)

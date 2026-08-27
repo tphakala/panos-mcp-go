@@ -304,12 +304,17 @@ func applyAdministratorRole(e *administrator.Entry, in AdministratorInput) error
 	stored := rb.Custom
 
 	// The profile name IS the custom role, so the branch is meaningless without
-	// one. role_vsys alone on an administrator that has no stored profile would
-	// otherwise clear the existing role and write a custom branch naming no
-	// profile, which PAN-OS rejects at commit. Reject it here, before anything
-	// is cleared, so a failed request leaves the entry untouched.
-	if custom && in.RoleProfile == nil && (stored == nil || strVal(stored.Profile) == "") {
-		return errors.New("role_vsys requires role_profile: a custom role needs a profile name")
+	// one. Reject on the EFFECTIVE name rather than on whether role_profile was
+	// provided: an explicit empty string is non-nil and would otherwise slip
+	// past, clearing the stored role and writing a custom branch naming no
+	// profile, which PAN-OS rejects at commit. Checked before anything is
+	// cleared, so a refused request leaves the entry untouched.
+	profile := strVal(in.RoleProfile)
+	if in.RoleProfile == nil && stored != nil {
+		profile = strVal(stored.Profile)
+	}
+	if custom && profile == "" {
+		return errors.New("a custom role needs a non-empty role_profile")
 	}
 
 	clearRoleBased(rb)
