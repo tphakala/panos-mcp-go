@@ -386,7 +386,7 @@ These network profiles and the two Layer 2 switching objects are net-scoped: on 
 | `panos_zone_protection_list` | read-only | List zone protection profiles at a location. |
 | `panos_zone_protection_get` | read-only | Get one zone protection profile (packet-based-attack toggles). |
 | `panos_zone_protection_create` | write | Create a zone protection profile in the candidate config. |
-| `panos_zone_protection_update` | write | Update a zone protection profile: read-modify-write; flood, IPv6, reconnaissance and scan sub-blocks are preserved. |
+| `panos_zone_protection_update` | write | Update a zone protection profile: read-modify-write; flood, IPv6, reconnaissance, non-IP-protocol and scan sub-blocks are preserved. |
 | `panos_zone_protection_delete` | write | Delete a zone protection profile from the candidate config. |
 | `panos_virtual_wire_list` | read-only | List virtual wires at a location. |
 | `panos_virtual_wire_get` | read-only | Get one virtual wire (bound interfaces and allowed tags). |

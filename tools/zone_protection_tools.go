@@ -149,7 +149,7 @@ func overlayZoneProtection(e *zoneprotection.Entry, in ZoneProtectionInput) erro
 }
 
 func zoneProtectionSummary(e *zoneprotection.Entry) any {
-	m := map[string]any{tagNameKey: e.Name, descriptionKey: strVal(e.Description)}
+	m := nameDescription(e.Name, e.Description)
 	if e.AsymmetricPath != nil {
 		m["asymmetric_path"] = *e.AsymmetricPath
 	}
@@ -180,7 +180,7 @@ func RegisterZoneProtectionTools(s *mcp.Server, d *Deps) {
 	}, netListHandler(d, "panos_zone_protection_list", svc, parts, svc.name, zoneProtectionSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_zone_protection_get",
-		Description: "Get one zone protection profile (packet-based-attack toggles). The flood, reconnaissance and non-IP protection sub-blocks are not returned. On Panorama a template or template_stack is required. Read-only.",
+		Description: "Get one zone protection profile (packet-based-attack toggles). The flood, IPv6, reconnaissance, non-IP-protocol and scan sub-blocks are not returned. On Panorama a template or template_stack is required. Read-only.",
 		Annotations: readOnlyTool("Get zone protection profile"),
 	}, netGetHandler(d, "panos_zone_protection_get", svc, parts, zoneProtectionSummary))
 	if d.ReadOnly {

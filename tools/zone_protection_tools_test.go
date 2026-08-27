@@ -48,9 +48,12 @@ func assertOnlyToggleInSummary(t *testing.T, m map[string]any, key string) {
 // the JSON tag on the input struct, exactly as the MCP layer would), builds the
 // entry, and asserts the toggle's own entry field is set true, every other
 // toggle field stays nil, and the summary surfaces exactly that key. This
-// catches any drift among a toggle's JSON key, its input accessor, its entry
-// accessor, and its summary key: swap any two rows, or mistype a key, and the
-// run turns red.
+// catches a mistyped JSON key (the field never gets set) and a crossed input or
+// summary accessor (the wrong key is set or leaked). Because apply and the
+// assertion both read the entry through the same tg.entry accessor, a symmetric
+// swap of two rows' entry accessors alone would pass here;
+// TestZoneProtectionToggleEntryFieldsByName anchors representative rows to their
+// real pango field by name to close that gap.
 func TestZoneProtectionToggleMapping(t *testing.T) {
 	for _, tg := range zpToggles {
 		t.Run(tg.key, func(t *testing.T) {
@@ -64,6 +67,42 @@ func TestZoneProtectionToggleMapping(t *testing.T) {
 			}
 			assertOnlyToggleSet(t, e, tg.key)
 			assertOnlyToggleInSummary(t, asMap(t, zoneProtectionSummary(e)), tg.key)
+		})
+	}
+}
+
+// TestZoneProtectionToggleEntryFieldsByName closes the one gap
+// TestZoneProtectionToggleMapping cannot: it reads the pango entry fields by
+// their real Go names (not through the zpToggles accessors), so a symmetric swap
+// of two rows' entry accessors turns it red. It anchors the two most easily
+// confused rows plus one from each naming group; extend it if a new row is
+// especially confusable. Sabotage: pointing the discard_ip_frag row's entry
+// accessor at &e.DiscardIpSpoof (and vice versa) fails this even though the
+// table test stays green.
+func TestZoneProtectionToggleEntryFieldsByName(t *testing.T) {
+	cases := []struct {
+		key string
+		got func(*zoneprotection.Entry) *bool
+	}{
+		{"discard_ip_spoof", func(e *zoneprotection.Entry) *bool { return e.DiscardIpSpoof }},
+		{"discard_ip_frag", func(e *zoneprotection.Entry) *bool { return e.DiscardIpFrag }},
+		{"discard_tcp_syn_with_data", func(e *zoneprotection.Entry) *bool { return e.DiscardTcpSynWithData }},
+		{"strict_ip_check", func(e *zoneprotection.Entry) *bool { return e.StrictIpCheck }},
+		{"suppress_icmp_needfrag", func(e *zoneprotection.Entry) *bool { return e.SuppressIcmpNeedfrag }},
+	}
+	for _, c := range cases {
+		t.Run(c.key, func(t *testing.T) {
+			var in ZoneProtectionInput
+			if err := json.Unmarshal([]byte(`{"name":"zp","`+c.key+`":true}`), &in); err != nil {
+				t.Fatalf("unmarshal %s: %v", c.key, err)
+			}
+			e, err := buildZoneProtection(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p := c.got(e); p == nil || !*p {
+				t.Fatalf("key %q did not set its named pango entry field true (entry accessor drift)", c.key)
+			}
 		})
 	}
 }

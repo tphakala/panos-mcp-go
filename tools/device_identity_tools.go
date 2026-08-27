@@ -59,7 +59,6 @@ func applyLocalUser(e *localdb.Entry, in LocalUserInput) {
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
-//nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
 func buildLocalUser(in LocalUserInput) (*localdb.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
