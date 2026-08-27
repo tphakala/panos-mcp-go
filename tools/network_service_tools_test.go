@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PaloAltoNetworks/pango/network/dhcp"
 	"github.com/PaloAltoNetworks/pango/network/dnsproxy"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -143,6 +144,37 @@ func TestDhcpServerModeBuild(t *testing.T) {
 	}
 	if e.Server.ProbeIp == nil || !*e.Server.ProbeIp {
 		t.Fatalf("server probe_ip not mapped: %+v", e.Server)
+	}
+}
+
+// TestDhcpOverlayModeSwitch pins overlayDhcp's mode-switch behavior: supplying
+// the opposite block's fields on update clears the previous block (an interface
+// cannot be both a relay and a server), and supplying both at once is rejected.
+func TestDhcpOverlayModeSwitch(t *testing.T) {
+	// Start in relay mode, then switch to server mode: the relay block is cleared.
+	e := &dhcp.Entry{Name: "ethernet1/4", Relay: &dhcp.Relay{Ip: &dhcp.RelayIp{Enabled: new(true), Server: []string{"10.0.0.1"}}}}
+	if err := overlayDhcp(e, DhcpInput{Name: "ethernet1/4", ServerMode: new("enabled")}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Relay != nil {
+		t.Fatalf("switching to server mode must clear the relay block: %+v", e.Relay)
+	}
+	if e.Server == nil || e.Server.Mode == nil || *e.Server.Mode != "enabled" {
+		t.Fatalf("server mode not applied on switch: %+v", e.Server)
+	}
+	// Switch back to relay mode: the server block is cleared.
+	if err := overlayDhcp(e, DhcpInput{Name: "ethernet1/4", RelayServers: []string{"10.0.0.2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if e.Server != nil {
+		t.Fatalf("switching to relay mode must clear the server block: %+v", e.Server)
+	}
+	if e.Relay == nil || e.Relay.Ip == nil || len(e.Relay.Ip.Server) != 1 || e.Relay.Ip.Server[0] != "10.0.0.2" {
+		t.Fatalf("relay servers not applied on switch: %+v", e.Relay)
+	}
+	// Supplying both a relay and a server field on overlay is rejected.
+	if err := overlayDhcp(e, DhcpInput{Name: "ethernet1/4", RelayEnabled: new(true), ServerMode: new("auto")}); err == nil {
+		t.Fatalf("supplying both relay and server fields must be rejected")
 	}
 }
 

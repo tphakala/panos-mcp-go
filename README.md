@@ -446,7 +446,7 @@ These device-scoped identity objects resolve the same way as the server profiles
 | Tool | Mode | Description |
 | --- | --- | --- |
 | `panos_local_user_list` | read-only | List local database users at a location. |
-| `panos_local_user_get` | read-only | Get one local user (enabled state; the password hash is never returned). |
+| `panos_local_user_get` | read-only | Get one local user (disabled state; the password hash is never returned). |
 | `panos_local_user_create` | write | Create a local database user; password_hash is a write-only PHASH. |
 | `panos_local_user_update` | write | Update a local user: read-modify-write; an omitted password_hash is kept. |
 | `panos_local_user_delete` | write | Delete a local database user from the candidate config. |
