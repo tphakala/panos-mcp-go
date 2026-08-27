@@ -121,14 +121,28 @@ type DeviceListInput struct {
 	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
 }
 
+// page exposes the paging triplet to the shared list handler. The value
+// receiver is required: the constraint is satisfied by the input value the
+// handler is given, not by a pointer to it.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the listInput constraint.
+func (in DeviceListInput) page() (limit, offset int, filter string) {
+	return in.Limit, in.Offset, in.Filter
+}
+
+// entryName exposes the entry name to the shared get and delete handlers. The
+// value receiver is required for the same reason as page.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the nameInput constraint.
+func (in DeviceNameInput) entryName() string { return in.Name }
+
 // deviceListHandler mirrors netListHandler for the device-scope resolver.
 func deviceListHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, DeviceListInput) (*mcp.CallToolResult, any, error) {
-	return listCore(d, tool, svc,
-		func(in DeviceListInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
-		func(in DeviceListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+	return scopedListHandler(d, tool, svc,
+		func(in DeviceListInput) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		name, summarize)
 }
 
@@ -137,9 +151,8 @@ func deviceGetHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, DeviceNameInput) (*mcp.CallToolResult, any, error) {
-	return getCore(d, tool, svc,
-		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
-		func(in DeviceNameInput) string { return in.Name },
+	return scopedGetHandler(d, tool, svc,
+		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		summarize)
 }
 
@@ -147,9 +160,8 @@ func deviceGetHandler[L, E any](
 func deviceDeleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 ) func(context.Context, *mcp.CallToolRequest, DeviceNameInput) (*mcp.CallToolResult, any, error) {
-	return deleteCore(d, tool, svc,
-		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
-		func(in DeviceNameInput) string { return in.Name })
+	return scopedDeleteHandler(d, tool, svc,
+		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) })
 }
 
 // deviceCreateHandler mirrors netCreateHandler for the device-scope resolver.

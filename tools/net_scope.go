@@ -82,15 +82,29 @@ type NetListInput struct {
 	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
 }
 
+// page exposes the paging triplet to the shared list handler. The value
+// receiver is required: the constraint is satisfied by the input value the
+// handler is given, not by a pointer to it.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the listInput constraint.
+func (in NetListInput) page() (limit, offset int, filter string) {
+	return in.Limit, in.Offset, in.Filter
+}
+
+// entryName exposes the entry name to the shared get and delete handlers. The
+// value receiver is required for the same reason as page.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the nameInput constraint.
+func (in NetNameInput) entryName() string { return in.Name }
+
 // netListHandler mirrors listHandler for the net-scope resolver: fetch all
 // entries at the resolved location, filter by name substring, clamp, summarize.
 func netListHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NetListInput) (*mcp.CallToolResult, any, error) {
-	return listCore(d, tool, svc,
-		func(in NetListInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
-		func(in NetListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+	return scopedListHandler(d, tool, svc,
+		func(in NetListInput) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		name, summarize)
 }
 
@@ -99,9 +113,8 @@ func netGetHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NetNameInput) (*mcp.CallToolResult, any, error) {
-	return getCore(d, tool, svc,
-		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
-		func(in NetNameInput) string { return in.Name },
+	return scopedGetHandler(d, tool, svc,
+		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		summarize)
 }
 
@@ -109,9 +122,8 @@ func netGetHandler[L, E any](
 func netDeleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 ) func(context.Context, *mcp.CallToolRequest, NetNameInput) (*mcp.CallToolResult, any, error) {
-	return deleteCore(d, tool, svc,
-		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
-		func(in NetNameInput) string { return in.Name })
+	return scopedDeleteHandler(d, tool, svc,
+		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.netScope(), p) })
 }
 
 // netCreateHandler mirrors createHandler for the net-scope resolver.
