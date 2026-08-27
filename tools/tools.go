@@ -733,6 +733,7 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterLocalUserTools(s, d)
 	RegisterSamlIdpProfileTools(s, d)
 	RegisterMfaProfileTools(s, d)
+	RegisterAuthProfileTools(s, d)
 	// SSL/TLS and certificate profiles (profile-scoped: firewall shared or
 	// Panorama shared/panorama/template/template_stack).
 	RegisterSslTlsProfileTools(s, d)
