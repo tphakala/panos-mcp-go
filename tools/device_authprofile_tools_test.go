@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/xml"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -131,13 +132,12 @@ func TestAuthProfileSwitchFromEarlyBranchClearsIt(t *testing.T) {
 	}
 }
 
-// TestAuthProfileBranchFieldMapping pins the per-field mapping of every modeled
-// branch. Without it the Kerberos and SAML-IdP arms had no assertion at all, so
-// swapping two SAML attribute-name fields, or dropping a setPtr, stayed green.
+// TestAuthProfileBranchFieldMapping pins the per-field mapping of the kerberos,
+// radius and ldap arms. SAML and TACACS+ have their own tests below; this one
+// does NOT reach them, so a mutation there will not show up here.
 //
-// Sabotage: swap AttributeNameUsername and AttributeNameUsergroup in the SAML arm
-// of applyAuthProfileMethod, or delete any single setPtr from any arm, and the
-// matching subtest goes red.
+// Sabotage: delete any setPtr from applyAuthProfileMethod's kerberos, radius or
+// ldap arm and the matching subtest goes red.
 func TestAuthProfileBranchFieldMapping(t *testing.T) {
 	t.Run("kerberos", func(t *testing.T) {
 		e, err := buildAuthProfile(AuthProfileInput{Name: "ap1", MethodKerberos: &AuthMethodKerberosInput{
@@ -149,6 +149,18 @@ func TestAuthProfileBranchFieldMapping(t *testing.T) {
 		k := e.Method.Kerberos
 		if k == nil || strVal(k.Realm) != "EXAMPLE.COM" || strVal(k.ServerProfile) != "kdc1" {
 			t.Fatalf("kerberos mapping: %+v", k)
+		}
+	})
+	t.Run("radius", func(t *testing.T) {
+		e, err := buildAuthProfile(AuthProfileInput{Name: "ap1", MethodRadius: &AuthMethodRadiusInput{
+			Checkgroup: new(true), ServerProfile: new("rad1"),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := e.Method.Radius
+		if r == nil || strVal(r.ServerProfile) != "rad1" || !boolVal(r.Checkgroup) {
+			t.Fatalf("radius mapping: %+v", r)
 		}
 	})
 	t.Run("ldap", func(t *testing.T) {
@@ -265,39 +277,162 @@ func TestAuthProfileLockoutAndMfa(t *testing.T) {
 	}
 }
 
-// TestAuthProfileSummaryProjectsActiveBranch pins authProfileMethodDetail, which
-// had almost no coverage: every branch projection could be deleted with the suite
-// green.
+// TestAuthProfileSummaryProjectsActiveBranch pins authProfileMethodDetail for
+// EVERY modeled branch, and pins that its arm order matches
+// authProfileMethodString. Both matter: pango does not enforce the method
+// choice, so an entry read back from a device can carry two branches, and if the
+// two switches disagree a summary reports one method name beside another
+// branch's detail. A leading combined case for the three field-free branches did
+// exactly that, reporting "kerberos" with an empty detail.
 //
-// Sabotage: delete any line from authProfileMethodDetail's ldap or radius arm, or
-// the method_detail attachment in authProfileSummary, and this goes red.
+// Sabotage: delete any line from any arm of authProfileMethodDetail, or delete
+// the method_detail attachment in authProfileSummary, and a subtest goes red.
+//
+// This test does NOT pin the arm ORDER on its own. It carries one two-branch
+// case, so it catches only a reordering that crosses the kerberos and
+// local-database pair; most other permutations stay green here. The order is
+// pinned exhaustively by TestAuthProfileMethodPrecedenceExhaustive below, which
+// is what makes the invariant structural rather than comment-enforced.
 func TestAuthProfileSummaryProjectsActiveBranch(t *testing.T) {
-	e := &authprofile.Entry{Name: "ap1", Method: &authprofile.Method{
-		Ldap: &authprofile.MethodLdap{ServerProfile: new("ldap1"), LoginAttribute: new("uid"), PasswdExpDays: new(int64(3))},
-	}}
-	m, ok := authProfileSummary(e).(map[string]any)
-	if !ok {
-		t.Fatalf("summary is not a map")
+	for _, tc := range []struct {
+		name       string
+		method     *authprofile.Method
+		wantMethod string
+		wantDetail map[string]any
+	}{
+		{"kerberos", &authprofile.Method{Kerberos: &authprofile.MethodKerberos{
+			Realm: new("EXAMPLE.COM"), ServerProfile: new("kdc1"),
+		}}, "kerberos", map[string]any{"realm": "EXAMPLE.COM", "server_profile": "kdc1"}},
+		{"radius", &authprofile.Method{Radius: &authprofile.MethodRadius{
+			ServerProfile: new("rad1"), Checkgroup: new(true),
+		}}, "radius", map[string]any{"server_profile": "rad1", "checkgroup": true}},
+		{"tacplus", &authprofile.Method{Tacplus: &authprofile.MethodTacplus{
+			ServerProfile: new("tac1"), Checkgroup: new(false),
+		}}, "tacplus", map[string]any{"server_profile": "tac1", "checkgroup": false}},
+		{"saml idp", &authprofile.Method{SamlIdp: &authprofile.MethodSamlIdp{
+			ServerProfile: new("idp1"), CertificateProfile: new("cp1"),
+			RequestSigningCertificate: new("sc1"), AttributeNameUsername: new("u"),
+			AttributeNameUsergroup: new("g"), AttributeNameAdminRole: new("r"),
+			AttributeNameAccessDomain: new("d"), EnableSingleLogout: new(true),
+		}}, "saml-idp", map[string]any{
+			"server_profile": "idp1", "certificate_profile": "cp1",
+			"request_signing_certificate": "sc1", "attribute_name_username": "u",
+			"attribute_name_usergroup": "g", "attribute_name_admin_role": "r",
+			"attribute_name_access_domain": "d", "enable_single_logout": true,
+		}},
+		{"ldap", &authprofile.Method{Ldap: &authprofile.MethodLdap{
+			ServerProfile: new("ldap1"), LoginAttribute: new("uid"), PasswdExpDays: new(int64(3)),
+		}}, "ldap", map[string]any{
+			"server_profile": "ldap1", "login_attribute": "uid", "passwd_exp_days": int64(3),
+		}},
+		{"cloud", &authprofile.Method{Cloud: &authprofile.MethodCloud{ClockSkew: new(int64(60))}}, "cloud", nil},
+		{"local database", &authprofile.Method{LocalDatabase: &authprofile.MethodLocalDatabase{}}, "local-database", nil},
+		{"none", &authprofile.Method{None: &authprofile.MethodNone{}}, "none", nil},
+		// pango does not enforce the choice, so a device can hand back two
+		// branches. method and method_detail must then describe the SAME one.
+		{"two branches agree on precedence", &authprofile.Method{
+			Kerberos:      &authprofile.MethodKerberos{Realm: new("EXAMPLE.COM"), ServerProfile: new("kdc1")},
+			LocalDatabase: &authprofile.MethodLocalDatabase{},
+		}, "kerberos", map[string]any{"realm": "EXAMPLE.COM", "server_profile": "kdc1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, ok := authProfileSummary(&authprofile.Entry{Name: "ap1", Method: tc.method}).(map[string]any)
+			if !ok {
+				t.Fatal("summary is not a map")
+			}
+			if m["method"] != tc.wantMethod {
+				t.Fatalf("method = %v, want %v", m["method"], tc.wantMethod)
+			}
+			got, present := m["method_detail"]
+			if tc.wantDetail == nil {
+				if present {
+					t.Fatalf("%s has no modeled detail, got %v", tc.name, got)
+				}
+				return
+			}
+			detail, ok := got.(map[string]any)
+			if !ok {
+				t.Fatalf("method_detail missing or wrong type: %T", got)
+			}
+			if !maps.Equal(detail, tc.wantDetail) {
+				t.Fatalf("method_detail = %v, want %v", detail, tc.wantDetail)
+			}
+		})
 	}
-	if m["method"] != "ldap" {
-		t.Fatalf("method = %v, want ldap", m["method"])
-	}
-	detail, ok := m["method_detail"].(map[string]any)
-	if !ok {
-		t.Fatalf("method_detail missing or wrong type: %T", m["method_detail"])
-	}
-	if detail["server_profile"] != "ldap1" || detail["login_attribute"] != "uid" || detail["passwd_exp_days"] != int64(3) {
-		t.Fatalf("ldap detail: %+v", detail)
+}
+
+// TestAuthProfileMethodPrecedenceExhaustive proves, for all 255 non-empty
+// subsets of the eight pango method branches, that authProfileMethodDetail
+// projects the branch authProfileMethodString names.
+//
+// It exists because two successive attempts to align those two switches by
+// inspection were both wrong: the first left them in different orders, and the
+// fix for that collapsed the three field-free branches into one leading case,
+// which promoted local-database and none above kerberos and ldap. Neither error
+// was visible to a hand-written table, and pango does not enforce the choice, so
+// a device really can hand back an entry with several branches set.
+//
+// The check is by construction rather than by example: for each subset it
+// compares the detail against the detail of a method carrying ONLY the named
+// branch. Any reordering of authProfileMethodDetail's arms relative to
+// authProfileMethodString turns some subset red.
+func TestAuthProfileMethodPrecedenceExhaustive(t *testing.T) {
+	// Ordered as authProfileMethodString evaluates them.
+	branches := []struct {
+		name string
+		set  func(*authprofile.Method)
+	}{
+		{"cloud", func(m *authprofile.Method) { m.Cloud = &authprofile.MethodCloud{ClockSkew: new(int64(60))} }},
+		{"kerberos", func(m *authprofile.Method) {
+			m.Kerberos = &authprofile.MethodKerberos{Realm: new("EXAMPLE.COM"), ServerProfile: new("kdc1")}
+		}},
+		{"ldap", func(m *authprofile.Method) {
+			m.Ldap = &authprofile.MethodLdap{ServerProfile: new("ldap1"), LoginAttribute: new("uid")}
+		}},
+		{"local-database", func(m *authprofile.Method) { m.LocalDatabase = &authprofile.MethodLocalDatabase{} }},
+		{"none", func(m *authprofile.Method) { m.None = &authprofile.MethodNone{} }},
+		{"radius", func(m *authprofile.Method) {
+			m.Radius = &authprofile.MethodRadius{ServerProfile: new("rad1"), Checkgroup: new(true)}
+		}},
+		{"saml-idp", func(m *authprofile.Method) {
+			m.SamlIdp = &authprofile.MethodSamlIdp{ServerProfile: new("idp1"), AttributeNameUsername: new("u")}
+		}},
+		{"tacplus", func(m *authprofile.Method) {
+			m.Tacplus = &authprofile.MethodTacplus{ServerProfile: new("tac1"), Checkgroup: new(false)}
+		}},
 	}
 
-	// The cloud branch is reportable but not settable, and carries no detail.
-	cloud := &authprofile.Entry{Name: "ap2", Method: &authprofile.Method{Cloud: &authprofile.MethodCloud{}}}
-	cm, _ := authProfileSummary(cloud).(map[string]any)
-	if cm["method"] != "cloud" {
-		t.Fatalf("a cloud method must still be reported, got %v", cm["method"])
+	build := func(mask int) *authprofile.Method {
+		m := &authprofile.Method{}
+		for i, b := range branches {
+			if mask&(1<<i) != 0 {
+				b.set(m)
+			}
+		}
+		return m
 	}
-	if _, present := cm["method_detail"]; present {
-		t.Fatalf("the cloud branch has no modeled detail, got %v", cm["method_detail"])
+
+	for mask := 1; mask < 1<<len(branches); mask++ {
+		m := build(mask)
+		name := authProfileMethodString(m)
+		// The name must be the FIRST set branch in the declared order.
+		wantIdx := -1
+		for i := range branches {
+			if mask&(1<<i) != 0 {
+				wantIdx = i
+				break
+			}
+		}
+		if name != branches[wantIdx].name {
+			t.Fatalf("mask %08b: method = %q, want %q", mask, name, branches[wantIdx].name)
+		}
+		// The detail must equal the detail of that branch on its own.
+		got := authProfileMethodDetail(m)
+		want := authProfileMethodDetail(build(1 << wantIdx))
+		if !maps.Equal(got, want) {
+			t.Fatalf("mask %08b: method %q reported detail %v, but that branch alone projects %v",
+				mask, name, got, want)
+		}
 	}
 }
 

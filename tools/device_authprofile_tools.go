@@ -367,13 +367,18 @@ func authProfileMethodDetail(m *authprofile.Method) map[string]any {
 	if m == nil {
 		return detail
 	}
-	// The arms are in the SAME precedence order as authProfileMethodString,
-	// including the three branches that contribute no detail. pango does not
-	// enforce the choice, so an entry written by another tool can carry two
-	// branches; matching the order keeps method and method_detail describing the
-	// same one instead of silently disagreeing.
+	// The arms follow authProfileMethodString's precedence order exactly. pango
+	// does not enforce the choice, so an entry written by another tool can carry
+	// several branches; matching the order is what keeps method and method_detail
+	// describing the same one. Collapsing the field-free branches into a single
+	// leading case would reorder them ahead of kerberos and ldap and reintroduce
+	// exactly that disagreement, which is a bug this file has already shipped
+	// once. local-database and none share one arm only because they are adjacent
+	// in that order and both project nothing; give either a modeled field and
+	// they must be split. TestAuthProfileMethodPrecedenceExhaustive checks every
+	// one of the 255 branch combinations, so a reordering cannot pass unnoticed.
 	switch {
-	case m.Cloud != nil, m.LocalDatabase != nil, m.None != nil:
+	case m.Cloud != nil:
 		// No modeled fields to project.
 	case m.Kerberos != nil:
 		detail["realm"] = strVal(m.Kerberos.Realm)
@@ -382,6 +387,8 @@ func authProfileMethodDetail(m *authprofile.Method) map[string]any {
 		detail["login_attribute"] = strVal(m.Ldap.LoginAttribute)
 		detail["server_profile"] = strVal(m.Ldap.ServerProfile)
 		putInt(detail, "passwd_exp_days", m.Ldap.PasswdExpDays)
+	case m.LocalDatabase != nil, m.None != nil:
+		// No modeled fields to project.
 	case m.Radius != nil:
 		detail["server_profile"] = strVal(m.Radius.ServerProfile)
 		putBool(detail, "checkgroup", m.Radius.Checkgroup)
