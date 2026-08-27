@@ -755,7 +755,7 @@ func TestAuthProfileSharedScopeRejected(t *testing.T) {
 	}
 }
 
-// TestAuthProfileScopeResolves pins the four location constructors this family
+// TestAuthProfileScopeResolves pins the five location constructors this family
 // supplies, so a copy-paste error in any of them is visible.
 //
 // Sabotage: delete any one constructor from authProfileParts and its subtest
