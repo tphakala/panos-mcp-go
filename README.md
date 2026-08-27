@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 299 tools on Panorama and 283 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 119 on Panorama, 116 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 313 tools on Panorama and 297 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 125 on Panorama, 122 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -81,6 +81,11 @@ The server registers 299 tools on Panorama and 283 on a firewall (the 21 Panoram
 | `panos_address_group_create` | write | Create an address group in the candidate config. |
 | `panos_address_group_update` | write | Update an address group: read-modify-write, only provided fields change. |
 | `panos_address_group_delete` | write | Delete an address group from the candidate config. |
+| `panos_dynamic_user_group_list` | read-only | List dynamic user groups (tag-based member selection) at a location. |
+| `panos_dynamic_user_group_get` | read-only | Get one dynamic user group by name with all fields. |
+| `panos_dynamic_user_group_create` | write | Create a dynamic user group; filter is the tag-match expression selecting members. |
+| `panos_dynamic_user_group_update` | write | Update a dynamic user group: read-modify-write, only provided fields change. |
+| `panos_dynamic_user_group_delete` | write | Delete a dynamic user group from the candidate config. |
 | `panos_service_list` | read-only | List service objects (TCP/UDP port definitions) at a location. |
 | `panos_service_get` | read-only | Get one service object by name with all fields. |
 | `panos_service_create` | write | Create a service object in the candidate config. |
@@ -347,6 +352,10 @@ These network-configuration tools are net-scoped: on a firewall they act on the 
 | `panos_virtual_router_create` | write | Create a virtual router; bind member interfaces and set administrative distances. |
 | `panos_virtual_router_update` | write | Update a virtual router: read-modify-write; a provided interfaces list replaces the members fully. Routing protocols (BGP, OSPF, OSPFv3, RIP), ECMP and multicast are preserved untouched. |
 | `panos_virtual_router_delete` | write | Delete a virtual router from the candidate config. |
+| `panos_logical_router_list` | read-only | List logical routers at a location. |
+| `panos_logical_router_get` | read-only | Get one logical router (name and VRF count). |
+| `panos_logical_router_create` | write | Create an empty logical router; per-VRF routing is configured elsewhere and preserved. |
+| `panos_logical_router_delete` | write | Delete a logical router (and its VRF configuration) from the candidate config. |
 | `panos_interface_mgmt_profile_list` | read-only | List interface management profiles at a location. |
 | `panos_interface_mgmt_profile_get` | read-only | Get one interface management profile (permitted services and permitted IPs). |
 | `panos_interface_mgmt_profile_create` | write | Create an interface management profile in the candidate config. |
@@ -374,6 +383,11 @@ These network profiles and the two Layer 2 switching objects are net-scoped: on 
 | `panos_monitor_profile_create` | write | Create a monitor profile in the candidate config. |
 | `panos_monitor_profile_update` | write | Update a monitor profile: read-modify-write. |
 | `panos_monitor_profile_delete` | write | Delete a monitor profile from the candidate config. |
+| `panos_zone_protection_list` | read-only | List zone protection profiles at a location. |
+| `panos_zone_protection_get` | read-only | Get one zone protection profile (packet-based-attack toggles). |
+| `panos_zone_protection_create` | write | Create a zone protection profile in the candidate config. |
+| `panos_zone_protection_update` | write | Update a zone protection profile: read-modify-write; flood, IPv6, reconnaissance, non-IP-protocol and scan sub-blocks are preserved. |
+| `panos_zone_protection_delete` | write | Delete a zone protection profile from the candidate config. |
 | `panos_virtual_wire_list` | read-only | List virtual wires at a location. |
 | `panos_virtual_wire_get` | read-only | Get one virtual wire (bound interfaces and allowed tags). |
 | `panos_virtual_wire_create` | write | Create a virtual wire binding two Layer 2 interfaces. |
@@ -447,7 +461,7 @@ These device-scoped identity objects resolve the same way as the server profiles
 | --- | --- | --- |
 | `panos_local_user_list` | read-only | List local database users at a location. |
 | `panos_local_user_get` | read-only | Get one local user (disabled state; the password hash is never returned). |
-| `panos_local_user_create` | write | Create a local database user; password_hash is a write-only PHASH. |
+| `panos_local_user_create` | write | Create a local database user; password_hash is required and is a write-only PHASH. |
 | `panos_local_user_update` | write | Update a local user: read-modify-write; an omitted password_hash is kept. |
 | `panos_local_user_delete` | write | Delete a local database user from the candidate config. |
 | `panos_saml_idp_profile_list` | read-only | List SAML identity provider profiles at a location. |

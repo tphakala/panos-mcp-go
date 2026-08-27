@@ -49,7 +49,7 @@ type LocalUserInput struct {
 	DeviceScopeInput
 	Name         string  `json:"name" jsonschema:"Local database user name"`
 	Disabled     *bool   `json:"disabled,omitzero" jsonschema:"Disable this user"`
-	PasswordHash *string `json:"password_hash,omitzero" jsonschema:"Pre-hashed password (PHASH string, e.g. the output of the request-password-hash operation). Write-only: never returned. Omit on update to keep the stored value."`
+	PasswordHash *string `json:"password_hash,omitzero" jsonschema:"Pre-hashed password (PHASH string, e.g. the output of the request-password-hash operation). Required on create (PAN-OS rejects a local user with no phash); optional on update, where omitting it keeps the stored value. Write-only: never returned."`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder/overlay contract.
@@ -62,6 +62,16 @@ func applyLocalUser(e *localdb.Entry, in LocalUserInput) {
 func buildLocalUser(in LocalUserInput) (*localdb.Entry, error) {
 	if in.Name == "" {
 		return nil, errors.New("name is required")
+	}
+	// PAN-OS requires a password hash for every local database user. A create
+	// without one fails commit-time validation with "... local-user-database ->
+	// user -> <name> is missing 'phash'" (verified live against PAN-OS
+	// 11.1.16-h1 via validate full). Reject it up front with a clear message
+	// instead of surfacing the device error at commit. Update stays lenient: an
+	// omitted password_hash keeps the stored value (see overlayLocalUser), so the
+	// guard lives here on the create path only, not on the shared applyLocalUser.
+	if in.PasswordHash == nil || *in.PasswordHash == "" {
+		return nil, errors.New("password_hash is required to create a local database user")
 	}
 	e := &localdb.Entry{Name: in.Name}
 	applyLocalUser(e, in)
@@ -105,7 +115,7 @@ func RegisterLocalUserTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_local_user_create",
-		Description: "Create a local database user in the candidate config. password_hash is a write-only pre-hashed password. Run panos_commit to apply.",
+		Description: "Create a local database user in the candidate config. password_hash is required (PAN-OS rejects a local user with no phash) and is a write-only pre-hashed password. Run panos_commit to apply.",
 		Annotations: createTool("Create local database user"),
 	}, deviceCreateHandler(d, "panos_local_user_create", svc, parts, scope, buildLocalUser, localUserSummary, withSecrets(localUserSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
