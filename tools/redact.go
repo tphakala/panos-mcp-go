@@ -123,6 +123,8 @@ func ikeGatewaySecrets(in *IkeGatewayInput) []string { return secretVals(in.PreS
 
 func localUserSecrets(in *LocalUserInput) []string { return secretVals(in.PasswordHash) }
 
+func administratorSecrets(in *AdministratorInput) []string { return secretVals(in.PasswordHash) }
+
 func mfaProfileSecrets(in *MfaProfileInput) []string {
 	return collectSecrets(in.Config, func(c MfaVendorConfigInput) *string { return c.Value })
 }

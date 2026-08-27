@@ -38,6 +38,7 @@ type (
 	netScoped     interface{ netScope() NetScopeInput }
 	deviceScoped  interface{ deviceScope() DeviceScopeInput }
 	profileScoped interface{ profileScope() ProfileScopeInput }
+	mgtScoped     interface{ mgtScope() MgtScopeInput }
 )
 
 // The paging and single-entry accessors. Each scope family's list input carries

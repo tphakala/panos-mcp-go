@@ -739,5 +739,9 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	// Panorama shared/panorama/template/template_stack).
 	RegisterSslTlsProfileTools(s, d)
 	RegisterCertificateProfileTools(s, d)
+	// Tier 5: management-plane administration (mgt-scoped): the device's own
+	// mgt-config, or Panorama's, or one pushed by a template or template stack.
+	RegisterPasswordProfileTools(s, d)
+	RegisterAdministratorTools(s, d)
 	RegisterOpTools(s, d)
 }
