@@ -207,7 +207,6 @@ func ethernetInterfaceSummary(e *ethernet.Entry) any {
 func RegisterEthernetInterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newEthernetInterfaceService(d)
 	parts := ethernetInterfaceParts()
-	scope := func(in EthernetInterfaceInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_interface_list",
@@ -226,12 +225,12 @@ func RegisterEthernetInterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ethernet_interface_create",
 		Description: "Create a Layer3 ethernet interface in the candidate config. This server models only the layer3 mode: the new interface is layer3, and layer2, virtual-wire and tap modes are not offered here. Set ips (ip-netmask or address-object names), mtu, interface_management_profile and ipv6_enabled as needed. Run panos_commit to apply.",
 		Annotations: createTool("Create ethernet interface"),
-	}, netCreateHandler(d, "panos_ethernet_interface_create", svc, parts, scope, buildEthernetInterface, ethernetInterfaceSummary))
+	}, netCreateHandler(d, "panos_ethernet_interface_create", svc, parts, buildEthernetInterface, ethernetInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_interface_update",
 		Description: "Update an ethernet interface: read-modify-write, only provided fields change; a provided ips list replaces the current addresses fully (an empty list clears them). Layer3 fields apply into the existing layer3 block. Converting an existing layer2, virtual-wire or tap port to layer3 is out of scope: sibling mode blocks are never cleared, and their SDK-only subtrees are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update ethernet interface"),
-	}, netUpdateHandler(d, "panos_ethernet_interface_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_ethernet_interface_update", svc, parts,
 		func(in EthernetInterfaceInput) string { return in.Name }, overlayEthernetInterface, ethernetInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_interface_delete",
@@ -347,7 +346,6 @@ func aggregateInterfaceSummary(e *aggregate.Entry) any {
 func RegisterAggregateInterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newAggregateInterfaceService(d)
 	parts := aggregateInterfaceParts()
-	scope := func(in AggregateInterfaceInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_interface_list",
@@ -366,12 +364,12 @@ func RegisterAggregateInterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_aggregate_interface_create",
 		Description: "Create a Layer3 aggregate (aggregate-ethernet) interface in the candidate config. This server models only the layer3 mode. Add member ports by setting aggregate_group on the ethernet interfaces. Run panos_commit to apply.",
 		Annotations: createTool("Create aggregate interface"),
-	}, netCreateHandler(d, "panos_aggregate_interface_create", svc, parts, scope, buildAggregateInterface, aggregateInterfaceSummary))
+	}, netCreateHandler(d, "panos_aggregate_interface_create", svc, parts, buildAggregateInterface, aggregateInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_interface_update",
 		Description: "Update an aggregate interface: read-modify-write, only provided fields change; a provided ips list replaces the current addresses fully (an empty list clears them). Converting an existing layer2 or virtual-wire aggregate to layer3 is out of scope: sibling mode blocks are never cleared, and their SDK-only subtrees are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update aggregate interface"),
-	}, netUpdateHandler(d, "panos_aggregate_interface_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_aggregate_interface_update", svc, parts,
 		func(in AggregateInterfaceInput) string { return in.Name }, overlayAggregateInterface, aggregateInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_interface_delete",

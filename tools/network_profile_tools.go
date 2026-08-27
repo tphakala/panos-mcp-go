@@ -145,7 +145,6 @@ func interfaceManagementProfileSummary(e *interface_management.Entry) any {
 func RegisterInterfaceManagementProfileTools(s *mcp.Server, d *Deps) {
 	svc := newInterfaceManagementProfileService(d)
 	parts := interfaceManagementProfileParts()
-	scope := func(in InterfaceManagementProfileInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_interface_mgmt_profile_list",
@@ -164,12 +163,12 @@ func RegisterInterfaceManagementProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_interface_mgmt_profile_create",
 		Description: "Create an interface management profile in the candidate config. Only name is required; each service toggle defaults to the device default when omitted. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create interface management profile"),
-	}, netCreateHandler(d, "panos_interface_mgmt_profile_create", svc, parts, scope, buildInterfaceManagementProfile, interfaceManagementProfileSummary))
+	}, netCreateHandler(d, "panos_interface_mgmt_profile_create", svc, parts, buildInterfaceManagementProfile, interfaceManagementProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_interface_mgmt_profile_update",
 		Description: "Update an interface management profile: read-modify-write, only provided fields change. A provided permitted_ip replaces the whole allow list. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update interface management profile"),
-	}, netUpdateHandler(d, "panos_interface_mgmt_profile_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_interface_mgmt_profile_update", svc, parts,
 		func(in InterfaceManagementProfileInput) string { return in.Name }, overlayInterfaceManagementProfile, interfaceManagementProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_interface_mgmt_profile_delete",
@@ -255,7 +254,6 @@ func lldpProfileSummary(e *lldp.Entry) any {
 func RegisterLldpProfileTools(s *mcp.Server, d *Deps) {
 	svc := newLldpProfileService(d)
 	parts := lldpProfileParts()
-	scope := func(in LldpProfileInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_lldp_profile_list",
@@ -274,12 +272,12 @@ func RegisterLldpProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_lldp_profile_create",
 		Description: "Create an LLDP profile in the candidate config. Only name is required. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create LLDP profile"),
-	}, netCreateHandler(d, "panos_lldp_profile_create", svc, parts, scope, buildLldpProfile, lldpProfileSummary))
+	}, netCreateHandler(d, "panos_lldp_profile_create", svc, parts, buildLldpProfile, lldpProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_lldp_profile_update",
 		Description: "Update an LLDP profile: read-modify-write, only provided fields change. The optional TLV set is preserved. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update LLDP profile"),
-	}, netUpdateHandler(d, "panos_lldp_profile_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_lldp_profile_update", svc, parts,
 		func(in LldpProfileInput) string { return in.Name }, overlayLldpProfile, lldpProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_lldp_profile_delete",
@@ -373,7 +371,6 @@ func bfdProfileSummary(e *bfd.Entry) any {
 func RegisterBfdProfileTools(s *mcp.Server, d *Deps) {
 	svc := newBfdProfileService(d)
 	parts := bfdProfileParts()
-	scope := func(in BfdProfileInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_bfd_profile_list",
@@ -392,12 +389,12 @@ func RegisterBfdProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_bfd_profile_create",
 		Description: "Create a BFD profile in the candidate config. Only name is required; each timer defaults to the device default when omitted. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create BFD profile"),
-	}, netCreateHandler(d, "panos_bfd_profile_create", svc, parts, scope, buildBfdProfile, bfdProfileSummary))
+	}, netCreateHandler(d, "panos_bfd_profile_create", svc, parts, buildBfdProfile, bfdProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_bfd_profile_update",
 		Description: "Update a BFD profile: read-modify-write, only provided fields change. The optional multihop settings are preserved. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update BFD profile"),
-	}, netUpdateHandler(d, "panos_bfd_profile_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_bfd_profile_update", svc, parts,
 		func(in BfdProfileInput) string { return in.Name }, overlayBfdProfile, bfdProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_bfd_profile_delete",
@@ -485,7 +482,6 @@ func monitorProfileSummary(e *monitor.Entry) any {
 func RegisterMonitorProfileTools(s *mcp.Server, d *Deps) {
 	svc := newMonitorProfileService(d)
 	parts := monitorProfileParts()
-	scope := func(in MonitorProfileInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_monitor_profile_list",
@@ -504,12 +500,12 @@ func RegisterMonitorProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_monitor_profile_create",
 		Description: "Create a monitor profile in the candidate config. Only name is required. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create monitor profile"),
-	}, netCreateHandler(d, "panos_monitor_profile_create", svc, parts, scope, buildMonitorProfile, monitorProfileSummary))
+	}, netCreateHandler(d, "panos_monitor_profile_create", svc, parts, buildMonitorProfile, monitorProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_monitor_profile_update",
 		Description: "Update a monitor profile: read-modify-write, only provided fields change. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update monitor profile"),
-	}, netUpdateHandler(d, "panos_monitor_profile_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_monitor_profile_update", svc, parts,
 		func(in MonitorProfileInput) string { return in.Name }, overlayMonitorProfile, monitorProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_monitor_profile_delete",

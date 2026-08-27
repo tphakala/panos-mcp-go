@@ -22,6 +22,11 @@ type NetScopeInput struct {
 	TemplateStack string `json:"template_stack,omitempty" jsonschema:"Panorama template-stack name (Panorama only; mutually exclusive with template)"`
 }
 
+// netScope returns the scope itself, so every input that embeds
+// NetScopeInput satisfies netScoped through promotion and the handlers can take
+// the scope off the input rather than being handed a closure that does it.
+func (in NetScopeInput) netScope() NetScopeInput { return in }
+
 // netScopeParts supplies the per-resource pango location constructors for
 // resolveNetScope. ngfw may be nil for a resource that pango models only under a
 // template or template-stack (the template variable): a nil ngfw makes a bare
@@ -110,29 +115,27 @@ func netDeleteHandler[L, E any](
 }
 
 // netCreateHandler mirrors createHandler for the net-scope resolver.
-func netCreateHandler[L, E, In any](
+func netCreateHandler[L, E any, In netScoped](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
-	scope func(In) NetScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
-		func(in In) (L, error) { return resolveNetScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		build, summarize, opts...)
 }
 
 // netUpdateHandler mirrors updateHandler for the net-scope resolver: a
 // read-modify-write overlay applying only the caller-provided fields.
-func netUpdateHandler[L, E, In any](
+func netUpdateHandler[L, E any, In netScoped](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
-	scope func(In) NetScopeInput,
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
-		func(in In) (L, error) { return resolveNetScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		name, overlay, summarize, opts...)
 }

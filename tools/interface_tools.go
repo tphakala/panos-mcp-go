@@ -140,7 +140,6 @@ func loopbackInterfaceSummary(e *loopback.Entry) any {
 func RegisterLoopbackInterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newLoopbackInterfaceService(d)
 	parts := loopbackInterfaceParts()
-	scope := func(in LoopbackInterfaceInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_loopback_interface_list",
@@ -159,12 +158,12 @@ func RegisterLoopbackInterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_loopback_interface_create",
 		Description: "Create a loopback interface in the candidate config. Only name is required. Run panos_commit to apply.",
 		Annotations: createTool("Create loopback interface"),
-	}, netCreateHandler(d, "panos_loopback_interface_create", svc, parts, scope, buildLoopbackInterface, loopbackInterfaceSummary))
+	}, netCreateHandler(d, "panos_loopback_interface_create", svc, parts, buildLoopbackInterface, loopbackInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_loopback_interface_update",
 		Description: "Update a loopback interface: read-modify-write, only provided fields change; a provided ips list replaces fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update loopback interface"),
-	}, netUpdateHandler(d, "panos_loopback_interface_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_loopback_interface_update", svc, parts,
 		func(in LoopbackInterfaceInput) string { return in.Name }, overlayLoopbackInterface, loopbackInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_loopback_interface_delete",
@@ -267,7 +266,6 @@ func vlanInterfaceSummary(e *vlan.Entry) any {
 func RegisterVlanInterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newVlanInterfaceService(d)
 	parts := vlanInterfaceParts()
-	scope := func(in VlanInterfaceInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vlan_interface_list",
@@ -286,12 +284,12 @@ func RegisterVlanInterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_vlan_interface_create",
 		Description: "Create a VLAN interface in the candidate config. Only name is required. Run panos_commit to apply.",
 		Annotations: createTool("Create VLAN interface"),
-	}, netCreateHandler(d, "panos_vlan_interface_create", svc, parts, scope, buildVlanInterface, vlanInterfaceSummary))
+	}, netCreateHandler(d, "panos_vlan_interface_create", svc, parts, buildVlanInterface, vlanInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vlan_interface_update",
 		Description: "Update a VLAN interface: read-modify-write, only provided fields change; a provided ips list replaces fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update VLAN interface"),
-	}, netUpdateHandler(d, "panos_vlan_interface_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_vlan_interface_update", svc, parts,
 		func(in VlanInterfaceInput) string { return in.Name }, overlayVlanInterface, vlanInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vlan_interface_delete",
@@ -398,7 +396,6 @@ func tunnelInterfaceSummary(e *tunnel.Entry) any {
 func RegisterTunnelInterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newTunnelInterfaceService(d)
 	parts := tunnelInterfaceParts()
-	scope := func(in TunnelInterfaceInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tunnel_interface_list",
@@ -417,12 +414,12 @@ func RegisterTunnelInterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_tunnel_interface_create",
 		Description: "Create a tunnel interface in the candidate config. Only name is required. Run panos_commit to apply.",
 		Annotations: createTool("Create tunnel interface"),
-	}, netCreateHandler(d, "panos_tunnel_interface_create", svc, parts, scope, buildTunnelInterface, tunnelInterfaceSummary))
+	}, netCreateHandler(d, "panos_tunnel_interface_create", svc, parts, buildTunnelInterface, tunnelInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tunnel_interface_update",
 		Description: "Update a tunnel interface: read-modify-write, only provided fields change; a provided ips list replaces fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update tunnel interface"),
-	}, netUpdateHandler(d, "panos_tunnel_interface_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_tunnel_interface_update", svc, parts,
 		func(in TunnelInterfaceInput) string { return in.Name }, overlayTunnelInterface, tunnelInterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tunnel_interface_delete",

@@ -534,7 +534,6 @@ func RegisterTemplateVariableTools(s *mcp.Server, d *Deps) {
 	}
 	svc := newTemplateVariableService(d)
 	parts := templateVariableParts()
-	scope := func(in TemplateVariableInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_template_variable_list",
@@ -553,12 +552,12 @@ func RegisterTemplateVariableTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_template_variable_create",
 		Description: "Create a Panorama template variable in a template or template_stack. var_type and value are required. Run panos_commit to apply.",
 		Annotations: createTool("Create template variable"),
-	}, netCreateHandler(d, "panos_template_variable_create", svc, parts, scope, buildTemplateVariable, templateVariableSummary))
+	}, netCreateHandler(d, "panos_template_variable_create", svc, parts, buildTemplateVariable, templateVariableSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_template_variable_update",
 		Description: "Update a Panorama template variable: read-modify-write. Provide var_type and value together to change the value (this replaces the active type). Run panos_commit to apply.",
 		Annotations: updateTool("Update template variable"),
-	}, netUpdateHandler(d, "panos_template_variable_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_template_variable_update", svc, parts,
 		func(in TemplateVariableInput) string { return in.Name }, overlayTemplateVariable, templateVariableSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_template_variable_delete",

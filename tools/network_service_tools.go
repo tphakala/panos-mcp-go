@@ -168,7 +168,6 @@ func dhcpSummary(e *dhcp.Entry) any {
 func RegisterDhcpTools(s *mcp.Server, d *Deps) {
 	svc := newDhcpService(d)
 	parts := dhcpParts()
-	scope := func(in DhcpInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_dhcp_list",
@@ -187,12 +186,12 @@ func RegisterDhcpTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_dhcp_create",
 		Description: "Create a per-interface DHCP config in the candidate config. name is the interface (for example ethernet1/2). An interface is either a relay or a server, not both: set only the relay_* fields or only the server_* fields. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create DHCP config"),
-	}, netCreateHandler(d, "panos_dhcp_create", svc, parts, scope, buildDhcp, dhcpSummary))
+	}, netCreateHandler(d, "panos_dhcp_create", svc, parts, buildDhcp, dhcpSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_dhcp_update",
 		Description: "Update an interface's DHCP config: read-modify-write, only provided fields change. Supplying relay_* fields switches the interface to relay mode (clearing any server block) and server_* fields switch it to server mode; supplying both is rejected. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update DHCP config"),
-	}, netUpdateHandler(d, "panos_dhcp_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_dhcp_update", svc, parts,
 		func(in DhcpInput) string { return in.Name }, overlayDhcp, dhcpSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_dhcp_delete",
@@ -371,7 +370,6 @@ func dnsProxySummary(e *dnsproxy.Entry) any {
 func RegisterDnsProxyTools(s *mcp.Server, d *Deps) {
 	svc := newDnsProxyService(d)
 	parts := dnsProxyParts()
-	scope := func(in DnsProxyInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_dns_proxy_list",
@@ -390,12 +388,12 @@ func RegisterDnsProxyTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_dns_proxy_create",
 		Description: "Create a DNS proxy object in the candidate config. Only name is required. A template or template_stack is required (dns-proxy is template-scoped, with no firewall-local scope). Run panos_commit to apply.",
 		Annotations: createTool("Create DNS proxy"),
-	}, netCreateHandler(d, "panos_dns_proxy_create", svc, parts, scope, buildDnsProxy, dnsProxySummary))
+	}, netCreateHandler(d, "panos_dns_proxy_create", svc, parts, buildDnsProxy, dnsProxySummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_dns_proxy_update",
 		Description: "Update a DNS proxy object: read-modify-write, only provided fields change. A provided interfaces, static_entries, or domain_servers list replaces the whole list. A template or template_stack is required. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update DNS proxy"),
-	}, netUpdateHandler(d, "panos_dns_proxy_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_dns_proxy_update", svc, parts,
 		func(in DnsProxyInput) string { return in.Name }, overlayDnsProxy, dnsProxySummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_dns_proxy_delete",

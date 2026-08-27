@@ -35,6 +35,11 @@ type DeviceScopeInput struct {
 	TemplateVsys  string `json:"template_vsys,omitzero" jsonschema:"vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope"`
 }
 
+// deviceScope returns the scope itself, so every input that embeds
+// DeviceScopeInput satisfies deviceScoped through promotion and the handlers can take
+// the scope off the input rather than being handed a closure that does it.
+func (in DeviceScopeInput) deviceScope() DeviceScopeInput { return in }
+
 // deviceScopeParts supplies the per-resource pango location constructors for
 // resolveDeviceScope. shared may be nil for a resource pango does not model at a
 // shared scope (the log-settings profiles: syslog, SNMP-trap, email), which makes
@@ -148,29 +153,27 @@ func deviceDeleteHandler[L, E any](
 }
 
 // deviceCreateHandler mirrors netCreateHandler for the device-scope resolver.
-func deviceCreateHandler[L, E, In any](
+func deviceCreateHandler[L, E any, In deviceScoped](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
-	scope func(In) DeviceScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
-		func(in In) (L, error) { return resolveDeviceScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		build, summarize, opts...)
 }
 
 // deviceUpdateHandler mirrors netUpdateHandler for the device-scope resolver: a
 // read-modify-write overlay applying only the caller-provided fields.
-func deviceUpdateHandler[L, E, In any](
+func deviceUpdateHandler[L, E any, In deviceScoped](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
-	scope func(In) DeviceScopeInput,
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
-		func(in In) (L, error) { return resolveDeviceScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		name, overlay, summarize, opts...)
 }

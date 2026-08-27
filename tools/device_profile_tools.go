@@ -151,7 +151,6 @@ func sslTlsProfileSummary(e *ssltls.Entry) any {
 func RegisterSslTlsProfileTools(s *mcp.Server, d *Deps) {
 	svc := newSslTlsProfileService(d)
 	parts := sslTlsProfileParts()
-	scope := func(in SslTlsProfileInput) ProfileScopeInput { return in.ProfileScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ssl_tls_profile_list",
@@ -170,12 +169,12 @@ func RegisterSslTlsProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ssl_tls_profile_create",
 		Description: "Create an SSL/TLS service profile in the candidate config. certificate names an existing server certificate. Run panos_commit to apply.",
 		Annotations: createTool("Create SSL/TLS service profile"),
-	}, profileCreateHandler(d, "panos_ssl_tls_profile_create", svc, parts, scope, buildSslTlsProfile, sslTlsProfileSummary))
+	}, profileCreateHandler(d, "panos_ssl_tls_profile_create", svc, parts, buildSslTlsProfile, sslTlsProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ssl_tls_profile_update",
 		Description: "Update an SSL/TLS service profile: read-modify-write, only provided fields change. Run panos_commit to apply.",
 		Annotations: updateTool("Update SSL/TLS service profile"),
-	}, profileUpdateHandler(d, "panos_ssl_tls_profile_update", svc, parts, scope,
+	}, profileUpdateHandler(d, "panos_ssl_tls_profile_update", svc, parts,
 		func(in SslTlsProfileInput) string { return in.Name }, overlaySslTlsProfile, sslTlsProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ssl_tls_profile_delete",
@@ -361,7 +360,6 @@ func certificateProfileSummary(e *certprof.Entry) any {
 func RegisterCertificateProfileTools(s *mcp.Server, d *Deps) {
 	svc := newCertificateProfileService(d)
 	parts := certificateProfileParts()
-	scope := func(in CertificateProfileInput) ProfileScopeInput { return in.ProfileScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_certificate_profile_list",
@@ -380,12 +378,12 @@ func RegisterCertificateProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_certificate_profile_create",
 		Description: "Create a certificate profile in the candidate config. All certificate references are names of imported certificates. Run panos_commit to apply.",
 		Annotations: createTool("Create certificate profile"),
-	}, profileCreateHandler(d, "panos_certificate_profile_create", svc, parts, scope, buildCertificateProfile, certificateProfileSummary))
+	}, profileCreateHandler(d, "panos_certificate_profile_create", svc, parts, buildCertificateProfile, certificateProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_certificate_profile_update",
 		Description: "Update a certificate profile: read-modify-write, only provided fields change. A provided certificate_authorities list is merged by name, and a CA absent from it is removed. Run panos_commit to apply.",
 		Annotations: updateTool("Update certificate profile"),
-	}, profileUpdateHandler(d, "panos_certificate_profile_update", svc, parts, scope,
+	}, profileUpdateHandler(d, "panos_certificate_profile_update", svc, parts,
 		func(in CertificateProfileInput) string { return in.Name }, overlayCertificateProfile, certificateProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_certificate_profile_delete",

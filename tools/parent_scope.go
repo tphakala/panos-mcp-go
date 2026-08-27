@@ -159,55 +159,55 @@ func resolveParentNetScope[L xpathLocation](d *Deps, in NetScopeInput, parent st
 // parentScopeLoc[L] and a per-input parent accessor. Each is generic over In so
 // a family supplies its own input struct (list/name/full).
 
-func parentListHandler[L xpathLocation, E, In any](
+func parentListHandler[L xpathLocation, E any, In netScoped](
 	d *Deps, tool string, svc crudService[parentScopeLoc[L], E], p netScopeParts[L],
-	scope func(In) NetScopeInput, parent func(In) string,
+	parent func(In) string,
 	page func(In) (limit, offset int, filter string),
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return listCore(d, tool, svc,
-		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, scope(in), parent(in), p) },
+		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, in.netScope(), parent(in), p) },
 		page, name, summarize)
 }
 
-func parentGetHandler[L xpathLocation, E, In any](
+func parentGetHandler[L xpathLocation, E any, In netScoped](
 	d *Deps, tool string, svc crudService[parentScopeLoc[L], E], p netScopeParts[L],
-	scope func(In) NetScopeInput, parent func(In) string,
+	parent func(In) string,
 	name func(In) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return getCore(d, tool, svc,
-		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, scope(in), parent(in), p) },
+		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, in.netScope(), parent(in), p) },
 		name, summarize)
 }
 
-func parentDeleteHandler[L xpathLocation, E, In any](
+func parentDeleteHandler[L xpathLocation, E any, In netScoped](
 	d *Deps, tool string, svc crudService[parentScopeLoc[L], E], p netScopeParts[L],
-	scope func(In) NetScopeInput, parent func(In) string,
+	parent func(In) string,
 	name func(In) string,
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return deleteCore(d, tool, svc,
-		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, scope(in), parent(in), p) },
+		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, in.netScope(), parent(in), p) },
 		name)
 }
 
-func parentCreateHandler[L xpathLocation, E, In any](
+func parentCreateHandler[L xpathLocation, E any, In netScoped](
 	d *Deps, tool string, svc crudService[parentScopeLoc[L], E], p netScopeParts[L],
-	scope func(In) NetScopeInput, parent func(In) string,
+	parent func(In) string,
 	build func(In) (*E, error), summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
-		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, scope(in), parent(in), p) },
+		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, in.netScope(), parent(in), p) },
 		build, summarize, opts...)
 }
 
-func parentUpdateHandler[L xpathLocation, E, In any](
+func parentUpdateHandler[L xpathLocation, E any, In netScoped](
 	d *Deps, tool string, svc crudService[parentScopeLoc[L], E], p netScopeParts[L],
-	scope func(In) NetScopeInput, parent func(In) string,
+	parent func(In) string,
 	name func(In) string, overlay func(*E, In) error, summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
-		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, scope(in), parent(in), p) },
+		func(in In) (parentScopeLoc[L], error) { return resolveParentNetScope(d, in.netScope(), parent(in), p) },
 		name, overlay, summarize, opts...)
 }

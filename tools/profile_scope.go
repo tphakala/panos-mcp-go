@@ -22,6 +22,11 @@ type ProfileScopeInput struct {
 	TemplateVsys  string `json:"template_vsys,omitzero" jsonschema:"vsys within the chosen template or template_stack (Panorama only); omit for the template shared scope"`
 }
 
+// profileScope returns the scope itself, so every input that embeds
+// ProfileScopeInput satisfies profileScoped through promotion and the handlers can take
+// the scope off the input rather than being handed a closure that does it.
+func (in ProfileScopeInput) profileScope() ProfileScopeInput { return in }
+
 // profileScopeParts supplies the six pango location constructors resolveProfileScope
 // selects among.
 type profileScopeParts[L any] struct {
@@ -142,29 +147,27 @@ func profileDeleteHandler[L, E any](
 }
 
 // profileCreateHandler mirrors deviceCreateHandler for the profile-scope resolver.
-func profileCreateHandler[L, E, In any](
+func profileCreateHandler[L, E any, In profileScoped](
 	d *Deps, tool string, svc crudService[L, E], p profileScopeParts[L],
-	scope func(In) ProfileScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
-		func(in In) (L, error) { return resolveProfileScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveProfileScope(d, in.profileScope(), p) },
 		build, summarize, opts...)
 }
 
 // profileUpdateHandler mirrors deviceUpdateHandler for the profile-scope resolver:
 // a read-modify-write overlay applying only the caller-provided fields.
-func profileUpdateHandler[L, E, In any](
+func profileUpdateHandler[L, E any, In profileScoped](
 	d *Deps, tool string, svc crudService[L, E], p profileScopeParts[L],
-	scope func(In) ProfileScopeInput,
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
-		func(in In) (L, error) { return resolveProfileScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveProfileScope(d, in.profileScope(), p) },
 		name, overlay, summarize, opts...)
 }
