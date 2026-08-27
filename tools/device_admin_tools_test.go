@@ -458,3 +458,147 @@ func TestAdministratorUpdateRedactsPasswordHashOnError(t *testing.T) {
 		t.Fatalf("expected the redaction placeholder in the error: %q", out)
 	}
 }
+
+// storedRoleBranch returns an entry carrying exactly one role branch, named by
+// role. It covers all seven branches pango models, including the two per-vsys
+// ones this server never accepts as input but must still clear and report.
+func storedRoleBranch(role string) *administrator.Entry {
+	rb := &administrator.PermissionsRoleBased{}
+	const yes = "yes"
+	switch role {
+	case adminRoleSuperuser:
+		rb.Superuser = new(yes)
+	case adminRoleSuperreader:
+		rb.Superreader = new(yes)
+	case adminRolePanoramaAdmin:
+		rb.PanoramaAdmin = new(yes)
+	case adminRoleDeviceAdmin:
+		rb.Deviceadmin = []string{yes}
+	case adminRoleDeviceReader:
+		rb.Devicereader = []string{yes}
+	case adminRoleVsysAdmin:
+		rb.Vsysadmin = []administrator.PermissionsRoleBasedVsysadmin{{Name: "d", Vsys: []string{"vsys1"}}}
+	case adminRoleVsysReader:
+		rb.Vsysreader = []administrator.PermissionsRoleBasedVsysreader{{Name: "d", Vsys: []string{"vsys1"}}}
+	case "custom":
+		rb.Custom = &administrator.PermissionsRoleBasedCustom{Profile: new("stale-role")}
+	}
+	return &administrator.Entry{
+		Name:        "admin1",
+		Permissions: &administrator.Permissions{RoleBased: rb},
+	}
+}
+
+// setRoleBranches reports every role branch currently set on an entry. Exactly
+// one may ever be set: PAN-OS rejects a role-based block carrying two.
+func setRoleBranches(e *administrator.Entry) []string {
+	rb := e.Permissions.RoleBased
+	var out []string
+	for _, c := range []struct {
+		name string
+		set  bool
+	}{
+		{adminRoleSuperuser, rb.Superuser != nil},
+		{adminRoleSuperreader, rb.Superreader != nil},
+		{adminRolePanoramaAdmin, rb.PanoramaAdmin != nil},
+		{adminRoleDeviceAdmin, len(rb.Deviceadmin) > 0},
+		{adminRoleDeviceReader, len(rb.Devicereader) > 0},
+		{adminRoleVsysAdmin, len(rb.Vsysadmin) > 0},
+		{adminRoleVsysReader, len(rb.Vsysreader) > 0},
+		{"custom", rb.Custom != nil},
+	} {
+		if c.set {
+			out = append(out, c.name)
+		}
+	}
+	return out
+}
+
+// assertExactlyOneRole fails unless the entry carries exactly the one named role
+// branch. Two branches set is the config PAN-OS rejects.
+func assertExactlyOneRole(t *testing.T, e *administrator.Entry, from, want string) {
+	t.Helper()
+	got := setRoleBranches(e)
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("switching from %s to %s must leave exactly one branch set, got %v", from, want, got)
+	}
+}
+
+// allStoredRoleBranches is every branch an entry can already carry, and
+// settableRoles is every branch these tools can switch it to.
+var (
+	allStoredRoleBranches = []string{
+		adminRoleSuperuser, adminRoleSuperreader, adminRolePanoramaAdmin,
+		adminRoleDeviceAdmin, adminRoleDeviceReader,
+		adminRoleVsysAdmin, adminRoleVsysReader, "custom",
+	}
+	settableRoles = []string{
+		adminRoleSuperuser, adminRoleSuperreader, adminRolePanoramaAdmin,
+		adminRoleDeviceAdmin, adminRoleDeviceReader,
+	}
+)
+
+// TestAdministratorRoleExclusiveToBuiltin drives every stored role branch to
+// every settable built-in role and asserts exactly one branch survives.
+//
+// A single linear walk leaves most clear lines dead: deleting any of them keeps
+// such a suite green while a stale sibling survives, which is exactly the config
+// PAN-OS rejects. Only a stored x target table reaches all of them.
+func TestAdministratorRoleExclusiveToBuiltin(t *testing.T) {
+	for _, from := range allStoredRoleBranches {
+		for _, to := range settableRoles {
+			t.Run(from+"_to_"+to, func(t *testing.T) {
+				e := storedRoleBranch(from)
+				if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", Role: new(to)}); err != nil {
+					t.Fatal(err)
+				}
+				assertExactlyOneRole(t, e, from, to)
+				m, _ := administratorSummary(e).(map[string]any)
+				if m["role"] != to {
+					t.Errorf("the summary must report %s, got %v", to, m["role"])
+				}
+			})
+		}
+	}
+}
+
+// TestAdministratorRoleExclusiveToCustom is the same sweep for the custom
+// branch, which is reached through role_profile rather than role.
+func TestAdministratorRoleExclusiveToCustom(t *testing.T) {
+	for _, from := range allStoredRoleBranches {
+		t.Run(from+"_to_custom", func(t *testing.T) {
+			e := storedRoleBranch(from)
+			if err := overlayAdministrator(e, AdministratorInput{Name: "admin1", RoleProfile: new("ReadOnlyRole")}); err != nil {
+				t.Fatal(err)
+			}
+			assertExactlyOneRole(t, e, from, "custom")
+			m, _ := administratorSummary(e).(map[string]any)
+			if m["role_profile"] != "ReadOnlyRole" {
+				t.Errorf("the summary must report the custom profile, got %v", m["role_profile"])
+			}
+			if _, present := m["role"]; present {
+				t.Errorf("a custom role must not also report a built-in role: %+v", m)
+			}
+		})
+	}
+}
+
+// TestAdministratorSummaryReportsEveryStoredBranch pins the read projection for
+// all seven role branches, not just the one a single test happened to use.
+func TestAdministratorSummaryReportsEveryStoredBranch(t *testing.T) {
+	for _, role := range []string{
+		adminRoleSuperuser, adminRoleSuperreader, adminRolePanoramaAdmin,
+		adminRoleDeviceAdmin, adminRoleDeviceReader,
+		adminRoleVsysAdmin, adminRoleVsysReader,
+	} {
+		t.Run(role, func(t *testing.T) {
+			m, ok := administratorSummary(storedRoleBranch(role)).(map[string]any)
+			if !ok {
+				t.Fatal("summary must be a map")
+			}
+			if m["role"] != role {
+				t.Errorf("a stored %s must be reported as %s, got %v", role, role, m["role"])
+			}
+		})
+	}
+}
