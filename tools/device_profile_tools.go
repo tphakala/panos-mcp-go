@@ -258,10 +258,7 @@ type CertificateProfileInput struct {
 // matching the server-list builders in server_profile_tools.go. A CA absent
 // from the input is removed.
 func certificateAuthorities(in []CertificateAuthorityInput, existing []certprof.Certificate) []certprof.Certificate {
-	prev := make(map[string]certprof.Certificate, len(existing))
-	for _, c := range existing {
-		prev[c.Name] = c
-	}
+	prev := indexByName(existing, func(c certprof.Certificate) string { return c.Name })
 	cas := make([]certprof.Certificate, 0, len(in))
 	for i := range in {
 		ca := &in[i]

@@ -124,6 +124,20 @@ func names[T any](s []T, get func(T) string) []string {
 	return out
 }
 
+// indexByName maps each element of s by key(v), returning a non-nil empty map for
+// an empty input. It opens a merge-by-name update: each output element is seeded
+// from the stored element of the same name, so a field the caller omitted,
+// including a write-only secret and any unmodeled Misc, is preserved rather than
+// dropped. Named indexByName rather than byName because op_tools.go already uses
+// byName as a local variable.
+func indexByName[T any](s []T, key func(T) string) map[string]T {
+	out := make(map[string]T, len(s))
+	for _, v := range s {
+		out[key(v)] = v
+	}
+	return out
+}
+
 // setPtr assigns src to *dst when src is non-nil, leaving *dst untouched
 // otherwise. It collapses the read-modify-write "set only when provided" guard
 // used across the overlay builders for optional pointer fields.
@@ -636,6 +650,18 @@ func deleteHandler[L, E any](
 // writeOption secret extractor: no object family carries a write-only secret, so
 // there is nothing to redact from its device-error output (issue #92). A future
 // secret-bearing object family would thread the same opts seam through here.
+//
+// It also still takes an explicit location closure, where the net, device,
+// profile and mgt scopes replaced theirs with a promoted accessor. That is not
+// an oversight and it is not finishable: every object input names its scope
+// (Location LocationInput) rather than embedding it, so nothing is promoted and
+// there is no interface for the handler to constrain on. Switching the field to
+// an embed would flatten location into top-level shared/vsys/device_group
+// properties on every object tool, which is a client-visible break that
+// TestObjectScopeSchemaUnchanged in scope_schema_test.go correctly pins against.
+// Declaring the accessor on each of the roughly thirty object input structs
+// would trade thirty closures for thirty methods and win nothing. The same
+// applies to updateHandler below.
 func createHandler[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
 	resolve func(LocationInput) (L, error),
