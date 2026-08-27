@@ -70,7 +70,6 @@ func logicalRouterSummary(e *logical_router.Entry) any {
 func RegisterLogicalRouterTools(s *mcp.Server, d *Deps) {
 	svc := newLogicalRouterService(d)
 	parts := logicalRouterParts()
-	scope := func(in LogicalRouterInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_logical_router_list",
@@ -89,7 +88,7 @@ func RegisterLogicalRouterTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_logical_router_create",
 		Description: "Create an empty logical router in the candidate config. Only the name is set; per-VRF routing (interfaces, BGP, OSPF, static routes) is configured elsewhere and preserved. On Panorama a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create logical router"),
-	}, netCreateHandler(d, "panos_logical_router_create", svc, parts, scope, buildLogicalRouter, logicalRouterSummary))
+	}, netCreateHandler(d, "panos_logical_router_create", svc, parts, buildLogicalRouter, logicalRouterSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_logical_router_delete",
 		Description: "Delete a logical router (and its VRF configuration) from the candidate config. On Panorama a template or template_stack is required. Run panos_commit to apply.",

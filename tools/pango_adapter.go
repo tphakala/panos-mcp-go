@@ -33,6 +33,20 @@ type nameFixService[L xpathLocation, E any] interface {
 	List(ctx context.Context, loc L, action, filter, quote string) ([]*E, error)
 }
 
+// checkNoRename rejects an update whose target name differs from the entry's
+// own name. The update tools never rename (overlays do not touch Name) and
+// updateCore passes name equal to the entry name, so a mismatch can only come
+// from a direct-caller misuse; it is rejected rather than driving pango's
+// rename path. A blank name means "use the entry's own name" and passes.
+// Shared by nameFixAdapter.Update and parentFixAdapter.Update, which enforced
+// this with identical inline blocks.
+func checkNoRename(name, entryName string) error {
+	if name != "" && name != entryName {
+		return fmt.Errorf("renaming is not supported: the update name %q must match the entry name %q", name, entryName)
+	}
+	return nil
+}
+
 // nameFixAdapter adapts a generated pango CRUD service to crudService,
 // pre-wrapping names with util.AsEntryXpath for Read and driving Update through
 // the xpath-based SDK methods so both route around pango's raw-name rejection
@@ -65,14 +79,12 @@ func (a nameFixAdapter[L, E]) Read(ctx context.Context, loc L, name, action stri
 }
 
 // Update edits the entry in place, mirroring the SDK's name-based Update with
-// the xpath built from a properly wrapped entry name. The update tool never
-// renames (overlays do not touch Name) and updateHandler passes name equal to
-// the entry's name, so a differing name can only come from a direct-caller
-// misuse; it is rejected rather than driving pango's rename path.
+// the xpath built from a properly wrapped entry name, behind the shared
+// checkNoRename guard.
 func (a nameFixAdapter[L, E]) Update(ctx context.Context, loc L, entry *E, name string) (*E, error) {
 	entryName := a.name(entry)
-	if name != "" && name != entryName {
-		return nil, fmt.Errorf("renaming is not supported: the update name %q must match the entry name %q", name, entryName)
+	if err := checkNoRename(name, entryName); err != nil {
+		return nil, err
 	}
 	path, err := loc.XpathWithComponents(a.client.Versioning(), util.AsEntryXpath(entryName))
 	if err != nil {

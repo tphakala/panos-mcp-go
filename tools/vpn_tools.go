@@ -174,7 +174,6 @@ func ikeCryptoProfileSummary(e *ikecrypto.Entry) any {
 func RegisterIkeCryptoProfileTools(s *mcp.Server, d *Deps) {
 	svc := newIkeCryptoProfileService(d)
 	parts := ikeCryptoProfileParts()
-	scope := func(in IkeCryptoProfileInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_crypto_profile_list",
@@ -193,12 +192,12 @@ func RegisterIkeCryptoProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ike_crypto_profile_create",
 		Description: "Create an IKE crypto profile in the candidate config. An IKE gateway references it by name. Run panos_commit to apply.",
 		Annotations: createTool("Create IKE crypto profile"),
-	}, netCreateHandler(d, "panos_ike_crypto_profile_create", svc, parts, scope, buildIkeCryptoProfile, ikeCryptoProfileSummary))
+	}, netCreateHandler(d, "panos_ike_crypto_profile_create", svc, parts, buildIkeCryptoProfile, ikeCryptoProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_crypto_profile_update",
 		Description: "Update an IKE crypto profile: read-modify-write, only provided fields change; a provided dh_group, encryption or hash list replaces the existing one fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update IKE crypto profile"),
-	}, netUpdateHandler(d, "panos_ike_crypto_profile_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_ike_crypto_profile_update", svc, parts,
 		func(in IkeCryptoProfileInput) string { return in.Name }, overlayIkeCryptoProfile, ikeCryptoProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_crypto_profile_delete",
@@ -377,7 +376,6 @@ func ipsecCryptoProfileSummary(e *ipseccrypto.Entry) any {
 func RegisterIpsecCryptoProfileTools(s *mcp.Server, d *Deps) {
 	svc := newIpsecCryptoProfileService(d)
 	parts := ipsecCryptoProfileParts()
-	scope := func(in IpsecCryptoProfileInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ipsec_crypto_profile_list",
@@ -396,12 +394,12 @@ func RegisterIpsecCryptoProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ipsec_crypto_profile_create",
 		Description: "Create an IPSec crypto profile in the candidate config. An IPSec tunnel references it by name. Run panos_commit to apply.",
 		Annotations: createTool("Create IPSec crypto profile"),
-	}, netCreateHandler(d, "panos_ipsec_crypto_profile_create", svc, parts, scope, buildIpsecCryptoProfile, ipsecCryptoProfileSummary))
+	}, netCreateHandler(d, "panos_ipsec_crypto_profile_create", svc, parts, buildIpsecCryptoProfile, ipsecCryptoProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ipsec_crypto_profile_update",
 		Description: "Update an IPSec crypto profile: read-modify-write, only provided fields change; a provided algorithm list replaces the existing one fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update IPSec crypto profile"),
-	}, netUpdateHandler(d, "panos_ipsec_crypto_profile_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_ipsec_crypto_profile_update", svc, parts,
 		func(in IpsecCryptoProfileInput) string { return in.Name }, overlayIpsecCryptoProfile, ipsecCryptoProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ipsec_crypto_profile_delete",
@@ -649,7 +647,6 @@ func ikeGatewaySummary(e *gateway.Entry) any {
 func RegisterIkeGatewayTools(s *mcp.Server, d *Deps) {
 	svc := newIkeGatewayService(d)
 	parts := ikeGatewayParts()
-	scope := func(in IkeGatewayInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_gateway_list",
@@ -668,12 +665,12 @@ func RegisterIkeGatewayTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ike_gateway_create",
 		Description: "Create an IKE gateway in the candidate config. Set ike_crypto_profile to a profile in the same scope, and one of peer_ip, peer_fqdn or peer_dynamic. The pre-shared key is write-only. Deeper certificate-auth, DPD and NAT-traversal settings are left at device defaults. Run panos_commit to apply.",
 		Annotations: createTool("Create IKE gateway"),
-	}, netCreateHandler(d, "panos_ike_gateway_create", svc, parts, scope, buildIkeGateway, ikeGatewaySummary, withSecrets(ikeGatewaySecrets)))
+	}, netCreateHandler(d, "panos_ike_gateway_create", svc, parts, buildIkeGateway, ikeGatewaySummary, withSecrets(ikeGatewaySecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_gateway_update",
 		Description: "Update an IKE gateway: read-modify-write, only provided fields change; the SDK-only certificate-auth, DPD, fragmentation and NAT-traversal subtrees are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IKE gateway"),
-	}, netUpdateHandler(d, "panos_ike_gateway_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_ike_gateway_update", svc, parts,
 		func(in IkeGatewayInput) string { return in.Name }, overlayIkeGateway, ikeGatewaySummary, withSecrets(ikeGatewaySecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ike_gateway_delete",
@@ -803,7 +800,6 @@ func ipsecTunnelSummary(e *ipsec.Entry) any {
 func RegisterIpsecTunnelTools(s *mcp.Server, d *Deps) {
 	svc := newIpsecTunnelService(d)
 	parts := ipsecTunnelParts()
-	scope := func(in IpsecTunnelInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ipsec_tunnel_list",
@@ -822,12 +818,12 @@ func RegisterIpsecTunnelTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ipsec_tunnel_create",
 		Description: "Create an IPSec tunnel in the candidate config. Bind it to a tunnel_interface, one or more ike_gateways and an ipsec_crypto_profile in the same scope. proxy-ids and manual-key are left at device defaults. Run panos_commit to apply.",
 		Annotations: createTool("Create IPSec tunnel"),
-	}, netCreateHandler(d, "panos_ipsec_tunnel_create", svc, parts, scope, buildIpsecTunnel, ipsecTunnelSummary))
+	}, netCreateHandler(d, "panos_ipsec_tunnel_create", svc, parts, buildIpsecTunnel, ipsecTunnelSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ipsec_tunnel_update",
 		Description: "Update an IPSec tunnel: read-modify-write, only provided fields change; a provided ike_gateways list replaces the bound gateways fully, and the SDK-only proxy-id and manual-key subtrees are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IPSec tunnel"),
-	}, netUpdateHandler(d, "panos_ipsec_tunnel_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_ipsec_tunnel_update", svc, parts,
 		func(in IpsecTunnelInput) string { return in.Name }, overlayIpsecTunnel, ipsecTunnelSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ipsec_tunnel_delete",
@@ -962,7 +958,6 @@ func greTunnelSummary(e *gre.Entry) any {
 func RegisterGreTunnelTools(s *mcp.Server, d *Deps) {
 	svc := newGreTunnelService(d)
 	parts := greTunnelParts()
-	scope := func(in GreTunnelInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_gre_tunnel_list",
@@ -981,12 +976,12 @@ func RegisterGreTunnelTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_gre_tunnel_create",
 		Description: "Create a GRE tunnel in the candidate config. Bind it to a tunnel_interface, set local_interface/local_ip and peer_ip. Run panos_commit to apply.",
 		Annotations: createTool("Create GRE tunnel"),
-	}, netCreateHandler(d, "panos_gre_tunnel_create", svc, parts, scope, buildGreTunnel, greTunnelSummary))
+	}, netCreateHandler(d, "panos_gre_tunnel_create", svc, parts, buildGreTunnel, greTunnelSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_gre_tunnel_update",
 		Description: "Update a GRE tunnel: read-modify-write, only provided fields change. Run panos_commit to apply.",
 		Annotations: updateTool("Update GRE tunnel"),
-	}, netUpdateHandler(d, "panos_gre_tunnel_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_gre_tunnel_update", svc, parts,
 		func(in GreTunnelInput) string { return in.Name }, overlayGreTunnel, greTunnelSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_gre_tunnel_delete",

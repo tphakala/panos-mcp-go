@@ -97,7 +97,6 @@ func virtualWireSummary(e *virtualwire.Entry) any {
 func RegisterVirtualWireTools(s *mcp.Server, d *Deps) {
 	svc := newVirtualWireService(d)
 	parts := virtualWireParts()
-	scope := func(in VirtualWireInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_virtual_wire_list",
@@ -116,12 +115,12 @@ func RegisterVirtualWireTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_virtual_wire_create",
 		Description: "Create a virtual wire in the candidate config binding two layer-2 interfaces. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create virtual wire"),
-	}, netCreateHandler(d, "panos_virtual_wire_create", svc, parts, scope, buildVirtualWire, virtualWireSummary))
+	}, netCreateHandler(d, "panos_virtual_wire_create", svc, parts, buildVirtualWire, virtualWireSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_virtual_wire_update",
 		Description: "Update a virtual wire: read-modify-write, only provided fields change. The link-state and multicast settings are preserved. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update virtual wire"),
-	}, netUpdateHandler(d, "panos_virtual_wire_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_virtual_wire_update", svc, parts,
 		func(in VirtualWireInput) string { return in.Name }, overlayVirtualWire, virtualWireSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_virtual_wire_delete",
@@ -205,7 +204,6 @@ func vlanSummary(e *vlan.Entry) any {
 func RegisterVlanTools(s *mcp.Server, d *Deps) {
 	svc := newVlanService(d)
 	parts := vlanParts()
-	scope := func(in VlanInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vlan_list",
@@ -224,12 +222,12 @@ func RegisterVlanTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_vlan_create",
 		Description: "Create a VLAN object (layer-2 broadcast domain) in the candidate config. Distinct from a VLAN interface (panos_vlan_interface_create). Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create VLAN object"),
-	}, netCreateHandler(d, "panos_vlan_create", svc, parts, scope, buildVlan, vlanSummary))
+	}, netCreateHandler(d, "panos_vlan_create", svc, parts, buildVlan, vlanSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vlan_update",
 		Description: "Update a VLAN object: read-modify-write, only provided fields change. A provided interfaces list replaces the whole member set (an empty list clears it). The virtual-interface binding is preserved. Candidate config only; run panos_commit to apply.",
 		Annotations: updateTool("Update VLAN object"),
-	}, netUpdateHandler(d, "panos_vlan_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_vlan_update", svc, parts,
 		func(in VlanInput) string { return in.Name }, overlayVlan, vlanSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_vlan_delete",

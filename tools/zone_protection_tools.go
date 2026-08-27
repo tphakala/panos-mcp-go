@@ -171,7 +171,6 @@ func zoneProtectionSummary(e *zoneprotection.Entry) any {
 func RegisterZoneProtectionTools(s *mcp.Server, d *Deps) {
 	svc := newZoneProtectionService(d)
 	parts := zoneProtectionParts()
-	scope := func(in ZoneProtectionInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_zone_protection_list",
@@ -190,12 +189,12 @@ func RegisterZoneProtectionTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_zone_protection_create",
 		Description: "Create a zone protection profile in the candidate config. Only the name is required; the packet-based-attack toggles are optional. On Panorama a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create zone protection profile"),
-	}, netCreateHandler(d, "panos_zone_protection_create", svc, parts, scope, buildZoneProtection, zoneProtectionSummary))
+	}, netCreateHandler(d, "panos_zone_protection_create", svc, parts, buildZoneProtection, zoneProtectionSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_zone_protection_update",
 		Description: "Update a zone protection profile: read-modify-write, only provided fields change. The flood, IPv6, reconnaissance, non-IP-protocol and scan sub-blocks are preserved and not managed here. Run panos_commit to apply.",
 		Annotations: updateTool("Update zone protection profile"),
-	}, netUpdateHandler(d, "panos_zone_protection_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_zone_protection_update", svc, parts,
 		func(in ZoneProtectionInput) string { return in.Name }, overlayZoneProtection, zoneProtectionSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_zone_protection_delete",

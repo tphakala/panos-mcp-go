@@ -155,7 +155,6 @@ func virtualRouterSummary(e *virtual_router.Entry) any {
 func RegisterVirtualRouterTools(s *mcp.Server, d *Deps) {
 	svc := newVirtualRouterService(d)
 	parts := virtualRouterParts()
-	scope := func(in VirtualRouterInput) NetScopeInput { return in.NetScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_virtual_router_list",
@@ -174,12 +173,12 @@ func RegisterVirtualRouterTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_virtual_router_create",
 		Description: "Create a virtual router in the candidate config. Only the name is required; interfaces and administrative distances are optional. On Panorama a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: createTool("Create virtual router"),
-	}, netCreateHandler(d, "panos_virtual_router_create", svc, parts, scope, buildVirtualRouter, virtualRouterSummary))
+	}, netCreateHandler(d, "panos_virtual_router_create", svc, parts, buildVirtualRouter, virtualRouterSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_virtual_router_update",
 		Description: "Update a virtual router: read-modify-write, only provided fields change. A provided interfaces list replaces the current binding fully. BGP, OSPF, OSPFv3, RIP, ECMP and multicast configuration are preserved and not managed here. Run panos_commit to apply.",
 		Annotations: updateTool("Update virtual router"),
-	}, netUpdateHandler(d, "panos_virtual_router_update", svc, parts, scope,
+	}, netUpdateHandler(d, "panos_virtual_router_update", svc, parts,
 		func(in VirtualRouterInput) string { return in.Name }, overlayVirtualRouter, virtualRouterSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_virtual_router_delete",

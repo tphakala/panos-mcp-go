@@ -188,6 +188,19 @@ type NameInput struct {
 	Location LocationInput `json:"location,omitzero"`
 }
 
+// page exposes the paging triplet to the shared list handler. The value
+// receiver is required: the constraint is satisfied by the input value the
+// handler is given, not by a pointer to it.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the listInput constraint.
+func (in ListInput) page() (limit, offset int, filter string) {
+	return in.Limit, in.Offset, in.Filter
+}
+
+// entryName exposes the entry name to the shared get and delete handlers. The
+// value receiver is required for the same reason as page.
+func (in NameInput) entryName() string { return in.Name }
+
 // normalizeRulebase maps the tool-level pre/post values onto the PAN-OS
 // xpath node names.
 func normalizeRulebase(s string) (string, error) {
@@ -589,9 +602,8 @@ func listHandler[L, E any](
 	resolve func(LocationInput) (L, error),
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, ListInput) (*mcp.CallToolResult, any, error) {
-	return listCore(d, tool, svc,
+	return scopedListHandler(d, tool, svc,
 		func(in ListInput) (L, error) { return resolve(in.Location) },
-		func(in ListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
 		name, summarize)
 }
 
@@ -605,9 +617,8 @@ func getHandler[L, E any](
 	resolve func(LocationInput) (L, error),
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
-	return getCore(d, tool, svc,
+	return scopedGetHandler(d, tool, svc,
 		func(in NameInput) (L, error) { return resolve(in.Location) },
-		func(in NameInput) string { return in.Name },
 		summarize)
 }
 
@@ -616,9 +627,8 @@ func deleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E],
 	resolve func(LocationInput) (L, error),
 ) func(context.Context, *mcp.CallToolRequest, NameInput) (*mcp.CallToolResult, any, error) {
-	return deleteCore(d, tool, svc,
-		func(in NameInput) (L, error) { return resolve(in.Location) },
-		func(in NameInput) string { return in.Name })
+	return scopedDeleteHandler(d, tool, svc,
+		func(in NameInput) (L, error) { return resolve(in.Location) })
 }
 
 // createHandler builds a create tool handler from a resource-specific entry
@@ -727,5 +737,9 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	// Panorama shared/panorama/template/template_stack).
 	RegisterSslTlsProfileTools(s, d)
 	RegisterCertificateProfileTools(s, d)
+	// Tier 5: management-plane administration (mgt-scoped): the device's own
+	// mgt-config, or Panorama's, or one pushed by a template or template stack.
+	RegisterPasswordProfileTools(s, d)
+	RegisterAdministratorTools(s, d)
 	RegisterOpTools(s, d)
 }

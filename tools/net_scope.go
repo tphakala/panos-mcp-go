@@ -22,6 +22,11 @@ type NetScopeInput struct {
 	TemplateStack string `json:"template_stack,omitempty" jsonschema:"Panorama template-stack name (Panorama only; mutually exclusive with template)"`
 }
 
+// netScope returns the scope itself, so every input that embeds
+// NetScopeInput satisfies netScoped through promotion and the handlers can take
+// the scope off the input rather than being handed a closure that does it.
+func (in NetScopeInput) netScope() NetScopeInput { return in }
+
 // netScopeParts supplies the per-resource pango location constructors for
 // resolveNetScope. ngfw may be nil for a resource that pango models only under a
 // template or template-stack (the template variable): a nil ngfw makes a bare
@@ -77,15 +82,25 @@ type NetListInput struct {
 	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
 }
 
+// page exposes the paging triplet to the shared list handler. The value
+// receiver is required: the constraint is satisfied by the input value the
+// handler is given, not by a pointer to it.
+func (in NetListInput) page() (limit, offset int, filter string) {
+	return in.Limit, in.Offset, in.Filter
+}
+
+// entryName exposes the entry name to the shared get and delete handlers. The
+// value receiver is required for the same reason as page.
+func (in NetNameInput) entryName() string { return in.Name }
+
 // netListHandler mirrors listHandler for the net-scope resolver: fetch all
 // entries at the resolved location, filter by name substring, clamp, summarize.
 func netListHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NetListInput) (*mcp.CallToolResult, any, error) {
-	return listCore(d, tool, svc,
-		func(in NetListInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
-		func(in NetListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+	return scopedListHandler(d, tool, svc,
+		func(in NetListInput) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		name, summarize)
 }
 
@@ -94,9 +109,8 @@ func netGetHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, NetNameInput) (*mcp.CallToolResult, any, error) {
-	return getCore(d, tool, svc,
-		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
-		func(in NetNameInput) string { return in.Name },
+	return scopedGetHandler(d, tool, svc,
+		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		summarize)
 }
 
@@ -104,35 +118,32 @@ func netGetHandler[L, E any](
 func netDeleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
 ) func(context.Context, *mcp.CallToolRequest, NetNameInput) (*mcp.CallToolResult, any, error) {
-	return deleteCore(d, tool, svc,
-		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.NetScopeInput, p) },
-		func(in NetNameInput) string { return in.Name })
+	return scopedDeleteHandler(d, tool, svc,
+		func(in NetNameInput) (L, error) { return resolveNetScope(d, in.netScope(), p) })
 }
 
 // netCreateHandler mirrors createHandler for the net-scope resolver.
-func netCreateHandler[L, E, In any](
+func netCreateHandler[L, E any, In netScoped](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
-	scope func(In) NetScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
-		func(in In) (L, error) { return resolveNetScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		build, summarize, opts...)
 }
 
 // netUpdateHandler mirrors updateHandler for the net-scope resolver: a
 // read-modify-write overlay applying only the caller-provided fields.
-func netUpdateHandler[L, E, In any](
+func netUpdateHandler[L, E any, In netScoped](
 	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
-	scope func(In) NetScopeInput,
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
-		func(in In) (L, error) { return resolveNetScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveNetScope(d, in.netScope(), p) },
 		name, overlay, summarize, opts...)
 }

@@ -35,17 +35,19 @@ type DeviceScopeInput struct {
 	TemplateVsys  string `json:"template_vsys,omitzero" jsonschema:"vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope"`
 }
 
+// deviceScope returns the scope itself, so every input that embeds
+// DeviceScopeInput satisfies deviceScoped through promotion and the handlers can take
+// the scope off the input rather than being handed a closure that does it.
+func (in DeviceScopeInput) deviceScope() DeviceScopeInput { return in }
+
 // deviceScopeParts supplies the per-resource pango location constructors for
 // resolveDeviceScope. shared may be nil for a resource pango does not model at a
 // shared scope (the log-settings profiles: syslog, SNMP-trap, email), which makes
 // a shared request an error rather than a silently invalid location.
 type deviceScopeParts[L any] struct {
-	shared            func() L
-	vsys              func(ngfw, vsys string) L
-	template          func(panorama, template string) L
-	templateVsys      func(panorama, template, ngfw, vsys string) L
-	templateStack     func(panorama, stack string) L
-	templateStackVsys func(panorama, stack, ngfw, vsys string) L
+	shared func() L
+	vsys   func(ngfw, vsys string) L
+	templateScopeParts[L]
 }
 
 // resolveDeviceScope maps a DeviceScopeInput onto a pango location for the
@@ -54,11 +56,8 @@ type deviceScopeParts[L any] struct {
 // an explicit template, template_stack, or shared selection.
 func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
-	if in.Template != "" && in.TemplateStack != "" {
-		return zero, errors.New("set only one of template or template_stack, not both")
-	}
-	if in.TemplateVsys != "" && in.Template == "" && in.TemplateStack == "" {
-		return zero, errors.New("template_vsys requires a template or template_stack")
+	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, in.TemplateVsys); err != nil {
+		return zero, err
 	}
 	if d.IsPanorama {
 		return resolvePanoramaDeviceScope(in, p)
@@ -81,17 +80,10 @@ func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[
 // scope is required.
 func resolvePanoramaDeviceScope[L any](in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
+	if loc, ok := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts); ok {
+		return loc, nil
+	}
 	switch {
-	case in.Template != "":
-		if in.TemplateVsys != "" {
-			return p.templateVsys(defaultPanoramaDevice, in.Template, defaultNgfwDevice, in.TemplateVsys), nil
-		}
-		return p.template(defaultPanoramaDevice, in.Template), nil
-	case in.TemplateStack != "":
-		if in.TemplateVsys != "" {
-			return p.templateStackVsys(defaultPanoramaDevice, in.TemplateStack, defaultNgfwDevice, in.TemplateVsys), nil
-		}
-		return p.templateStack(defaultPanoramaDevice, in.TemplateStack), nil
 	case in.Shared:
 		if p.shared == nil {
 			return zero, errors.New("the shared scope is not available for this profile type; use a template or template_stack")
@@ -116,14 +108,28 @@ type DeviceListInput struct {
 	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
 }
 
+// page exposes the paging triplet to the shared list handler. The value
+// receiver is required: the constraint is satisfied by the input value the
+// handler is given, not by a pointer to it.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the listInput constraint.
+func (in DeviceListInput) page() (limit, offset int, filter string) {
+	return in.Limit, in.Offset, in.Filter
+}
+
+// entryName exposes the entry name to the shared get and delete handlers. The
+// value receiver is required for the same reason as page.
+//
+//nolint:gocritic // hugeParam: the receiver is by value to satisfy the nameInput constraint.
+func (in DeviceNameInput) entryName() string { return in.Name }
+
 // deviceListHandler mirrors netListHandler for the device-scope resolver.
 func deviceListHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 	name func(*E) string, summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, DeviceListInput) (*mcp.CallToolResult, any, error) {
-	return listCore(d, tool, svc,
-		func(in DeviceListInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
-		func(in DeviceListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+	return scopedListHandler(d, tool, svc,
+		func(in DeviceListInput) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		name, summarize)
 }
 
@@ -132,9 +138,8 @@ func deviceGetHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 	summarize func(*E) any,
 ) func(context.Context, *mcp.CallToolRequest, DeviceNameInput) (*mcp.CallToolResult, any, error) {
-	return getCore(d, tool, svc,
-		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
-		func(in DeviceNameInput) string { return in.Name },
+	return scopedGetHandler(d, tool, svc,
+		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		summarize)
 }
 
@@ -142,35 +147,32 @@ func deviceGetHandler[L, E any](
 func deviceDeleteHandler[L, E any](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
 ) func(context.Context, *mcp.CallToolRequest, DeviceNameInput) (*mcp.CallToolResult, any, error) {
-	return deleteCore(d, tool, svc,
-		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.DeviceScopeInput, p) },
-		func(in DeviceNameInput) string { return in.Name })
+	return scopedDeleteHandler(d, tool, svc,
+		func(in DeviceNameInput) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) })
 }
 
 // deviceCreateHandler mirrors netCreateHandler for the device-scope resolver.
-func deviceCreateHandler[L, E, In any](
+func deviceCreateHandler[L, E any, In deviceScoped](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
-	scope func(In) DeviceScopeInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
-		func(in In) (L, error) { return resolveDeviceScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		build, summarize, opts...)
 }
 
 // deviceUpdateHandler mirrors netUpdateHandler for the device-scope resolver: a
 // read-modify-write overlay applying only the caller-provided fields.
-func deviceUpdateHandler[L, E, In any](
+func deviceUpdateHandler[L, E any, In deviceScoped](
 	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
-	scope func(In) DeviceScopeInput,
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
 	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
-		func(in In) (L, error) { return resolveDeviceScope(d, scope(in), p) },
+		func(in In) (L, error) { return resolveDeviceScope(d, in.deviceScope(), p) },
 		name, overlay, summarize, opts...)
 }

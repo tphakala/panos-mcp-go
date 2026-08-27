@@ -98,7 +98,6 @@ func localUserSummary(e *localdb.Entry) any {
 func RegisterLocalUserTools(s *mcp.Server, d *Deps) {
 	svc := newLocalUserService(d)
 	parts := localUserParts()
-	scope := func(in LocalUserInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_local_user_list",
@@ -117,12 +116,12 @@ func RegisterLocalUserTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_local_user_create",
 		Description: "Create a local database user in the candidate config. password_hash is required (PAN-OS rejects a local user with no phash) and is a write-only pre-hashed password. Run panos_commit to apply.",
 		Annotations: createTool("Create local database user"),
-	}, deviceCreateHandler(d, "panos_local_user_create", svc, parts, scope, buildLocalUser, localUserSummary, withSecrets(localUserSecrets)))
+	}, deviceCreateHandler(d, "panos_local_user_create", svc, parts, buildLocalUser, localUserSummary, withSecrets(localUserSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_local_user_update",
 		Description: "Update a local database user: read-modify-write, only provided fields change. An omitted password_hash keeps the stored value. Run panos_commit to apply.",
 		Annotations: updateTool("Update local database user"),
-	}, deviceUpdateHandler(d, "panos_local_user_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_local_user_update", svc, parts,
 		func(in LocalUserInput) string { return in.Name }, overlayLocalUser, localUserSummary, withSecrets(localUserSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_local_user_delete",
@@ -240,7 +239,6 @@ func samlIdpProfileSummary(e *samlidp.Entry) any {
 func RegisterSamlIdpProfileTools(s *mcp.Server, d *Deps) {
 	svc := newSamlIdpProfileService(d)
 	parts := samlIdpProfileParts()
-	scope := func(in SamlIdpProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_saml_idp_profile_list",
@@ -259,12 +257,12 @@ func RegisterSamlIdpProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_saml_idp_profile_create",
 		Description: "Create a SAML IdP server profile in the candidate config. certificate names an existing device certificate. Run panos_commit to apply.",
 		Annotations: createTool("Create SAML IdP server profile"),
-	}, deviceCreateHandler(d, "panos_saml_idp_profile_create", svc, parts, scope, buildSamlIdpProfile, samlIdpProfileSummary))
+	}, deviceCreateHandler(d, "panos_saml_idp_profile_create", svc, parts, buildSamlIdpProfile, samlIdpProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_saml_idp_profile_update",
 		Description: "Update a SAML IdP server profile: read-modify-write, only provided fields change. Run panos_commit to apply.",
 		Annotations: updateTool("Update SAML IdP server profile"),
-	}, deviceUpdateHandler(d, "panos_saml_idp_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_saml_idp_profile_update", svc, parts,
 		func(in SamlIdpProfileInput) string { return in.Name }, overlaySamlIdpProfile, samlIdpProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_saml_idp_profile_delete",
@@ -385,7 +383,6 @@ func mfaProfileSummary(e *mfa.Entry) any {
 func RegisterMfaProfileTools(s *mcp.Server, d *Deps) {
 	svc := newMfaProfileService(d)
 	parts := mfaProfileParts()
-	scope := func(in MfaProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_mfa_profile_list",
@@ -404,12 +401,12 @@ func RegisterMfaProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_mfa_profile_create",
 		Description: "Create an MFA server profile in the candidate config. Vendor config values are write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create MFA server profile"),
-	}, deviceCreateHandler(d, "panos_mfa_profile_create", svc, parts, scope, buildMfaProfile, mfaProfileSummary, withSecrets(mfaProfileSecrets)))
+	}, deviceCreateHandler(d, "panos_mfa_profile_create", svc, parts, buildMfaProfile, mfaProfileSummary, withSecrets(mfaProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_mfa_profile_update",
 		Description: "Update an MFA server profile: read-modify-write, only provided fields change; a provided config list replaces the whole list. Vendor config values are write-only. Run panos_commit to apply.",
 		Annotations: updateTool("Update MFA server profile"),
-	}, deviceUpdateHandler(d, "panos_mfa_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_mfa_profile_update", svc, parts,
 		func(in MfaProfileInput) string { return in.Name }, overlayMfaProfile, mfaProfileSummary, withSecrets(mfaProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_mfa_profile_delete",

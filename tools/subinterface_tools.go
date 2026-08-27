@@ -144,25 +144,22 @@ func ethernetSubinterfaceSummary(e *ethsub.Entry) any {
 func RegisterEthernetSubinterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newEthernetSubinterfaceService(d)
 	parts := ethernetSubinterfaceParts()
-	listScope := func(in SubinterfaceListInput) NetScopeInput { return in.NetScopeInput }
 	listParent := func(in SubinterfaceListInput) string { return in.ParentInterface }
-	nameScope := func(in SubinterfaceNameInput) NetScopeInput { return in.NetScopeInput }
 	nameParent := func(in SubinterfaceNameInput) string { return in.ParentInterface }
-	scope := func(in SubinterfaceInput) NetScopeInput { return in.NetScopeInput }
 	parent := func(in SubinterfaceInput) string { return in.ParentInterface }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_subinterface_list",
 		Description: "List Layer 3 ethernet subinterfaces under a parent interface. Firewall: device scope; Panorama requires template or template_stack. Read-only.",
 		Annotations: readOnlyTool("List ethernet subinterfaces"),
-	}, parentListHandler(d, "panos_ethernet_subinterface_list", svc, parts, listScope, listParent,
+	}, parentListHandler(d, "panos_ethernet_subinterface_list", svc, parts, listParent,
 		func(in SubinterfaceListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
 		svc.name, ethernetSubinterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_subinterface_get",
 		Description: "Get one ethernet subinterface (tag, comment, mtu, ips, management profile, ipv6). Read-only.",
 		Annotations: readOnlyTool("Get ethernet subinterface"),
-	}, parentGetHandler(d, "panos_ethernet_subinterface_get", svc, parts, nameScope, nameParent,
+	}, parentGetHandler(d, "panos_ethernet_subinterface_get", svc, parts, nameParent,
 		func(in SubinterfaceNameInput) string { return in.Name }, ethernetSubinterfaceSummary))
 	if d.ReadOnly {
 		return
@@ -171,18 +168,18 @@ func RegisterEthernetSubinterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ethernet_subinterface_create",
 		Description: "Create a Layer 3 ethernet subinterface under a parent interface. name and parent_interface are required. Run panos_commit to apply.",
 		Annotations: createTool("Create ethernet subinterface"),
-	}, parentCreateHandler(d, "panos_ethernet_subinterface_create", svc, parts, scope, parent, buildEthernetSubinterface, ethernetSubinterfaceSummary))
+	}, parentCreateHandler(d, "panos_ethernet_subinterface_create", svc, parts, parent, buildEthernetSubinterface, ethernetSubinterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_subinterface_update",
 		Description: "Update an ethernet subinterface: read-modify-write, only provided fields change; a provided ips list replaces the addresses fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update ethernet subinterface"),
-	}, parentUpdateHandler(d, "panos_ethernet_subinterface_update", svc, parts, scope, parent,
+	}, parentUpdateHandler(d, "panos_ethernet_subinterface_update", svc, parts, parent,
 		func(in SubinterfaceInput) string { return in.Name }, overlayEthernetSubinterface, ethernetSubinterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ethernet_subinterface_delete",
 		Description: "Delete an ethernet subinterface from the candidate config. name and parent_interface are required. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete ethernet subinterface"),
-	}, parentDeleteHandler(d, "panos_ethernet_subinterface_delete", svc, parts, nameScope, nameParent,
+	}, parentDeleteHandler(d, "panos_ethernet_subinterface_delete", svc, parts, nameParent,
 		func(in SubinterfaceNameInput) string { return in.Name }))
 }
 
@@ -276,25 +273,22 @@ func aggregateSubinterfaceSummary(e *aggsub.Entry) any {
 func RegisterAggregateSubinterfaceTools(s *mcp.Server, d *Deps) {
 	svc := newAggregateSubinterfaceService(d)
 	parts := aggregateSubinterfaceParts()
-	listScope := func(in SubinterfaceListInput) NetScopeInput { return in.NetScopeInput }
 	listParent := func(in SubinterfaceListInput) string { return in.ParentInterface }
-	nameScope := func(in SubinterfaceNameInput) NetScopeInput { return in.NetScopeInput }
 	nameParent := func(in SubinterfaceNameInput) string { return in.ParentInterface }
-	scope := func(in SubinterfaceInput) NetScopeInput { return in.NetScopeInput }
 	parent := func(in SubinterfaceInput) string { return in.ParentInterface }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_subinterface_list",
 		Description: "List Layer 3 aggregate (ae) subinterfaces under a parent interface. Firewall: device scope; Panorama requires template or template_stack. Read-only.",
 		Annotations: readOnlyTool("List aggregate subinterfaces"),
-	}, parentListHandler(d, "panos_aggregate_subinterface_list", svc, parts, listScope, listParent,
+	}, parentListHandler(d, "panos_aggregate_subinterface_list", svc, parts, listParent,
 		func(in SubinterfaceListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
 		svc.name, aggregateSubinterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_subinterface_get",
 		Description: "Get one aggregate subinterface (tag, comment, mtu, ips, management profile, ipv6). Read-only.",
 		Annotations: readOnlyTool("Get aggregate subinterface"),
-	}, parentGetHandler(d, "panos_aggregate_subinterface_get", svc, parts, nameScope, nameParent,
+	}, parentGetHandler(d, "panos_aggregate_subinterface_get", svc, parts, nameParent,
 		func(in SubinterfaceNameInput) string { return in.Name }, aggregateSubinterfaceSummary))
 	if d.ReadOnly {
 		return
@@ -303,17 +297,17 @@ func RegisterAggregateSubinterfaceTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_aggregate_subinterface_create",
 		Description: "Create a Layer 3 aggregate subinterface under a parent interface. name and parent_interface are required. Run panos_commit to apply.",
 		Annotations: createTool("Create aggregate subinterface"),
-	}, parentCreateHandler(d, "panos_aggregate_subinterface_create", svc, parts, scope, parent, buildAggregateSubinterface, aggregateSubinterfaceSummary))
+	}, parentCreateHandler(d, "panos_aggregate_subinterface_create", svc, parts, parent, buildAggregateSubinterface, aggregateSubinterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_subinterface_update",
 		Description: "Update an aggregate subinterface: read-modify-write, only provided fields change; a provided ips list replaces the addresses fully. Run panos_commit to apply.",
 		Annotations: updateTool("Update aggregate subinterface"),
-	}, parentUpdateHandler(d, "panos_aggregate_subinterface_update", svc, parts, scope, parent,
+	}, parentUpdateHandler(d, "panos_aggregate_subinterface_update", svc, parts, parent,
 		func(in SubinterfaceInput) string { return in.Name }, overlayAggregateSubinterface, aggregateSubinterfaceSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_aggregate_subinterface_delete",
 		Description: "Delete an aggregate subinterface from the candidate config. name and parent_interface are required. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete aggregate subinterface"),
-	}, parentDeleteHandler(d, "panos_aggregate_subinterface_delete", svc, parts, nameScope, nameParent,
+	}, parentDeleteHandler(d, "panos_aggregate_subinterface_delete", svc, parts, nameParent,
 		func(in SubinterfaceNameInput) string { return in.Name }))
 }

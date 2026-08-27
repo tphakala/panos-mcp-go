@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	certprof "github.com/PaloAltoNetworks/pango/device/profile/certificate"
+	"github.com/PaloAltoNetworks/pango/generic"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -327,4 +328,93 @@ func TestCertificateProfileReadOnlyGating(t *testing.T) {
 	assertReadOnlyGating(t, RegisterCertificateProfileTools,
 		[]string{base + "_list", base + "_get"},
 		[]string{base + "_create", base + "_update", base + "_delete"})
+}
+
+// storedCertificateProfile returns a certificate profile whose first CA carries
+// XML this server does not model, so a merge that rebuilds the CA from scratch
+// is visibly different from one that seeds it from the stored entry.
+func storedCertificateProfile() *certprof.Entry {
+	return &certprof.Entry{
+		Name: "cp1",
+		Certificate: []certprof.Certificate{
+			{
+				Name:           "ca-a",
+				DefaultOcspUrl: new("http://old-a"),
+				TemplateName:   new("tmpl-a"),
+				Misc:           []generic.Xml{{}},
+				MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "ca-a-uuid"}},
+			},
+			{Name: "ca-b", DefaultOcspUrl: new("http://old-b")},
+		},
+	}
+}
+
+// TestCertificateProfileCASurvivorKeepsUnmodeledXML pins the half of the
+// merge-by-name contract that the old fresh-build implementation got wrong: a CA
+// the caller keeps must retain the XML this server does not model, exactly as
+// the server profile builders preserve a per-server secret.
+func TestCertificateProfileCASurvivorKeepsUnmodeledXML(t *testing.T) {
+	e := storedCertificateProfile()
+	if err := overlayCertificateProfile(e, CertificateProfileInput{
+		Name:                   "cp1",
+		CertificateAuthorities: []CertificateAuthorityInput{{Name: "ca-a", DefaultOcspUrl: new("http://new-a")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Certificate) != 1 {
+		t.Fatalf("a CA absent from the provided list must be removed, got %+v", e.Certificate)
+	}
+	ca := e.Certificate[0]
+	if strVal(ca.DefaultOcspUrl) != "http://new-a" {
+		t.Errorf("default_ocsp_url must take the provided value, got %q", strVal(ca.DefaultOcspUrl))
+	}
+	if strVal(ca.TemplateName) != "tmpl-a" {
+		t.Errorf("a field the caller did not provide must be preserved, got %q", strVal(ca.TemplateName))
+	}
+	if len(ca.Misc) != 1 {
+		t.Errorf("per-CA Misc must survive the merge, got %+v", ca.Misc)
+	}
+	if len(ca.MiscAttributes) != 1 || ca.MiscAttributes[0].Value != "ca-a-uuid" {
+		t.Errorf("per-CA MiscAttributes must survive the merge, got %+v", ca.MiscAttributes)
+	}
+}
+
+// TestCertificateProfileCAListRemovesAndAdds pins the other half: the provided
+// list is authoritative about membership and ordering, and a CA with no stored
+// counterpart starts empty.
+func TestCertificateProfileCAListRemovesAndAdds(t *testing.T) {
+	e := storedCertificateProfile()
+	if err := overlayCertificateProfile(e, CertificateProfileInput{
+		Name: "cp1",
+		CertificateAuthorities: []CertificateAuthorityInput{
+			{Name: "ca-b"},
+			{Name: "ca-c", DefaultOcspUrl: new("http://new-c")},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Certificate) != 2 {
+		t.Fatalf("expected exactly the two provided CAs, got %+v", e.Certificate)
+	}
+	if e.Certificate[0].Name != "ca-b" || e.Certificate[1].Name != "ca-c" {
+		t.Fatalf("the caller's ordering must be preserved, got %q then %q", e.Certificate[0].Name, e.Certificate[1].Name)
+	}
+	if strVal(e.Certificate[0].DefaultOcspUrl) != "http://old-b" {
+		t.Errorf("a stored value the caller did not provide must survive, got %q", strVal(e.Certificate[0].DefaultOcspUrl))
+	}
+	if e.Certificate[1].Misc != nil || e.Certificate[1].MiscAttributes != nil {
+		t.Errorf("a CA with no stored entry must start empty, got %+v", e.Certificate[1])
+	}
+}
+
+// TestCertificateProfileOmittedCAListPreserved pins that omitting the list is
+// distinct from providing an empty one: the stored CA list is left alone.
+func TestCertificateProfileOmittedCAListPreserved(t *testing.T) {
+	e := storedCertificateProfile()
+	if err := overlayCertificateProfile(e, CertificateProfileInput{Name: "cp1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Certificate) != 2 {
+		t.Fatalf("an omitted CA list must preserve the stored list, got %+v", e.Certificate)
+	}
 }

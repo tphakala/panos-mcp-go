@@ -197,25 +197,22 @@ func staticRouteV4Summary(e *srv4.Entry) any {
 func RegisterStaticRouteV4Tools(s *mcp.Server, d *Deps) {
 	svc := newStaticRouteV4Service(d)
 	parts := staticRouteV4Parts()
-	listScope := func(in StaticRouteListInput) NetScopeInput { return in.NetScopeInput }
 	listParent := func(in StaticRouteListInput) string { return in.VirtualRouter }
-	nameScope := func(in StaticRouteNameInput) NetScopeInput { return in.NetScopeInput }
 	nameParent := func(in StaticRouteNameInput) string { return in.VirtualRouter }
-	scope := func(in StaticRouteInput) NetScopeInput { return in.NetScopeInput }
 	parent := func(in StaticRouteInput) string { return in.VirtualRouter }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_list",
 		Description: "List IPv4 static routes under a virtual router. Firewall: device scope; Panorama requires template or template_stack. Read-only.",
 		Annotations: readOnlyTool("List IPv4 static routes"),
-	}, parentListHandler(d, "panos_static_route_list", svc, parts, listScope, listParent,
+	}, parentListHandler(d, "panos_static_route_list", svc, parts, listParent,
 		func(in StaticRouteListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
 		svc.name, staticRouteV4Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_get",
 		Description: "Get one IPv4 static route (destination, interface, admin distance, metric, next hop). Read-only.",
 		Annotations: readOnlyTool("Get IPv4 static route"),
-	}, parentGetHandler(d, "panos_static_route_get", svc, parts, nameScope, nameParent,
+	}, parentGetHandler(d, "panos_static_route_get", svc, parts, nameParent,
 		func(in StaticRouteNameInput) string { return in.Name }, staticRouteV4Summary))
 	if d.ReadOnly {
 		return
@@ -224,18 +221,18 @@ func RegisterStaticRouteV4Tools(s *mcp.Server, d *Deps) {
 		Name:        "panos_static_route_create",
 		Description: "Create an IPv4 static route under a virtual router. name and virtual_router are required; the next hop is a one-of (ip_address, next_vr, fqdn, or discard). Run panos_commit to apply.",
 		Annotations: createTool("Create IPv4 static route"),
-	}, parentCreateHandler(d, "panos_static_route_create", svc, parts, scope, parent, buildStaticRouteV4, staticRouteV4Summary))
+	}, parentCreateHandler(d, "panos_static_route_create", svc, parts, parent, buildStaticRouteV4, staticRouteV4Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_update",
 		Description: "Update an IPv4 static route: read-modify-write, only provided fields change. Providing a next hop replaces it; path-monitor, BFD and route-table settings are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IPv4 static route"),
-	}, parentUpdateHandler(d, "panos_static_route_update", svc, parts, scope, parent,
+	}, parentUpdateHandler(d, "panos_static_route_update", svc, parts, parent,
 		func(in StaticRouteInput) string { return in.Name }, overlayStaticRouteV4, staticRouteV4Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_delete",
 		Description: "Delete an IPv4 static route from the candidate config. name and virtual_router are required. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete IPv4 static route"),
-	}, parentDeleteHandler(d, "panos_static_route_delete", svc, parts, nameScope, nameParent,
+	}, parentDeleteHandler(d, "panos_static_route_delete", svc, parts, nameParent,
 		func(in StaticRouteNameInput) string { return in.Name }))
 }
 
@@ -349,25 +346,22 @@ func staticRouteV6Summary(e *srv6.Entry) any {
 func RegisterStaticRouteV6Tools(s *mcp.Server, d *Deps) {
 	svc := newStaticRouteV6Service(d)
 	parts := staticRouteV6Parts()
-	listScope := func(in StaticRouteListInput) NetScopeInput { return in.NetScopeInput }
 	listParent := func(in StaticRouteListInput) string { return in.VirtualRouter }
-	nameScope := func(in StaticRouteNameInput) NetScopeInput { return in.NetScopeInput }
 	nameParent := func(in StaticRouteNameInput) string { return in.VirtualRouter }
-	scope := func(in StaticRouteInput) NetScopeInput { return in.NetScopeInput }
 	parent := func(in StaticRouteInput) string { return in.VirtualRouter }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_v6_list",
 		Description: "List IPv6 static routes under a virtual router. Firewall: device scope; Panorama requires template or template_stack. Read-only.",
 		Annotations: readOnlyTool("List IPv6 static routes"),
-	}, parentListHandler(d, "panos_static_route_v6_list", svc, parts, listScope, listParent,
+	}, parentListHandler(d, "panos_static_route_v6_list", svc, parts, listParent,
 		func(in StaticRouteListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
 		svc.name, staticRouteV6Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_v6_get",
 		Description: "Get one IPv6 static route (destination, interface, admin distance, metric, next hop). Read-only.",
 		Annotations: readOnlyTool("Get IPv6 static route"),
-	}, parentGetHandler(d, "panos_static_route_v6_get", svc, parts, nameScope, nameParent,
+	}, parentGetHandler(d, "panos_static_route_v6_get", svc, parts, nameParent,
 		func(in StaticRouteNameInput) string { return in.Name }, staticRouteV6Summary))
 	if d.ReadOnly {
 		return
@@ -376,17 +370,17 @@ func RegisterStaticRouteV6Tools(s *mcp.Server, d *Deps) {
 		Name:        "panos_static_route_v6_create",
 		Description: "Create an IPv6 static route under a virtual router. name and virtual_router are required; the next hop is a one-of (ip_address, next_vr, or discard). Run panos_commit to apply.",
 		Annotations: createTool("Create IPv6 static route"),
-	}, parentCreateHandler(d, "panos_static_route_v6_create", svc, parts, scope, parent, buildStaticRouteV6, staticRouteV6Summary))
+	}, parentCreateHandler(d, "panos_static_route_v6_create", svc, parts, parent, buildStaticRouteV6, staticRouteV6Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_v6_update",
 		Description: "Update an IPv6 static route: read-modify-write, only provided fields change. Providing a next hop replaces it; path-monitor, BFD and route-table settings are preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update IPv6 static route"),
-	}, parentUpdateHandler(d, "panos_static_route_v6_update", svc, parts, scope, parent,
+	}, parentUpdateHandler(d, "panos_static_route_v6_update", svc, parts, parent,
 		func(in StaticRouteInput) string { return in.Name }, overlayStaticRouteV6, staticRouteV6Summary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_static_route_v6_delete",
 		Description: "Delete an IPv6 static route from the candidate config. name and virtual_router are required. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete IPv6 static route"),
-	}, parentDeleteHandler(d, "panos_static_route_v6_delete", svc, parts, nameScope, nameParent,
+	}, parentDeleteHandler(d, "panos_static_route_v6_delete", svc, parts, nameParent,
 		func(in StaticRouteNameInput) string { return in.Name }))
 }

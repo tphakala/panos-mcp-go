@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 343 tools on Panorama and 327 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 137 on Panorama, 134 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 353 tools on Panorama and 337 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 141 on Panorama, 138 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -516,8 +516,25 @@ These decryption-support profiles resolve to the shared scope on a firewall (the
 | `panos_certificate_profile_list` | read-only | List certificate profiles at a location. |
 | `panos_certificate_profile_get` | read-only | Get one certificate profile (domain, username fields, revocation settings, CA list). |
 | `panos_certificate_profile_create` | write | Create a certificate profile in the candidate config. |
-| `panos_certificate_profile_update` | write | Update a certificate profile: read-modify-write; a provided CA list replaces it fully. |
+| `panos_certificate_profile_update` | write | Update a certificate profile: read-modify-write; a provided CA list is merged by name and a CA absent from it is removed. |
 | `panos_certificate_profile_delete` | write | Delete a certificate profile from the candidate config. |
+
+### Administrators and password profiles
+
+Administrators and password profiles live under `mgt-config`, which is device-wide rather than per-vsys. On a firewall they resolve to the device's own management configuration and no scope field is needed. On Panorama choose `panorama` for Panorama's own administrators, or a `template` or `template_stack` to push them to managed firewalls. A password hash is write-only and is never returned; `has_password_hash` reports only whether one is set, and `has_public_key` does the same for an SSH public key this server does not otherwise touch. An administrator carries either a built-in `role` or a custom `role_profile`, never both. A get can also report `vsysadmin` or `vsysreader`, the two per-vsys roles PAN-OS supports but these tools do not set; switching such an administrator to another role clears its per-vsys grants.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_password_profile_list` | read-only | List password profiles at a management-plane scope. |
+| `panos_password_profile_get` | read-only | Get one password profile (expiry, warning period, post-expiry logins and grace period). |
+| `panos_password_profile_create` | write | Create a password profile in the candidate config. |
+| `panos_password_profile_update` | write | Update a password profile: read-modify-write; only provided fields change. |
+| `panos_password_profile_delete` | write | Delete a password profile from the candidate config. |
+| `panos_administrator_list` | read-only | List administrators at a management-plane scope. |
+| `panos_administrator_get` | read-only | Get one administrator (role, authentication and password profiles); secrets are never returned. |
+| `panos_administrator_create` | write | Create an administrator in the candidate config with a write-only password hash. |
+| `panos_administrator_update` | write | Update an administrator: read-modify-write; an omitted password hash keeps the stored value. |
+| `panos_administrator_delete` | write | Delete an administrator from the candidate config. |
 
 ## Example MCP client configuration
 

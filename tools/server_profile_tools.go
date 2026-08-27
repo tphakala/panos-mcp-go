@@ -187,7 +187,6 @@ func ldapProfileSummary(e *ldap.Entry) any {
 func RegisterLdapProfileTools(s *mcp.Server, d *Deps) {
 	svc := newLdapProfileService(d)
 	parts := ldapProfileParts()
-	scope := func(in LdapProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ldap_profile_list",
@@ -206,12 +205,12 @@ func RegisterLdapProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_ldap_profile_create",
 		Description: "Create an LDAP server profile in the candidate config. bind_password is write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create LDAP server profile"),
-	}, deviceCreateHandler(d, "panos_ldap_profile_create", svc, parts, scope, buildLdapProfile, ldapProfileSummary, withSecrets(ldapProfileSecrets)))
+	}, deviceCreateHandler(d, "panos_ldap_profile_create", svc, parts, buildLdapProfile, ldapProfileSummary, withSecrets(ldapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ldap_profile_update",
 		Description: "Update an LDAP server profile: read-modify-write, only provided fields change. An omitted bind_password keeps the stored value; a provided servers list is merged by name, so a server absent from the list is removed and an untouched server keeps its stored values. Run panos_commit to apply.",
 		Annotations: updateTool("Update LDAP server profile"),
-	}, deviceUpdateHandler(d, "panos_ldap_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_ldap_profile_update", svc, parts,
 		func(in LdapProfileInput) string { return in.Name }, overlayLdapProfile, ldapProfileSummary, withSecrets(ldapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ldap_profile_delete",
@@ -339,7 +338,6 @@ func tacacsProfileSummary(e *tacacsplus.Entry) any {
 func RegisterTacacsProfileTools(s *mcp.Server, d *Deps) {
 	svc := newTacacsProfileService(d)
 	parts := tacacsProfileParts()
-	scope := func(in TacacsProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tacacs_profile_list",
@@ -358,12 +356,12 @@ func RegisterTacacsProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_tacacs_profile_create",
 		Description: "Create a TACACS+ server profile in the candidate config. Each server secret is write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create TACACS+ server profile"),
-	}, deviceCreateHandler(d, "panos_tacacs_profile_create", svc, parts, scope, buildTacacsProfile, tacacsProfileSummary, withSecrets(tacacsProfileSecrets)))
+	}, deviceCreateHandler(d, "panos_tacacs_profile_create", svc, parts, buildTacacsProfile, tacacsProfileSummary, withSecrets(tacacsProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tacacs_profile_update",
 		Description: "Update a TACACS+ server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, and an omitted per-server secret keeps the stored value. Run panos_commit to apply.",
 		Annotations: updateTool("Update TACACS+ server profile"),
-	}, deviceUpdateHandler(d, "panos_tacacs_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_tacacs_profile_update", svc, parts,
 		func(in TacacsProfileInput) string { return in.Name }, overlayTacacsProfile, tacacsProfileSummary, withSecrets(tacacsProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tacacs_profile_delete",
@@ -491,7 +489,6 @@ func radiusProfileSummary(e *radius.Entry) any {
 func RegisterRadiusProfileTools(s *mcp.Server, d *Deps) {
 	svc := newRadiusProfileService(d)
 	parts := radiusProfileParts()
-	scope := func(in RadiusProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_radius_profile_list",
@@ -510,12 +507,12 @@ func RegisterRadiusProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_radius_profile_create",
 		Description: "Create a RADIUS server profile in the candidate config. Each server secret is write-only. The authentication protocol subtree is not settable here. Run panos_commit to apply.",
 		Annotations: createTool("Create RADIUS server profile"),
-	}, deviceCreateHandler(d, "panos_radius_profile_create", svc, parts, scope, buildRadiusProfile, radiusProfileSummary, withSecrets(radiusProfileSecrets)))
+	}, deviceCreateHandler(d, "panos_radius_profile_create", svc, parts, buildRadiusProfile, radiusProfileSummary, withSecrets(radiusProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_radius_profile_update",
 		Description: "Update a RADIUS server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, and an omitted per-server secret keeps the stored value. The authentication protocol subtree is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update RADIUS server profile"),
-	}, deviceUpdateHandler(d, "panos_radius_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_radius_profile_update", svc, parts,
 		func(in RadiusProfileInput) string { return in.Name }, overlayRadiusProfile, radiusProfileSummary, withSecrets(radiusProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_radius_profile_delete",
@@ -643,7 +640,6 @@ func syslogProfileSummary(e *syslog.Entry) any {
 func RegisterSyslogProfileTools(s *mcp.Server, d *Deps) {
 	svc := newSyslogProfileService(d)
 	parts := syslogProfileParts()
-	scope := func(in SyslogProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_syslog_profile_list",
@@ -662,12 +658,12 @@ func RegisterSyslogProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_syslog_profile_create",
 		Description: "Create a syslog server profile in the candidate config. Run panos_commit to apply.",
 		Annotations: createTool("Create syslog server profile"),
-	}, deviceCreateHandler(d, "panos_syslog_profile_create", svc, parts, scope, buildSyslogProfile, syslogProfileSummary))
+	}, deviceCreateHandler(d, "panos_syslog_profile_create", svc, parts, buildSyslogProfile, syslogProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_syslog_profile_update",
 		Description: "Update a syslog server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, an untouched server keeps its stored values. The per-log-type format subtree is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update syslog server profile"),
-	}, deviceUpdateHandler(d, "panos_syslog_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_syslog_profile_update", svc, parts,
 		func(in SyslogProfileInput) string { return in.Name }, overlaySyslogProfile, syslogProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_syslog_profile_delete",
@@ -888,7 +884,6 @@ func snmpTrapProfileSummary(e *snmptrap.Entry) any {
 func RegisterSnmpTrapProfileTools(s *mcp.Server, d *Deps) {
 	svc := newSnmpTrapProfileService(d)
 	parts := snmpTrapProfileParts()
-	scope := func(in SnmpTrapProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_snmptrap_profile_list",
@@ -907,12 +902,12 @@ func RegisterSnmpTrapProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_snmptrap_profile_create",
 		Description: "Create an SNMP-trap server profile in the candidate config. version (v2c or v3) is required. Communities and v3 passwords are write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create SNMP-trap server profile"),
-	}, deviceCreateHandler(d, "panos_snmptrap_profile_create", svc, parts, scope, buildSnmpTrapProfile, snmpTrapProfileSummary, withSecrets(snmpTrapProfileSecrets)))
+	}, deviceCreateHandler(d, "panos_snmptrap_profile_create", svc, parts, buildSnmpTrapProfile, snmpTrapProfileSummary, withSecrets(snmpTrapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_snmptrap_profile_update",
 		Description: "Update an SNMP-trap server profile: read-modify-write, only provided fields change. Setting version switches branch and clears the other version's receivers. Within a version a provided receiver list is merged by name: a receiver absent from the list is removed, and an omitted community or password keeps the stored value. Run panos_commit to apply.",
 		Annotations: updateTool("Update SNMP-trap server profile"),
-	}, deviceUpdateHandler(d, "panos_snmptrap_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_snmptrap_profile_update", svc, parts,
 		func(in SnmpTrapProfileInput) string { return in.Name }, overlaySnmpTrapProfile, snmpTrapProfileSummary, withSecrets(snmpTrapProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_snmptrap_profile_delete",
@@ -1061,7 +1056,6 @@ func emailProfileSummary(e *email.Entry) any {
 func RegisterEmailProfileTools(s *mcp.Server, d *Deps) {
 	svc := newEmailProfileService(d)
 	parts := emailProfileParts()
-	scope := func(in EmailProfileInput) DeviceScopeInput { return in.DeviceScopeInput }
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_email_profile_list",
@@ -1080,12 +1074,12 @@ func RegisterEmailProfileTools(s *mcp.Server, d *Deps) {
 		Name:        "panos_email_profile_create",
 		Description: "Create an email server profile in the candidate config. Each SMTP password is write-only. Run panos_commit to apply.",
 		Annotations: createTool("Create email server profile"),
-	}, deviceCreateHandler(d, "panos_email_profile_create", svc, parts, scope, buildEmailProfile, emailProfileSummary, withSecrets(emailProfileSecrets)))
+	}, deviceCreateHandler(d, "panos_email_profile_create", svc, parts, buildEmailProfile, emailProfileSummary, withSecrets(emailProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_email_profile_update",
 		Description: "Update an email server profile: read-modify-write, only provided fields change. A provided servers list is merged by name: a server absent from the list is removed, and an omitted password keeps the stored value. The per-log-type format subtree is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update email server profile"),
-	}, deviceUpdateHandler(d, "panos_email_profile_update", svc, parts, scope,
+	}, deviceUpdateHandler(d, "panos_email_profile_update", svc, parts,
 		func(in EmailProfileInput) string { return in.Name }, overlayEmailProfile, emailProfileSummary, withSecrets(emailProfileSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_email_profile_delete",
