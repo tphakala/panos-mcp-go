@@ -53,9 +53,11 @@ type StaticRouteInput struct {
 	NexthopNextVr    *string `json:"nexthop_next_vr,omitzero" jsonschema:"Next hop next-vr name (mutually exclusive)"`
 	NexthopFqdn      *string `json:"nexthop_fqdn,omitzero" jsonschema:"Next hop FQDN (mutually exclusive; ipv4 only)"`
 	NexthopDiscard   *bool   `json:"nexthop_discard,omitzero" jsonschema:"Discard traffic (mutually exclusive)"`
-	// BfdProfile names an existing BFD profile (see panos_bfd_profile_list). The
-	// literal "None" is what PAN-OS stores to mean no BFD.
-	BfdProfile *string `json:"bfd_profile,omitzero" jsonschema:"BFD profile name for this route, or None to disable BFD (see panos_bfd_profile_list)"`
+	// BfdProfile names an existing BFD profile (see panos_bfd_profile_list). How
+	// PAN-OS spells "no BFD" as a stored value is NOT MEASURED, so this schema
+	// does not tell a caller to send a sentinel; to detach BFD, clear the profile
+	// on the device.
+	BfdProfile *string `json:"bfd_profile,omitzero" jsonschema:"BFD profile name for this route (see panos_bfd_profile_list)"`
 }
 
 // StaticRouteListInput is the list input for both static route families.

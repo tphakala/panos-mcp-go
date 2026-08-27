@@ -124,12 +124,15 @@ func names[T any](s []T, get func(T) string) []string {
 	return out
 }
 
-// indexByName maps each element of s by key(v), returning a non-nil empty map for
-// an empty input. It opens a merge-by-name update: each output element is seeded
-// from the stored element of the same name, so a field the caller omitted,
-// including a write-only secret and any unmodeled Misc, is preserved rather than
-// dropped. Named indexByName rather than byName because op_tools.go already uses
-// byName as a local variable.
+// indexByName maps each element of s by key(v). It is only an index; the callers
+// are what make a merge-by-name update work, by seeding each output element from
+// prev[name] and overlaying with setPtr so a field the caller omitted, including
+// a write-only secret and any unmodeled Misc, survives. See ldapServers for the
+// shape. A caller that builds its output element fresh instead gains nothing
+// from this helper.
+//
+// Named indexByName rather than byName to avoid shadowing the byName local in
+// op_tools.go's joinInterfaces; the two would compile side by side.
 func indexByName[T any](s []T, key func(T) string) map[string]T {
 	out := make(map[string]T, len(s))
 	for _, v := range s {

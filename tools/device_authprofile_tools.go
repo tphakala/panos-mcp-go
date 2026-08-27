@@ -57,10 +57,16 @@ func authProfileParts() deviceScopeParts[authprofile.Location] {
 }
 
 // Method branch inputs. Each branch is a pointer so that selection is driven by
-// PRESENCE, not by a non-empty string: local-database and none carry no fields
-// at all, so a string discriminator could never select them, and an empty string
+// PRESENCE, not by a non-empty string: local-database and none have no SETTABLE
+// fields, so a string discriminator could never select them, and an empty string
 // would be indistinguishable from "not provided" for the others. Send an empty
-// object to select a field-free branch, for example {"method_none": {}}.
+// object to select such a branch, for example {"method_none": {}}. Send {} and
+// not null: a null decodes to a nil pointer, which reads as "no branch provided"
+// and leaves the stored method untouched.
+//
+// The two field-free branches still carry unmodeled XML on the pango side, which
+// is why applyAuthProfileMethod seeds even them through seedBranch rather than
+// allocating a fresh struct.
 
 // AuthMethodKerberosInput selects Kerberos authentication.
 type AuthMethodKerberosInput struct {
@@ -75,12 +81,12 @@ type AuthMethodLdapInput struct {
 	ServerProfile  *string `json:"server_profile,omitzero" jsonschema:"LDAP server profile name (create one with panos_ldap_profile_create)"`
 }
 
-// AuthMethodLocalDatabaseInput selects the local user database. It carries no
-// fields; send an empty object to select it.
+// AuthMethodLocalDatabaseInput selects the local user database. It has no
+// settable fields; send an empty object, {}, to select it.
 type AuthMethodLocalDatabaseInput struct{}
 
-// AuthMethodNoneInput selects no authentication. It carries no fields; send an
-// empty object to select it.
+// AuthMethodNoneInput selects no authentication. It has no settable fields; send
+// an empty object, {}, to select it.
 type AuthMethodNoneInput struct{}
 
 // AuthMethodRadiusInput selects RADIUS authentication.
@@ -133,8 +139,8 @@ type AuthProfileInput struct {
 
 	MethodKerberos      *AuthMethodKerberosInput      `json:"method_kerberos,omitzero" jsonschema:"Authenticate against Kerberos"`
 	MethodLdap          *AuthMethodLdapInput          `json:"method_ldap,omitzero" jsonschema:"Authenticate against LDAP"`
-	MethodLocalDatabase *AuthMethodLocalDatabaseInput `json:"method_local_database,omitzero" jsonschema:"Authenticate against the local user database; send an empty object to select"`
-	MethodNone          *AuthMethodNoneInput          `json:"method_none,omitzero" jsonschema:"No authentication; send an empty object to select"`
+	MethodLocalDatabase *AuthMethodLocalDatabaseInput `json:"method_local_database,omitzero" jsonschema:"Authenticate against the local user database; send an empty object {} to select (null is ignored)"`
+	MethodNone          *AuthMethodNoneInput          `json:"method_none,omitzero" jsonschema:"No authentication; send an empty object {} to select (null is ignored)"`
 	MethodRadius        *AuthMethodRadiusInput        `json:"method_radius,omitzero" jsonschema:"Authenticate against RADIUS"`
 	MethodSamlIdp       *AuthMethodSamlIdpInput       `json:"method_saml_idp,omitzero" jsonschema:"Authenticate against a SAML identity provider"`
 	MethodTacplus       *AuthMethodTacplusInput       `json:"method_tacplus,omitzero" jsonschema:"Authenticate against TACACS+"`
@@ -289,17 +295,20 @@ func applyAuthProfileSso(e *authprofile.Entry, in *AuthProfileInput) {
 	setPtr(&e.SingleSignOn.KerberosKeytab, in.SsoKerberosKeytab)
 }
 
-//nolint:gocritic // hugeParam: in is by value to satisfy the generic builder/overlay contract.
-func applyAuthProfile(e *authprofile.Entry, in AuthProfileInput) error {
+// applyAuthProfile overlays the managed fields onto e, applying only what the
+// caller provided. Shared by build and overlay so create and update agree. It
+// takes a pointer because it is a private helper: only buildAuthProfile and
+// overlayAuthProfile are bound by the generic handlers' by-value contract.
+func applyAuthProfile(e *authprofile.Entry, in *AuthProfileInput) error {
 	if in.AllowList != nil {
 		e.AllowList = in.AllowList
 	}
 	setPtr(&e.UserDomain, in.UserDomain)
 	setPtr(&e.UsernameModifier, in.UsernameModifier)
-	applyAuthProfileLockout(e, &in)
-	applyAuthProfileMfa(e, &in)
-	applyAuthProfileSso(e, &in)
-	return applyAuthProfileMethod(e, &in)
+	applyAuthProfileLockout(e, in)
+	applyAuthProfileMfa(e, in)
+	applyAuthProfileSso(e, in)
+	return applyAuthProfileMethod(e, in)
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
@@ -308,7 +317,7 @@ func buildAuthProfile(in AuthProfileInput) (*authprofile.Entry, error) {
 		return nil, errors.New("name is required")
 	}
 	e := &authprofile.Entry{Name: in.Name}
-	if err := applyAuthProfile(e, in); err != nil {
+	if err := applyAuthProfile(e, &in); err != nil {
 		return nil, err
 	}
 	return e, nil
@@ -316,7 +325,7 @@ func buildAuthProfile(in AuthProfileInput) (*authprofile.Entry, error) {
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract.
 func overlayAuthProfile(e *authprofile.Entry, in AuthProfileInput) error {
-	return applyAuthProfile(e, in)
+	return applyAuthProfile(e, &in)
 }
 
 // authProfileMethodString names the active method branch, including cloud, which
@@ -350,13 +359,22 @@ func authProfileMethodString(m *authprofile.Method) string {
 
 // authProfileMethodDetail projects the active branch's modeled fields. The cloud
 // branch reports its name only: this server does not model its five-level
-// subtree, which the read-modify-write update preserves untouched.
+// subtree. An update that provides no method_* branch preserves that subtree
+// untouched; one that provides a branch clears cloud along with the other
+// siblings, which is the exactly-one-of rule and is stated on the update tool.
 func authProfileMethodDetail(m *authprofile.Method) map[string]any {
 	detail := map[string]any{}
 	if m == nil {
 		return detail
 	}
+	// The arms are in the SAME precedence order as authProfileMethodString,
+	// including the three branches that contribute no detail. pango does not
+	// enforce the choice, so an entry written by another tool can carry two
+	// branches; matching the order keeps method and method_detail describing the
+	// same one instead of silently disagreeing.
 	switch {
+	case m.Cloud != nil, m.LocalDatabase != nil, m.None != nil:
+		// No modeled fields to project.
 	case m.Kerberos != nil:
 		detail["realm"] = strVal(m.Kerberos.Realm)
 		detail["server_profile"] = strVal(m.Kerberos.ServerProfile)
@@ -367,9 +385,6 @@ func authProfileMethodDetail(m *authprofile.Method) map[string]any {
 	case m.Radius != nil:
 		detail["server_profile"] = strVal(m.Radius.ServerProfile)
 		putBool(detail, "checkgroup", m.Radius.Checkgroup)
-	case m.Tacplus != nil:
-		detail["server_profile"] = strVal(m.Tacplus.ServerProfile)
-		putBool(detail, "checkgroup", m.Tacplus.Checkgroup)
 	case m.SamlIdp != nil:
 		detail["server_profile"] = strVal(m.SamlIdp.ServerProfile)
 		detail["certificate_profile"] = strVal(m.SamlIdp.CertificateProfile)
@@ -379,6 +394,9 @@ func authProfileMethodDetail(m *authprofile.Method) map[string]any {
 		detail["attribute_name_admin_role"] = strVal(m.SamlIdp.AttributeNameAdminRole)
 		detail["attribute_name_access_domain"] = strVal(m.SamlIdp.AttributeNameAccessDomain)
 		putBool(detail, "enable_single_logout", m.SamlIdp.EnableSingleLogout)
+	case m.Tacplus != nil:
+		detail["server_profile"] = strVal(m.Tacplus.ServerProfile)
+		putBool(detail, "checkgroup", m.Tacplus.Checkgroup)
 	}
 	return detail
 }
@@ -427,7 +445,7 @@ func RegisterAuthProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_auth_profile_list",
-		Description: "List authentication profiles. Firewall: vsys; Panorama: a template or template_stack is required. There is no shared scope for authentication profiles. Read-only.",
+		Description: "List authentication profiles. Firewall: vsys; Panorama: a template or template_stack is required. This server exposes no shared scope for authentication profiles. Read-only.",
 		Annotations: readOnlyTool("List authentication profiles"),
 	}, deviceListHandler(d, "panos_auth_profile_list", svc, parts, svc.name, authProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{

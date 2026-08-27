@@ -482,7 +482,7 @@ These authentication and log-forwarding server profiles are device-scoped: on a 
 
 ### Local users and authentication profiles
 
-These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, or `shared` selection. The authentication profile is the exception: PAN-OS has no shared scope for it, so a `shared` request is rejected there. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
+These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, or `shared` selection. The authentication profile is the exception: pango models no shared location for it, so a `shared` request is rejected there. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
 
 | Tool | Mode | Description |
 | --- | --- | --- |

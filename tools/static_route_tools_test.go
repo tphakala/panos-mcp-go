@@ -251,6 +251,11 @@ func TestOverlayStaticRouteV4PreservesDeferred(t *testing.T) {
 	if e.PathMonitor == nil || e.Bfd == nil || e.RouteTable == nil {
 		t.Fatalf("deferred PathMonitor/Bfd/RouteTable must be preserved: %+v", e)
 	}
+	// Assert the VALUES, not just non-nil: a rebuild that allocated empty blocks
+	// would satisfy a nil check while losing everything they carried.
+	if !boolVal(e.PathMonitor.Enable) || strVal(e.Bfd.Profile) != "bfd-a" || e.RouteTable.Unicast == nil {
+		t.Fatalf("the deferred subtrees must survive with their values intact: %+v", e)
+	}
 	if e.Nexthop == nil || e.Nexthop.IpAddress == nil || *e.Nexthop.IpAddress != "192.168.1.1" {
 		t.Fatalf("an untouched next hop must be preserved: %+v", e.Nexthop)
 	}
@@ -450,6 +455,62 @@ func TestStaticRouteBfdProfileOmittedPreserved(t *testing.T) {
 	}
 	if e.Bfd == nil || strVal(e.Bfd.Profile) != "bfd-a" {
 		t.Fatalf("an omitted bfd_profile must leave the stored profile untouched: %+v", e.Bfd)
+	}
+}
+
+// TestStaticRouteBfdProfileInSummary pins that the BFD profile reaches the
+// projection both families return from get and list. Without it both summary
+// lines were deletable with the suite green, so panos_static_route_get could stop
+// reporting the field entirely.
+//
+// Sabotage: delete the bfd_profile line from staticRouteV4Summary (or
+// staticRouteV6Summary) and the matching subtest goes red.
+func TestStaticRouteBfdProfileInSummary(t *testing.T) {
+	t.Run("ipv4", func(t *testing.T) {
+		m, ok := staticRouteV4Summary(&srv4.Entry{Name: "r1", Bfd: &srv4.Bfd{Profile: new("bfd-a")}}).(map[string]any)
+		if !ok {
+			t.Fatal("summary is not a map")
+		}
+		if m["bfd_profile"] != "bfd-a" {
+			t.Fatalf("bfd_profile = %v, want bfd-a", m["bfd_profile"])
+		}
+		bare, _ := staticRouteV4Summary(&srv4.Entry{Name: "r1"}).(map[string]any)
+		if _, present := bare["bfd_profile"]; present {
+			t.Fatalf("a route with no bfd block must omit bfd_profile, got %v", bare["bfd_profile"])
+		}
+	})
+	t.Run("ipv6", func(t *testing.T) {
+		m, ok := staticRouteV6Summary(&srv6.Entry{Name: "r1", Bfd: &srv6.Bfd{Profile: new("bfd-a")}}).(map[string]any)
+		if !ok {
+			t.Fatal("summary is not a map")
+		}
+		if m["bfd_profile"] != "bfd-a" {
+			t.Fatalf("bfd_profile = %v, want bfd-a", m["bfd_profile"])
+		}
+		bare, _ := staticRouteV6Summary(&srv6.Entry{Name: "r1"}).(map[string]any)
+		if _, present := bare["bfd_profile"]; present {
+			t.Fatalf("a route with no bfd block must omit bfd_profile, got %v", bare["bfd_profile"])
+		}
+	})
+}
+
+// TestStaticRouteV6BfdProfilePreservesMisc is the ipv6 twin of the v4 Misc test.
+// applyStaticRouteV6's comment says "see applyStaticRouteV4 for why e.Bfd is not
+// replaced", but nothing enforced that on v6: replacing e.Bfd wholesale there was
+// green.
+//
+// Sabotage: replace the in-place overlay in applyStaticRouteV6 with
+// e.Bfd = &srv6.Bfd{Profile: in.BfdProfile} and this goes red.
+func TestStaticRouteV6BfdProfilePreservesMisc(t *testing.T) {
+	e := &srv6.Entry{Name: "r1", Bfd: &srv6.Bfd{Profile: new("bfd-old"), Misc: []generic.Xml{{}}}}
+	if err := overlayStaticRouteV6(e, StaticRouteInput{Name: "r1", BfdProfile: new("bfd-new")}); err != nil {
+		t.Fatal(err)
+	}
+	if strVal(e.Bfd.Profile) != "bfd-new" {
+		t.Fatalf("bfd_profile must be updated: %q", strVal(e.Bfd.Profile))
+	}
+	if len(e.Bfd.Misc) != 1 {
+		t.Fatalf("unmodeled XML under bfd must survive the update: %+v", e.Bfd)
 	}
 }
 
