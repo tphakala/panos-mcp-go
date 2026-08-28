@@ -24,9 +24,10 @@ const protocolKey = "protocol"
 //
 // All six are device-scoped, resolved by resolveDeviceScope: a firewall vsys or
 // (for the three authentication SERVER profiles) shared scope, or a Panorama
-// template, template-stack or shared scope. The three log-forwarding profiles
-// (syslog, snmptrap, email) have no shared scope; resolveDeviceScope rejects a
-// shared request for them. Do not read that as the complete no-shared set:
+// template, template-stack or shared scope. Two of the three log-forwarding
+// profiles (snmptrap and email) have no shared scope; resolveDeviceScope rejects a
+// shared request for them, while syslog has one. Do not read that as the complete
+// no-shared set:
 // device/authprofile, the authentication PROFILE that references these server
 // profiles, also has none. noSharedScopeProfiles in device_scope.go is the
 // single source of truth.
@@ -516,7 +517,7 @@ func RegisterRadiusProfileTools(s *mcp.Server, d *Deps) {
 }
 
 // ---------------------------------------------------------------------------
-// Syslog server profile (device/profiles/syslog) - log-settings, no shared scope
+// Syslog server profile (device/profiles/syslog) - log-settings, has a shared scope
 // ---------------------------------------------------------------------------
 
 func newSyslogProfileService(d *Deps) nameFixAdapter[syslog.Location, syslog.Entry] {
@@ -529,6 +530,9 @@ func newSyslogProfileService(d *Deps) nameFixAdapter[syslog.Location, syslog.Ent
 
 func syslogProfileParts() deviceScopeParts[syslog.Location] {
 	return deviceScopeParts[syslog.Location]{
+		shared: func() syslog.Location {
+			return syslog.Location{Shared: &syslog.SharedLocation{}}
+		},
 		vsys: func(ngfw, vsys string) syslog.Location {
 			return syslog.Location{Vsys: &syslog.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
 		},
@@ -634,7 +638,7 @@ func RegisterSyslogProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_syslog_profile_list",
-		Description: "List syslog server profiles. Firewall: vsys; Panorama: template or template_stack (no shared scope). Read-only.",
+		Description: "List syslog server profiles. Firewall: vsys or shared; Panorama: template, template_stack, or shared. Read-only.",
 		Annotations: readOnlyTool("List syslog server profiles"),
 	}, deviceListHandler(d, "panos_syslog_profile_list", svc, parts, svc.name, syslogProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{

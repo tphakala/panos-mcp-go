@@ -353,6 +353,11 @@ func TestServerProfileCreateXpath(t *testing.T) {
 			map[string]any{"name": "p", "shared": true}, []string{"server-profile", "ldap", "shared"}},
 		{"syslog firewall vsys", RegisterSyslogProfileTools, "panos_syslog_profile_create",
 			map[string]any{"name": "p"}, []string{"log-settings", "syslog", "vsys"}},
+		// The shared node measured on a live PA-VM (PAN-OS 11.2.6): an XML API get
+		// of /config/shared/log-settings/syslog served a pre-existing profile. This
+		// pins that this server now writes to that same node.
+		{"syslog firewall shared", RegisterSyslogProfileTools, "panos_syslog_profile_create",
+			map[string]any{"name": "p", "shared": true}, []string{"log-settings", "syslog", "shared"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -383,8 +388,8 @@ func TestServerProfileCreateXpath(t *testing.T) {
 
 // TestServerProfileDeviceScopeGating pins resolveDeviceScope's routing through
 // the registered handlers: a template on a firewall is rejected, a bare Panorama
-// connection is rejected, and a shared request against a log-settings profile
-// (syslog) is rejected on a firewall.
+// connection is rejected, and a shared request against a no-shared profile
+// (email) is rejected on a firewall.
 func TestServerProfileDeviceScopeGating(t *testing.T) {
 	call := func(t *testing.T, model, register string, tool string, args map[string]any) *mcp.CallToolResult {
 		t.Helper()
@@ -395,6 +400,8 @@ func TestServerProfileDeviceScopeGating(t *testing.T) {
 			RegisterLdapProfileTools(srv, d)
 		case "syslog":
 			RegisterSyslogProfileTools(srv, d)
+		case "email":
+			RegisterEmailProfileTools(srv, d)
 		}
 		cs := connectInMemory(t, srv)
 		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
@@ -419,8 +426,10 @@ func TestServerProfileDeviceScopeGating(t *testing.T) {
 		res := call(t, "Panorama", "ldap", "panos_ldap_profile_list", map[string]any{})
 		mustErr(t, res, "template, template_stack, or shared")
 	})
-	t.Run("shared on a log-settings profile", func(t *testing.T) {
-		res := call(t, "PA-VM", "syslog", "panos_syslog_profile_create", map[string]any{"name": "p", "shared": true})
+	t.Run("shared on a no-shared profile", func(t *testing.T) {
+		// email, not syslog: pango models no shared location for email, while
+		// syslog has one this server now exposes (see noSharedScopeProfiles).
+		res := call(t, "PA-VM", "email", "panos_email_profile_create", map[string]any{"name": "p", "shared": true})
 		mustErr(t, res, "shared scope is not available")
 	})
 }

@@ -120,15 +120,18 @@ func TestResolveDeviceScopePanoramaStackAndShared(t *testing.T) {
 }
 
 // TestResolveDeviceScopeErrors pins the input-validation errors shared by both
-// device types, and the log-settings profiles' lack of a shared scope: syslog
-// parts supply no shared constructor, so a shared request is rejected on both a
-// firewall and Panorama. Sabotage: making the shared field non-nil in
-// syslogProfileParts turns the two "no shared" subchecks green.
+// device types, and a no-shared family's lack of a shared scope: email parts
+// supply no shared constructor, so a shared request is rejected on both a
+// firewall and Panorama. The exemplar is email rather than syslog because pango
+// models no shared location for email at all, while syslog has one and this
+// server now exposes it (see noSharedScopeProfiles and
+// TestResolveDeviceScopeSyslogShared). Sabotage: making the shared field non-nil
+// in emailProfileParts turns the two "no shared" subchecks green.
 func TestResolveDeviceScopeErrors(t *testing.T) {
 	pano, _ := newTestDeps(t, "Panorama")
 	fw, _ := newTestDeps(t, "PA-VM")
 	ldapParts := ldapProfileParts()
-	syslogParts := syslogProfileParts()
+	emailParts := emailProfileParts()
 
 	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Template: "t1", TemplateStack: "s1"}, ldapParts); err == nil ||
 		!strings.Contains(err.Error(), "only one of template or template_stack") {
@@ -139,21 +142,48 @@ func TestResolveDeviceScopeErrors(t *testing.T) {
 		t.Fatalf("template_vsys without template/template_stack must be rejected, got %v", err)
 	}
 
-	// syslog (log-settings) has no shared scope on either device type.
-	if _, err := resolveDeviceScope(fw, DeviceScopeInput{Shared: true}, syslogParts); err == nil ||
+	// email (log-settings) has no shared scope on either device type.
+	if _, err := resolveDeviceScope(fw, DeviceScopeInput{Shared: true}, emailParts); err == nil ||
 		!strings.Contains(err.Error(), "shared scope is not available") {
-		t.Fatalf("shared on a firewall must be rejected for a log-settings profile, got %v", err)
+		t.Fatalf("shared on a firewall must be rejected for a no-shared profile, got %v", err)
 	}
-	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Shared: true}, syslogParts); err == nil ||
+	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Shared: true}, emailParts); err == nil ||
 		!strings.Contains(err.Error(), "shared scope is not available") {
-		t.Fatalf("shared on Panorama must be rejected for a log-settings profile, got %v", err)
+		t.Fatalf("shared on Panorama must be rejected for a no-shared profile, got %v", err)
 	}
 
-	// syslog still resolves to a firewall vsys and a Panorama template normally.
-	if loc, err := resolveDeviceScope(fw, DeviceScopeInput{}, syslogParts); err != nil || loc.Vsys == nil {
-		t.Fatalf("syslog default firewall scope must resolve to vsys: loc=%+v err=%v", loc, err)
+	// email still resolves to a firewall vsys and a Panorama template normally.
+	if loc, err := resolveDeviceScope(fw, DeviceScopeInput{}, emailParts); err != nil || loc.Vsys == nil {
+		t.Fatalf("email default firewall scope must resolve to vsys: loc=%+v err=%v", loc, err)
 	}
-	if loc, err := resolveDeviceScope(pano, DeviceScopeInput{Template: "t1"}, syslogParts); err != nil || loc.Template == nil {
-		t.Fatalf("syslog template scope must resolve: loc=%+v err=%v", loc, err)
+	if loc, err := resolveDeviceScope(pano, DeviceScopeInput{Template: "t1"}, emailParts); err != nil || loc.Template == nil {
+		t.Fatalf("email template scope must resolve: loc=%+v err=%v", loc, err)
+	}
+}
+
+// TestResolveDeviceScopeSyslogShared pins the shared scope this server now
+// exposes for syslog on both device types. syslog was grouped with the other
+// log-settings profiles as having no shared scope until it was measured: pango
+// models one (device/profiles/syslog/location.go:14, XpathPrefix at :187 emitting
+// config/shared), and one PA-VM on PAN-OS 11.2.6 answered an XML API get of
+// /config/shared/log-settings/syslog with status="success" code="19"
+// total-count="1" holding a pre-existing operator-created profile. Scope of that
+// evidence: one firewall, one PAN-OS version; the Panorama half is exposed
+// because pango addresses it the same way, NOT because it was measured.
+//
+// Sabotage: delete the shared constructor from syslogProfileParts and both
+// subchecks fail with "shared scope is not available".
+func TestResolveDeviceScopeSyslogShared(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+	fw, _ := newTestDeps(t, "PA-VM")
+	parts := syslogProfileParts()
+
+	loc, err := resolveDeviceScope(fw, DeviceScopeInput{Shared: true}, parts)
+	if err != nil || loc.Shared == nil {
+		t.Fatalf("shared syslog on a firewall must resolve to the shared location: loc=%+v err=%v", loc, err)
+	}
+	loc, err = resolveDeviceScope(pano, DeviceScopeInput{Shared: true}, parts)
+	if err != nil || loc.Shared == nil {
+		t.Fatalf("shared syslog on Panorama must resolve to the shared location: loc=%+v err=%v", loc, err)
 	}
 }

@@ -123,7 +123,7 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 			"retry_interval", "servers", "ssl", "timelimit", "verify_server_certificate"},
 		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
-		"shared":         "Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for syslog, snmp-trap, email and authentication profiles.",
+		"shared":         "Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for snmp-trap, email and authentication profiles.",
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
 		"template_stack": "Panorama template-stack name (Panorama only; mutually exclusive with template)",
 		"template_vsys":  "vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope",
