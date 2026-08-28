@@ -336,31 +336,44 @@ func TestEmailProfileBuildAndSummary(t *testing.T) {
 
 // TestServerProfileCreateXpath drives the create tool for an authentication
 // profile (ldap -> server-profile/ldap) and a log-forwarding profile (syslog ->
-// log-settings/syslog) on a firewall, asserting the set reaches the right config
-// node. The node substrings are the sabotage anchors for location drift.
+// log-settings/syslog), asserting the set reaches the right config node. The node
+// substrings are the sabotage anchors for location drift.
+//
+// Each case names its device model as data. It used to be sniffed out of the case
+// name with strings.Contains(c.name, "panorama"), which silently made the name
+// load-bearing: a case exercising the panorama SCOPE could not be named for it
+// without also switching the model, and vice versa.
 func TestServerProfileCreateXpath(t *testing.T) {
 	entryBody := `<response status="success"><result><entry name="p"/></result></response>`
 	cases := []struct {
 		name     string
+		model    string
 		register func(*mcp.Server, *Deps)
 		tool     string
 		args     map[string]any
 		want     []string
 	}{
-		{"ldap firewall vsys", RegisterLdapProfileTools, "panos_ldap_profile_create",
+		{"ldap firewall vsys", "PA-VM", RegisterLdapProfileTools, "panos_ldap_profile_create",
 			map[string]any{"name": "p"}, []string{"server-profile", "ldap", "vsys"}},
-		{"ldap panorama shared", RegisterLdapProfileTools, "panos_ldap_profile_create",
+		{"ldap panorama shared", "Panorama", RegisterLdapProfileTools, "panos_ldap_profile_create",
 			map[string]any{"name": "p", "shared": true}, []string{"server-profile", "ldap", "shared"}},
-		{"syslog firewall vsys", RegisterSyslogProfileTools, "panos_syslog_profile_create",
+		// The Panorama management-plane tier: these must reach config/panorama,
+		// which is Panorama's OWN configuration, not a template pushed to firewalls.
+		{"ldap panorama tier", "Panorama", RegisterLdapProfileTools, "panos_ldap_profile_create",
+			map[string]any{"name": "p", "panorama": true}, []string{"server-profile", "ldap", "panorama"}},
+		{"syslog panorama tier", "Panorama", RegisterSyslogProfileTools, "panos_syslog_profile_create",
+			map[string]any{"name": "p", "panorama": true}, []string{"log-settings", "syslog", "panorama"}},
+		{"syslog firewall vsys", "PA-VM", RegisterSyslogProfileTools, "panos_syslog_profile_create",
 			map[string]any{"name": "p"}, []string{"log-settings", "syslog", "vsys"}},
+		// The shared node measured on a live PA-VM (PAN-OS 11.2.6): an XML API get
+		// of /config/shared/log-settings/syslog served a pre-existing profile. This
+		// pins that this server now writes to that same node.
+		{"syslog firewall shared", "PA-VM", RegisterSyslogProfileTools, "panos_syslog_profile_create",
+			map[string]any{"name": "p", "shared": true}, []string{"log-settings", "syslog", "shared"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			model := "PA-VM"
-			if strings.Contains(c.name, "panorama") {
-				model = "Panorama"
-			}
-			d, f := newTestDeps(t, model,
+			d, f := newTestDeps(t, c.model,
 				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 				fakeRoute{Match: configAction("get"), Body: entryBody},
 			)
@@ -383,8 +396,8 @@ func TestServerProfileCreateXpath(t *testing.T) {
 
 // TestServerProfileDeviceScopeGating pins resolveDeviceScope's routing through
 // the registered handlers: a template on a firewall is rejected, a bare Panorama
-// connection is rejected, and a shared request against a log-settings profile
-// (syslog) is rejected on a firewall.
+// connection is rejected, and a shared request against a no-shared profile
+// (email) is rejected on a firewall.
 func TestServerProfileDeviceScopeGating(t *testing.T) {
 	call := func(t *testing.T, model, register string, tool string, args map[string]any) *mcp.CallToolResult {
 		t.Helper()
@@ -393,8 +406,8 @@ func TestServerProfileDeviceScopeGating(t *testing.T) {
 		switch register {
 		case "ldap":
 			RegisterLdapProfileTools(srv, d)
-		case "syslog":
-			RegisterSyslogProfileTools(srv, d)
+		case "email":
+			RegisterEmailProfileTools(srv, d)
 		}
 		cs := connectInMemory(t, srv)
 		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
@@ -417,10 +430,12 @@ func TestServerProfileDeviceScopeGating(t *testing.T) {
 	})
 	t.Run("panorama without scope", func(t *testing.T) {
 		res := call(t, "Panorama", "ldap", "panos_ldap_profile_list", map[string]any{})
-		mustErr(t, res, "template, template_stack, or shared")
+		mustErr(t, res, "template, template_stack, shared, or panorama")
 	})
-	t.Run("shared on a log-settings profile", func(t *testing.T) {
-		res := call(t, "PA-VM", "syslog", "panos_syslog_profile_create", map[string]any{"name": "p", "shared": true})
+	t.Run("shared on a no-shared profile", func(t *testing.T) {
+		// email, not syslog: pango models no shared location for email, while
+		// syslog has one this server now exposes (see noSharedScopeProfiles).
+		res := call(t, "PA-VM", "email", "panos_email_profile_create", map[string]any{"name": "p", "shared": true})
 		mustErr(t, res, "shared scope is not available")
 	})
 }

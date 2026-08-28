@@ -342,19 +342,7 @@ func TestAdministratorCreateRedactsPasswordHashOnError(t *testing.T) {
 		"password_hash": phash,
 		"role":          adminRoleSuperuser,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, phash) {
-		t.Fatalf("the submitted password hash leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, phash)
 }
 
 // TestAdministratorCustomRolePartialUpdatePreserves pins the read-modify-write
@@ -472,19 +460,7 @@ func TestAdministratorUpdateRedactsPasswordHashOnError(t *testing.T) {
 		"name":          "admin1",
 		"password_hash": phash,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, phash) {
-		t.Fatalf("the submitted password hash leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, phash)
 }
 
 // TestAdministratorUpdateRedactsResentPasswordHashOnRawResponseError is the

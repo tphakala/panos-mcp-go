@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,19 +44,7 @@ func TestLdapProfileCreateRedactsSecretOnError(t *testing.T) {
 		"name":          "ldap1",
 		"bind_password": fixture,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted bind password leaked into the create error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestLdapProfileUpdateRedactsSecretOnError drives the LDAP update tool
@@ -79,19 +66,7 @@ func TestLdapProfileUpdateRedactsSecretOnError(t *testing.T) {
 		"name":          "ldap1",
 		"bind_password": fixture,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted bind password leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestRadiusProfileCreateRedactsSecretOnError drives the RADIUS create tool
@@ -112,19 +87,7 @@ func TestRadiusProfileCreateRedactsSecretOnError(t *testing.T) {
 		"name":    "rad1",
 		"servers": []any{map[string]any{"name": "s1", "ip_address": "10.0.0.2", "secret": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted server secret leaked into the create error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestRadiusProfileUpdateRedactsSecretOnError drives the RADIUS update tool
@@ -146,19 +109,7 @@ func TestRadiusProfileUpdateRedactsSecretOnError(t *testing.T) {
 		"name":    "rad1",
 		"servers": []any{map[string]any{"name": "s1", "secret": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted server secret leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestSnmpTrapProfileCreateRedactsSecretOnError drives the SNMP-trap create
@@ -180,19 +131,7 @@ func TestSnmpTrapProfileCreateRedactsSecretOnError(t *testing.T) {
 		"version":     "v2c",
 		"v2c_servers": []any{map[string]any{"name": "s1", "manager": "10.0.0.3", "community": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted community string leaked into the create error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestSnmpTrapProfileUpdateRedactsSecretOnError drives the SNMP-trap update
@@ -223,22 +162,7 @@ func TestSnmpTrapProfileUpdateRedactsSecretOnError(t *testing.T) {
 			"priv_password": privFixture,
 		}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, authFixture) {
-		t.Fatalf("submitted auth password leaked into the update error: %q", out)
-	}
-	if strings.Contains(out, privFixture) {
-		t.Fatalf("submitted priv password leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, authFixture, privFixture)
 }
 
 // TestEmailProfileCreateRedactsSecretOnError drives the email create tool
@@ -264,19 +188,7 @@ func TestEmailProfileCreateRedactsSecretOnError(t *testing.T) {
 			"password": fixture,
 		}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted SMTP password leaked into the create error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestEmailProfileUpdateRedactsSecretOnError drives the email update tool
@@ -298,19 +210,7 @@ func TestEmailProfileUpdateRedactsSecretOnError(t *testing.T) {
 		"name":    "email1",
 		"servers": []any{map[string]any{"name": "s1", "password": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted SMTP password leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestTacacsProfileUpdateRedactsSecretOnError drives the TACACS+ update tool
@@ -335,17 +235,5 @@ func TestTacacsProfileUpdateRedactsSecretOnError(t *testing.T) {
 		"name":    "tac1",
 		"servers": []any{map[string]any{"name": "s1", "secret": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted server secret leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }

@@ -1,6 +1,13 @@
 package tools
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	panoserr "github.com/PaloAltoNetworks/pango/errors"
+	"github.com/PaloAltoNetworks/pango/xmlapi"
+)
 
 const redactedPlaceholder = "[REDACTED]"
 
@@ -29,18 +36,38 @@ const rawResponseMarker = "(raw response:"
 // A family that carries no secret passes false and keeps its full raw response,
 // where the non-secret context (error code, xpath, schema message) is the whole
 // value of the message.
+//
+// When the collapse DOES fire it discards everything, not just a tail. pango
+// formats the fallback as exactly "(raw response: %s)", so the marker sits at
+// offset 0 and no error code, xpath or device explanation precedes it; all of it
+// lives inside the body. MEASURED on pango v0.10.3-0.20260731153743 by parsing a
+// PAN-OS 11.2.6 validation failure: the result was
+// `(raw response: <response status="error" code="12">...`, prefix empty. That
+// total loss of diagnostics is the accepted cost of the guarantee, not an
+// oversight; reducing the body to its <msg> lines instead is tracked separately.
+//
+// The marker is located BEFORE any replacement runs. The needles are caller-
+// supplied tool arguments, so a caller who submits the marker text itself as a
+// secret value would otherwise have ReplaceAll destroy every marker occurrence
+// and silently disarm the collapse for the whole message (issue #106).
 func redactSecrets(msg string, secrets []string, collapseRaw bool) string {
+	// Split first, then replace, because replacement invalidates a saved index:
+	// the needles and the placeholder differ in length. A secret occurrence that
+	// straddled the marker would be missed, which cannot arise for a real pango
+	// message: the fallback message BEGINS at the marker, so the prefix is empty
+	// whenever the collapse fires.
+	tail := ""
+	if collapseRaw {
+		if i := strings.Index(msg, rawResponseMarker); i >= 0 {
+			msg, tail = msg[:i], rawResponseMarker+" [redacted])"
+		}
+	}
 	for _, s := range secrets {
 		if s != "" {
 			msg = strings.ReplaceAll(msg, s, redactedPlaceholder)
 		}
 	}
-	if collapseRaw {
-		if i := strings.Index(msg, rawResponseMarker); i >= 0 {
-			msg = msg[:i] + rawResponseMarker + " [redacted])"
-		}
-	}
-	return msg
+	return msg + tail
 }
 
 // redactWriteError is the seam every write handler uses. It replaces the secret
@@ -50,6 +77,87 @@ func redactSecrets(msg string, secrets []string, collapseRaw bool) string {
 // the handler call sites while leaving the primitive directly unit-testable.
 func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string {
 	return redactSecrets(msg, gatherSecrets(in, opts), isSecretBearing(opts))
+}
+
+// redactDeviceError is the seam getCore, listCore and deleteCore use. Those paths
+// hold no submitted value to replace, so the raw-response collapse is the whole of
+// it, and it runs for every family routed through those three cores rather than
+// only secret-bearing ones (issue #105). Families with hand-written handlers that
+// bypass the cores are NOT covered: the zone list, get, delete and update-seed-read
+// paths in device_tools.go and the seed read in policy_tools.go's moveHandler are
+// the current examples. No secret-bearing family has a bespoke handler, so nothing
+// with a withSecrets extractor sits outside this seam.
+//
+// Unconditional rather than opted into per family because a per-family flag fails
+// open: a family that forgot to pass it would silently lose the collapse, which is
+// the failure mode issue #99 was.
+//
+// Whether a failed get, list or delete can even return a body carrying the entry
+// is NOT PROVEN. Probed against one PA-VM on PAN-OS 11.2.6: a get of a missing
+// entry, container or vsys came back status="success" code="7" (which pango still
+// reports as an error, but resolves to a non-empty "Object not found", so no
+// echo); a delete of a missing entry came back status="success" code="7" with a
+// non-empty msg; and outright rejections came back code="16" with a structured
+// single-line msg. Every one of those has a non-empty parsed message, which is
+// the condition that skips the raw-response fallback, so the collapse never fired
+// on any shape that box produced. That bounds the risk on that version; it does
+// not eliminate it. Panorama, other PAN-OS versions and unenumerated failure
+// modes were NOT MEASURED. This closes one shape of the leak, not the leak.
+//
+// secrets is empty for the three cores, which hold no submitted value. The seed
+// read of a read-modify-write update passes the values that call submitted, since
+// it is a read that happens to have them in hand.
+//
+// It takes the error rather than its string so that the device's numeric code
+// survives the collapse. pango puts the fallback marker at offset 0 for an
+// unwrapped error, so a collapsed message would otherwise carry no code, no xpath
+// and no device text at all, for every family including the ones with no secret. pango parses the code
+// off the response attribute and keeps it on the error VALUE (errors.Parse builds
+// Panos{Msg, Code} and fills Code on the fallback branch too), so it is still in
+// hand after the body is discarded. Surfacing it cannot leak what the body held:
+// the field is an int, and a non-numeric attribute unmarshals to 0 rather than to
+// any of the body's text.
+func redactDeviceError(err error, secrets ...string) string {
+	if err == nil {
+		return ""
+	}
+	msg := redactSecrets(err.Error(), secrets, true)
+	// Contains, not HasPrefix: the marker sits at offset 0 for an unwrapped pango
+	// error, but a wrapped one ("delete %q: %w") leaves context in front of it and
+	// a prefix test would then silently drop the code. Since collapseRaw is true
+	// here, the marker is present in the result exactly when the collapse fired.
+	if !strings.Contains(msg, rawResponseMarker) {
+		return msg
+	}
+	if pe, ok := errors.AsType[panoserr.Panos](err); ok {
+		return withDeviceCode(pe.Code, msg)
+	}
+	// A failed delete reports through a different type: pango batches deletes into
+	// a MultiConfig, and the client returns the *xmlapi.MultiConfigResponse itself
+	// as the error (client.go:694). Its Error() falls back to errors.Parse over the
+	// raw body only when the response carries no per-operation results
+	// (xmlapi/multiconfig.go:110), which is when the marker can appear; with
+	// results it returns the last result's own message and no marker. Checking both
+	// types is what keeps the read paths behaving alike; without it delete alone
+	// lost its code.
+	if mc, ok := errors.AsType[*xmlapi.MultiConfigResponse](err); ok {
+		return withDeviceCode(mc.Code, msg)
+	}
+	return msg
+}
+
+// withDeviceCode prefixes a collapsed message with the device's response code.
+//
+// Code 0 is omitted because it is what a response with no code attribute
+// unmarshals to, so printing it would invent a code the device never sent. The
+// wording is "response code" rather than "error code" because the value is just
+// the response's code attribute, and the collapse fires whenever pango's parsed
+// message comes out empty, which is reachable at codes that are not error codes.
+func withDeviceCode(code int, msg string) string {
+	if code == 0 {
+		return msg
+	}
+	return fmt.Sprintf("device response code %d: %s", code, msg)
 }
 
 // isSecretBearing reports whether any option declares a secret extractor, which
@@ -65,11 +173,14 @@ func isSecretBearing[In any](opts []writeOption[In]) bool {
 	return false
 }
 
-// writeOption configures a create or update handler. Its only current use is
-// supplying the secret values a tool submitted so the write-error sinks can
-// redact them (see redactSecrets). Handlers for families that carry no secret
-// take no options, and the variadic parameter keeps every existing call site
-// unchanged.
+// writeOption configures a create or update handler. It carries two things that
+// look like one: the extractor that supplies the secret values a tool submitted,
+// and, through its mere PRESENCE, the family's declaration that its entries carry
+// write-only key material at all. isSecretBearing reads only the presence and
+// ignores the values, and that is what arms the raw-response collapse for a
+// read-modify-write that resends a stored secret the caller never sent (issue
+// #99). Handlers for families that carry no secret take no options, and the
+// variadic parameter keeps every existing call site unchanged.
 type writeOption[In any] struct {
 	secrets func(*In) []string
 }

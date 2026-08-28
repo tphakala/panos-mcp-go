@@ -16,14 +16,13 @@ import (
 // Scope: pango models the authentication profile at a firewall vsys, a Panorama
 // template or template-stack (optionally down to a vsys within it), and
 // Panorama's own configuration. There is no shared scope, so this family joins
-// the no-shared group alongside the log-settings profiles and leaves
-// deviceScopeParts.shared nil; see noSharedScopeProfiles.
+// the no-shared group alongside the SNMP-trap and email log-settings profiles
+// and leaves deviceScopeParts.shared nil; see noSharedScopeProfiles. syslog, the
+// third log-settings profile, does have one.
 //
-// Panorama's own authentication profiles (authprofile.Location.Panorama) are not
-// reachable here. deviceScopeParts has no panorama constructor, so every
-// device-scoped family reaches Panorama only through a template or
-// template-stack. That is a limitation of the shared device scope rather than of
-// this family, and it matches every other device-scoped family in this server.
+// Panorama's own authentication profiles (authprofile.Location.Panorama) are
+// reachable through the panorama scope below, alongside the template and
+// template-stack scopes.
 
 func newAuthProfileService(d *Deps) nameFixAdapter[authprofile.Location, authprofile.Entry] {
 	return nameFixAdapter[authprofile.Location, authprofile.Entry]{
@@ -38,6 +37,9 @@ func newAuthProfileService(d *Deps) nameFixAdapter[authprofile.Location, authpro
 // location.
 func authProfileParts() deviceScopeParts[authprofile.Location] {
 	return deviceScopeParts[authprofile.Location]{
+		panorama: func() authprofile.Location {
+			return authprofile.Location{Panorama: &authprofile.PanoramaLocation{}}
+		},
 		vsys: func(ngfw, vsys string) authprofile.Location {
 			return authprofile.Location{Vsys: &authprofile.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
 		},
@@ -436,7 +438,7 @@ func RegisterAuthProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_auth_profile_list",
-		Description: "List authentication profiles. Firewall: vsys; Panorama: a template or template_stack is required. This server exposes no shared scope for authentication profiles. Read-only.",
+		Description: "List authentication profiles. Firewall: vsys; Panorama: a template, template_stack, or panorama is required. This server exposes no shared scope for authentication profiles. Read-only.",
 		Annotations: readOnlyTool("List authentication profiles"),
 	}, deviceListHandler(d, "panos_auth_profile_list", svc, parts, svc.name, authProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{

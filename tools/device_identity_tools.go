@@ -21,6 +21,10 @@ func newLocalUserService(d *Deps) nameFixAdapter[localdb.Location, localdb.Entry
 	}
 }
 
+// localUserParts leaves panorama nil: pango models no Panorama location for
+// this package (device/localdb/user/location.go declares no Panorama field and
+// carries no PanoramaLocation type at v0.10.3-0.20260731153743), so a panorama
+// request is rejected rather than silently retargeted.
 func localUserParts() deviceScopeParts[localdb.Location] {
 	return deviceScopeParts[localdb.Location]{
 		shared: func() localdb.Location { return localdb.Location{Shared: &localdb.SharedLocation{}} },
@@ -144,6 +148,9 @@ func newSamlIdpProfileService(d *Deps) nameFixAdapter[samlidp.Location, samlidp.
 
 func samlIdpProfileParts() deviceScopeParts[samlidp.Location] {
 	return deviceScopeParts[samlidp.Location]{
+		panorama: func() samlidp.Location {
+			return samlidp.Location{Panorama: &samlidp.PanoramaLocation{}}
+		},
 		shared: func() samlidp.Location { return samlidp.Location{Shared: &samlidp.SharedLocation{}} },
 		vsys: func(ngfw, vsys string) samlidp.Location {
 			return samlidp.Location{Vsys: &samlidp.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
@@ -242,7 +249,7 @@ func RegisterSamlIdpProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_saml_idp_profile_list",
-		Description: "List SAML IdP server profiles. Firewall: vsys or shared; Panorama: template, template_stack or shared. Read-only.",
+		Description: "List SAML IdP server profiles. Firewall: vsys or shared; Panorama: template, template_stack, shared, or panorama. Read-only.",
 		Annotations: readOnlyTool("List SAML IdP server profiles"),
 	}, deviceListHandler(d, "panos_saml_idp_profile_list", svc, parts, svc.name, samlIdpProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
@@ -283,6 +290,10 @@ func newMfaProfileService(d *Deps) nameFixAdapter[mfa.Location, mfa.Entry] {
 	}
 }
 
+// mfaProfileParts leaves panorama nil: pango models no Panorama location for
+// this package (device/profiles/mfa/location.go declares no Panorama field and
+// carries no PanoramaLocation type at v0.10.3-0.20260731153743), so a panorama
+// request is rejected rather than silently retargeted.
 func mfaProfileParts() deviceScopeParts[mfa.Location] {
 	return deviceScopeParts[mfa.Location]{
 		shared: func() mfa.Location { return mfa.Location{Shared: &mfa.SharedLocation{}} },

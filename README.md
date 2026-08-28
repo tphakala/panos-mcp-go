@@ -445,7 +445,7 @@ These net-scoped network services follow the same scoping as the interface tools
 
 ### Device server profiles
 
-These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the three authentication server profiles); on Panorama a `template`, `template_stack`, or `shared` selection is required. The log-forwarding profiles (syslog, SNMP-trap, email) have no shared scope, and neither does the authentication profile that references these server profiles (see below). Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
+These authentication and log-forwarding server profiles are device-scoped: on a firewall they resolve to a `vsys` (or `shared`, for the three authentication server profiles and syslog); on Panorama a `template`, `template_stack`, `shared`, or `panorama` selection is required. `panorama` is the management-plane scope, which is where Panorama's own appliance-level configuration lives, as opposed to a template pushed to managed firewalls. Two of the three log-forwarding profiles (SNMP-trap and email) have no shared scope, and neither does the authentication profile that references these server profiles (see below); syslog does have one. Secrets (bind and shared-secret passwords, SNMP communities and v3 passwords, SMTP passwords) are write-only: they are accepted on create and update but never returned, and a get reports only a `has_<secret>` boolean.
 
 | Tool | Mode | Description |
 | --- | --- | --- |
@@ -482,7 +482,7 @@ These authentication and log-forwarding server profiles are device-scoped: on a 
 
 ### Local users and authentication profiles
 
-These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, or `shared` selection. The authentication profile is the exception: pango models no shared location for it, so a `shared` request is rejected there. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
+These device-scoped identity objects resolve the same way as the server profiles: a firewall `vsys` or `shared`, or a Panorama `template`, `template_stack`, `shared`, or `panorama` selection. Two exceptions, both because pango models no such location: the authentication profile has no `shared` scope, and local users and MFA profiles have no `panorama` scope, so those requests are rejected rather than silently retargeted. A local user's `password_hash` is a write-only pre-hashed password (PHASH): it is accepted on create and update but never returned, and a get reports only `has_password_hash`. The SAML IdP and MFA profiles reference a device certificate and a certificate profile by name.
 
 | Tool | Mode | Description |
 | --- | --- | --- |

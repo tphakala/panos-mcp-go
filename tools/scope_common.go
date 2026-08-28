@@ -16,8 +16,8 @@ import (
 // functions in tools.go.
 //
 // The resolvers stay separate on purpose. They are not copies of one function:
-// the input structs expose different tiers (the device scope has a vsys, the
-// profile scope has a panorama scope, the net scope has neither), the firewall
+// the input structs expose different tiers (only the device scope has a vsys,
+// the net scope has neither a vsys nor a panorama scope), the firewall
 // rejection messages are per-field in the net scope but combined in the device
 // scope, and the cross-tier rules differ. On that last point the device scope is
 // the outlier: given a template combined with shared it resolves to the
