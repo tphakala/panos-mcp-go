@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -36,19 +35,7 @@ func TestLocalUserCreateRedactsPasswordHashOnError(t *testing.T) {
 		"name":          "user1",
 		"password_hash": phash,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, phash) {
-		t.Fatalf("submitted password hash leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, phash)
 }
 
 // TestLocalUserUpdateRedactsPasswordHashOnError is the update-path twin of
@@ -70,19 +57,7 @@ func TestLocalUserUpdateRedactsPasswordHashOnError(t *testing.T) {
 		"name":          "user1",
 		"password_hash": phash,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, phash) {
-		t.Fatalf("submitted password hash leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, phash)
 }
 
 // TestMfaProfileCreateRedactsSecretOnError drives panos_mfa_profile_create
@@ -104,19 +79,7 @@ func TestMfaProfileCreateRedactsSecretOnError(t *testing.T) {
 		"name":   "mfa1",
 		"config": []any{map[string]any{"name": "api_key", "value": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted vendor config value leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestMfaProfileUpdateRedactsSecretOnError is the update-path twin of
@@ -138,19 +101,7 @@ func TestMfaProfileUpdateRedactsSecretOnError(t *testing.T) {
 		"name":   "mfa1",
 		"config": []any{map[string]any{"name": "api_key", "value": fixture}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, fixture) {
-		t.Fatalf("submitted vendor config value leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, fixture)
 }
 
 // TestIkeGatewayCreateRedactsPreSharedKeyOnError drives
@@ -172,19 +123,7 @@ func TestIkeGatewayCreateRedactsPreSharedKeyOnError(t *testing.T) {
 		"name":           "gw1",
 		"pre_shared_key": psk,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, psk) {
-		t.Fatalf("submitted pre-shared key leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, psk)
 }
 
 // TestIkeGatewayUpdateRedactsPreSharedKeyOnError is the update-path twin of
@@ -206,17 +145,5 @@ func TestIkeGatewayUpdateRedactsPreSharedKeyOnError(t *testing.T) {
 		"name":           "gw1",
 		"pre_shared_key": psk,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, psk) {
-		t.Fatalf("submitted pre-shared key leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, psk)
 }

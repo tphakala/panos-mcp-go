@@ -473,19 +473,7 @@ func TestAuthProfileUpdateRedactsKeytabOnError(t *testing.T) {
 		"name":                "ap1",
 		"sso_kerberos_keytab": keytab,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, keytab) {
-		t.Fatalf("the submitted keytab leaked into the update error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, keytab)
 }
 
 // TestAuthProfileSwitchFromLateBranchClearsIt covers the second of the two
@@ -720,19 +708,7 @@ func TestAuthProfileCreateRedactsKeytabOnError(t *testing.T) {
 		"name":                "ap1",
 		"sso_kerberos_keytab": keytab,
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, keytab) {
-		t.Fatalf("the submitted keytab leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, keytab)
 }
 
 // TestAuthProfileSharedScopeRejected pins that the authentication profile joins

@@ -156,19 +156,7 @@ func TestServerProfileCreateRedactsSecretOnError(t *testing.T) {
 		"name":    "tac",
 		"servers": []any{map[string]any{"name": "s1", "address": "10.0.0.1", "secret": secret}},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatalf("expected the device error to surface as a tool error")
-	}
-	out := textContent(t, res)
-	if strings.Contains(out, secret) {
-		t.Fatalf("submitted secret leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, redactedPlaceholder) {
-		t.Fatalf("expected the redaction placeholder in the error: %q", out)
-	}
+	assertRedactsSecret(t, res, err, secret)
 }
 
 // TestRedactSecretsMarkerOverlap pins that a submitted "secret" overlapping
