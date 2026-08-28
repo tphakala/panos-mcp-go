@@ -182,13 +182,7 @@ func TestPasswordProfilePanoramaScope(t *testing.T) {
 // mgtLocationBranches counts the set branches of a password profile location, so
 // a test can assert that resolving one scope did not also populate another.
 func mgtLocationBranches(l password.Location) int {
-	n := 0
-	for _, set := range []bool{l.Ngfw != nil, l.Panorama != nil, l.Template != nil, l.TemplateStack != nil} {
-		if set {
-			n++
-		}
-	}
-	return n
+	return countSet(l.Ngfw != nil, l.Panorama != nil, l.Template != nil, l.TemplateStack != nil)
 }
 
 // TestMgtScopeGatingThroughTool pins that a registered management-plane tool

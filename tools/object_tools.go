@@ -65,17 +65,7 @@ type AddressInput struct {
 // large AddressInput (the by-value builder signatures carry it for the generic
 // handler contract; this private helper is not bound by that).
 func countValueTypes(in *AddressInput) int {
-	n := 0
-	if in.IPNetmask != "" {
-		n++
-	}
-	if in.IPRange != "" {
-		n++
-	}
-	if in.FQDN != "" {
-		n++
-	}
-	return n
+	return countSet(in.IPNetmask != "", in.IPRange != "", in.FQDN != "")
 }
 
 // buildAddressEntry validates an AddressInput and builds a create entry. Exactly

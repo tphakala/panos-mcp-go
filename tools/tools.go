@@ -141,6 +141,19 @@ func indexByName[T any](s []T, key func(T) string) map[string]T {
 	return out
 }
 
+// countSet reports how many of vals are true. It collapses the one-of presence
+// count the mutually exclusive input families all need, which had grown several
+// hand-written spellings.
+func countSet(vals ...bool) int {
+	n := 0
+	for _, v := range vals {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
 // setPtr assigns src to *dst when src is non-nil, leaving *dst untouched
 // otherwise. It collapses the read-modify-write "set only when provided" guard
 // used across the overlay builders for optional pointer fields.
@@ -148,6 +161,18 @@ func setPtr[T any](dst **T, src *T) {
 	if src != nil {
 		*dst = src
 	}
+}
+
+// seedBranch returns the stored method branch so a same-branch rebuild keeps its
+// unmodeled Misc, or a fresh one when the profile previously used a different
+// branch. Taking the stored pointer rather than copying is safe because the
+// caller has already cleared every branch off the container, so the returned
+// value has exactly one owner.
+func seedBranch[T any](old *T) *T {
+	if old != nil {
+		return old
+	}
+	return new(T)
 }
 
 // setStrPtr sets *dst to a pointer to s when s is non-empty, leaving *dst
@@ -448,8 +473,11 @@ func isObjectNotFound(err error) bool {
 // forwards here, so the read/write lock ordering and the write-error redaction
 // seam live in one audited place (issue #90). resolve maps the tool input to a
 // pango location; page and name extract the per-verb inputs; opts supplies the
-// secret extractor for a secret-bearing family (it is empty for object families,
-// where redactSecrets is a no-op that returns the message unchanged).
+// secret extractor for a secret-bearing family. The presence of that extractor,
+// not whatever a given call submitted, is what arms the raw-response collapse
+// (issue #99), because a read-modify-write update resends a stored secret the
+// caller never sent. opts is empty for object families, which carry no secret
+// and so keep their device error verbatim.
 
 func listCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
@@ -560,7 +588,7 @@ func createCore[L, E, In any](
 		defer d.LockWrites()()
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
-			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			red := redactWriteError(err.Error(), &in, opts)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
@@ -593,8 +621,15 @@ func updateCore[L, E, In any](
 		defer d.LockWrites()()
 		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: read %q: %v", tool, n, err)
+			// The read that seeds a read-modify-write is armed the same way the
+			// write sinks below are. Whether PAN-OS ever answers a get with an
+			// error body that still carries the entry is NOT MEASURED; the
+			// collapse costs nothing here and this keeps the seed read from
+			// being the one unguarded sink in this function (issue #99). The
+			// sibling read, list and delete paths are NOT armed; see issue #105.
+			red := redactWriteError(err.Error(), &in, opts)
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: read %q: %s", tool, n, red)
 			return res, v, nil
 		}
 		if err := overlay(entry, in); err != nil {
@@ -603,7 +638,7 @@ func updateCore[L, E, In any](
 		}
 		updated, err := svc.Update(ctx, loc, entry, n)
 		if err != nil {
-			red := redactSecrets(err.Error(), gatherSecrets(&in, opts))
+			red := redactWriteError(err.Error(), &in, opts)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil

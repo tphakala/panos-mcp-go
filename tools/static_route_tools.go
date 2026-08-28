@@ -79,20 +79,7 @@ type StaticRouteNameInput struct {
 // nexthopCount reports how many of the four nexthop one-of fields the caller
 // provided, so the apply functions can reject more than one.
 func (in *StaticRouteInput) nexthopCount() int {
-	n := 0
-	if in.NexthopIpAddress != nil {
-		n++
-	}
-	if in.NexthopNextVr != nil {
-		n++
-	}
-	if in.NexthopFqdn != nil {
-		n++
-	}
-	if in.NexthopDiscard != nil {
-		n++
-	}
-	return n
+	return countSet(in.NexthopIpAddress != nil, in.NexthopNextVr != nil, in.NexthopFqdn != nil, in.NexthopDiscard != nil)
 }
 
 // ---------------------------------------------------------------------------

@@ -15,16 +15,34 @@ import (
 )
 
 // assertNoSecretLeak walks a summary map (including nested []any of maps) and
-// fails if any string value equals one of the given secrets. This is the guard
-// that the write-only secret fields never surface in a get/list projection.
+// fails if any string value contains one of the given secrets. This is the
+// guard that the write-only secret fields never surface in a get/list
+// projection. It matches by containment rather than equality so a secret
+// embedded in a larger string ("keytab=" + value) is caught too; see
+// TestAssertNoSecretLeakSkipsEmptyNeedle for why an empty secret is skipped.
+// nonEmptyNeedles drops the empty strings from ss. strings.Contains reports
+// true for "" against every string, so an unset optional secret reaching a
+// containment check would match every value and the failure would read as a
+// leak rather than as a bad call.
+func nonEmptyNeedles(ss []string) []string {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func assertNoSecretLeak(t *testing.T, m map[string]any, secrets ...string) {
 	t.Helper()
+	needles := nonEmptyNeedles(secrets)
 	var walk func(v any)
 	walk = func(v any) {
 		switch x := v.(type) {
 		case string:
-			for _, s := range secrets {
-				if x == s {
+			for _, s := range needles {
+				if strings.Contains(x, s) {
 					t.Fatalf("secret %q leaked into the summary", s)
 				}
 			}
@@ -45,6 +63,37 @@ func assertNoSecretLeak(t *testing.T, m map[string]any, secrets ...string) {
 		}
 	}
 	walk(m)
+}
+
+// TestAssertNoSecretLeakSkipsEmptyNeedle pins the empty-needle guard in
+// assertNoSecretLeak. strings.Contains reports true for "" against every
+// string, so without the guard an unset optional secret reaching the helper
+// would fail every summary unconditionally, and the failure would read as a
+// leak rather than as a bad call. Sabotage: delete the `if s == ""` continue in
+// assertNoSecretLeak and the first subtest turns red.
+func TestAssertNoSecretLeakSkipsEmptyNeedle(t *testing.T) {
+	m := map[string]any{"name": "p1", "servers": []any{map[string]any{"address": "10.0.0.1"}}}
+
+	t.Run("an empty needle matches nothing", func(t *testing.T) {
+		assertNoSecretLeak(t, m, "")
+	})
+
+	// The guard must not weaken the real check: a non-empty needle that is
+	// genuinely embedded in a larger value still has to fail. Sabotage: change
+	// strings.Contains back to an equality comparison and this turns red.
+	t.Run("a non-empty needle is still matched by containment", func(t *testing.T) {
+		leaky := map[string]any{"address": "host=10.0.0.1;key=TOPSECRET"}
+		fake := &testing.T{}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			assertNoSecretLeak(fake, leaky, "TOPSECRET")
+		}()
+		<-done
+		if !fake.Failed() {
+			t.Fatal("an embedded secret must still be caught by containment")
+		}
+	})
 }
 
 // --- LDAP ---------------------------------------------------------------------
@@ -219,25 +268,36 @@ func TestSnmpTrapProfileOverlayAndSummary(t *testing.T) {
 
 // TestSnmpTrapProfileOverlaySameVersionReplacesReceivers pins that supplying a
 // receiver list for the profile's already-active version replaces the list in
-// place without switching branches. Sabotage: not replacing
-// e.Version.V2c.Server in applySnmpTrapProfile leaves the old receiver and fails.
+// place without switching branches, and that a supplied receiver sharing a
+// stored name merges by name: an omitted community keeps the stored value.
+// Sabotage: not replacing e.Version.V2c.Server in applySnmpTrapProfile leaves
+// the old receivers and fails the replace assertion; neutralizing
+// indexByName's seed in snmpV2cServers (an empty prev map) drops the
+// preserved community and fails the merge assertion.
 func TestSnmpTrapProfileOverlaySameVersionReplacesReceivers(t *testing.T) {
 	e := &snmptrap.Entry{Name: "snmp", Version: &snmptrap.Version{V2c: &snmptrap.VersionV2c{
-		Server: []snmptrap.VersionV2cServer{{Name: "s1", Community: new("old")}},
+		Server: []snmptrap.VersionV2cServer{
+			{Name: "s1", Community: new("old")},
+			{Name: "gone", Community: new("gone-secret")},
+		},
 	}}}
 	if err := overlaySnmpTrapProfile(e, SnmpTrapProfileInput{
 		Name: "snmp", Version: "v2c",
-		V2cServers: []SnmpV2cServerInput{{Name: "s2", Manager: new("10.0.0.9"), Community: new("new")}},
+		V2cServers: []SnmpV2cServerInput{
+			{Name: "s1", Manager: new("10.0.0.9")},
+			{Name: "s2", Manager: new("10.0.0.10"), Community: new("new")},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if e.Version.V3 != nil {
 		t.Fatalf("a same-version update must not create the other branch: %+v", e.Version)
 	}
-	if len(e.Version.V2c.Server) != 1 || e.Version.V2c.Server[0].Name != "s2" {
-		t.Fatalf("v2c receivers must be replaced in place: %+v", e.Version.V2c.Server)
+	if len(e.Version.V2c.Server) != 2 || e.Version.V2c.Server[0].Name != "s1" || e.Version.V2c.Server[1].Name != "s2" {
+		t.Fatalf("v2c receivers must be replaced in place with exactly the supplied set: %+v", e.Version.V2c.Server)
 	}
-	mustStrPtr(t, e.Version.V2c.Server[0].Community, "new", "replaced community")
+	mustStrPtr(t, e.Version.V2c.Server[0].Community, "old", "s1 omitted community must be preserved by name")
+	mustStrPtr(t, e.Version.V2c.Server[1].Community, "new", "s2 supplied community")
 }
 
 // --- Email --------------------------------------------------------------------
@@ -615,5 +675,101 @@ func TestEmailProfileMergePreservesSecret(t *testing.T) {
 	}
 	if len(e.Server[0].MiscAttributes) != 1 || e.Server[0].MiscAttributes[0].Value != "e1" {
 		t.Fatalf("s1 unmodeled XML must be preserved: %+v", e.Server[0].MiscAttributes)
+	}
+}
+
+// TestSnmpTrapProfileV3MergePreservesPasswords is the #89 merge-by-name test
+// for the SNMPv3 receiver branch: re-supplying an existing receiver by name
+// with both write-only passwords omitted keeps the stored Authpwd and
+// Privpwd. Sabotage: neutralizing indexByName's seed in snmpV3Servers (an
+// empty prev map) drops both passwords and fails.
+func TestSnmpTrapProfileV3MergePreservesPasswords(t *testing.T) {
+	e := &snmptrap.Entry{Name: "snmp", Version: &snmptrap.Version{V3: &snmptrap.VersionV3{
+		Server: []snmptrap.VersionV3Server{
+			{Name: "s1", Manager: new("10.0.0.3"), User: new("u1"), Authpwd: new("authpw1"), Privpwd: new("privpw1")},
+		},
+	}}}
+	in := SnmpTrapProfileInput{Name: "snmp", V3Servers: []SnmpV3ServerInput{
+		{Name: "s1", Manager: new("10.0.0.99")},
+	}}
+	if err := overlaySnmpTrapProfile(e, in); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Version.V3.Server) != 1 || e.Version.V3.Server[0].Name != "s1" {
+		t.Fatalf("s1 must remain: %+v", e.Version.V3.Server)
+	}
+	s1 := e.Version.V3.Server[0]
+	if s1.Manager == nil || *s1.Manager != "10.0.0.99" {
+		t.Fatalf("s1 manager should update: %+v", s1)
+	}
+	mustStrPtr(t, s1.Authpwd, "authpw1", "s1 omitted auth password must be preserved")
+	mustStrPtr(t, s1.Privpwd, "privpw1", "s1 omitted priv password must be preserved")
+}
+
+// TestLdapProfileMergePreservesServerFields is the merge-by-name test for
+// LDAP servers. LDAP servers carry no per-server secret, so this pins the
+// preserved port and the preserved unmodeled per-server XML instead.
+// Sabotage: neutralizing indexByName's seed in ldapServers (an empty prev
+// map) drops the preserved port and the MiscAttributes and fails.
+func TestLdapProfileMergePreservesServerFields(t *testing.T) {
+	e := &ldap.Entry{
+		Name: "ad",
+		Server: []ldap.Server{
+			{Name: "s1", Address: new("10.0.0.1"), Port: new(int64(636)),
+				MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "l1"}}},
+		},
+	}
+	in := LdapProfileInput{Name: "ad", Servers: []LdapServerInput{
+		{Name: "s1", Address: new("10.0.0.9")},
+	}}
+	if err := overlayLdapProfile(e, in); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Server) != 1 || e.Server[0].Name != "s1" {
+		t.Fatalf("s1 must remain: %+v", e.Server)
+	}
+	s1 := e.Server[0]
+	if s1.Address == nil || *s1.Address != "10.0.0.9" {
+		t.Fatalf("s1 address should update: %+v", s1)
+	}
+	if s1.Port == nil || *s1.Port != 636 {
+		t.Fatalf("s1 omitted port must be preserved: %+v", s1)
+	}
+	if len(s1.MiscAttributes) != 1 || s1.MiscAttributes[0].Value != "l1" {
+		t.Fatalf("s1 unmodeled XML must be preserved: %+v", s1.MiscAttributes)
+	}
+}
+
+// TestSyslogProfileMergePreservesServerFields is the merge-by-name test for
+// syslog servers. Syslog servers carry no secret, so this pins the preserved
+// facility and the preserved unmodeled per-server XML instead. Sabotage:
+// neutralizing indexByName's seed in syslogServers (an empty prev map) drops
+// the preserved facility and the MiscAttributes and fails.
+func TestSyslogProfileMergePreservesServerFields(t *testing.T) {
+	e := &syslog.Entry{
+		Name: "sl",
+		Server: []syslog.Server{
+			{Name: "s1", Server: new("10.0.0.9"), Transport: new("UDP"), Facility: new("LOG_USER"),
+				MiscAttributes: []xml.Attr{{Name: xml.Name{Local: "uuid"}, Value: "y1"}}},
+		},
+	}
+	in := SyslogProfileInput{Name: "sl", Servers: []SyslogServerInput{
+		{Name: "s1", Transport: new("TCP")},
+	}}
+	if err := overlaySyslogProfile(e, in); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Server) != 1 || e.Server[0].Name != "s1" {
+		t.Fatalf("s1 must remain: %+v", e.Server)
+	}
+	s1 := e.Server[0]
+	if s1.Transport == nil || *s1.Transport != "TCP" {
+		t.Fatalf("s1 transport should update: %+v", s1)
+	}
+	if s1.Facility == nil || *s1.Facility != "LOG_USER" {
+		t.Fatalf("s1 omitted facility must be preserved: %+v", s1)
+	}
+	if len(s1.MiscAttributes) != 1 || s1.MiscAttributes[0].Value != "y1" {
+		t.Fatalf("s1 unmodeled XML must be preserved: %+v", s1.MiscAttributes)
 	}
 }

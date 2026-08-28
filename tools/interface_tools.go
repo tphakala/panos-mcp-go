@@ -30,7 +30,11 @@ const (
 // (DdnsConfig, DhcpClient, Arp, Bonjour, NdpProxy, AdjustTcpMss, the full
 // Ipv6.Address list, and so on) is left untouched. Because the update path is a
 // read-modify-write overlay that applies only the caller-provided fields, those
-// unmanaged fields survive across an update through pango's Entry.Misc.
+// unmanaged fields survive across an update. What preserves them is the
+// read-modify-write itself, not Entry.Misc: pango declares them as typed fields
+// on the Entry, and the overlay simply never writes them. For VLAN that covers
+// every field named above; for loopback and tunnel it covers the subset each of
+// them models.
 
 // ---------------------------------------------------------------------------
 // Loopback interface (network/interface/loopback)
