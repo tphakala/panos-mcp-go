@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -422,5 +423,29 @@ func assertCollapsedRawResponse(t *testing.T, res *mcp.CallToolResult, err error
 		if !strings.Contains(out, "device response code 12") {
 			t.Fatalf("the device response code must survive the collapse in the %s: %q", name, out)
 		}
+	}
+}
+
+// TestRedactDeviceErrorWrappedKeepsCode pins that wrapping the device error does
+// not cost the response code. Nothing wraps it today: pango returns Panos and
+// *xmlapi.MultiConfigResponse unwrapped and the cores pass them straight through.
+// The point is that the code survives if a future adapter starts wrapping, which
+// a prefix test on the marker would silently break while every other collapse
+// test stayed green, since they all go through the unwrapped path.
+//
+// Sabotage: change the strings.Contains guard in redactDeviceError back to
+// strings.HasPrefix and this turns red while the four collapse tests stay green.
+func TestRedactDeviceErrorWrappedKeepsCode(t *testing.T) {
+	inner := panoserr.Panos{Msg: rawResponseMarker + ` <response status="error" code="12"><entry name="leaky-entry"/></response>)`, Code: 12}
+	got := redactDeviceError(fmt.Errorf("delete %q: %w", "obj1", inner))
+
+	if strings.Contains(got, "leaky-entry") {
+		t.Fatalf("the raw body survived wrapping: %q", got)
+	}
+	if !strings.Contains(got, "device response code 12") {
+		t.Fatalf("the response code must survive a wrapped error: %q", got)
+	}
+	if !strings.Contains(got, `delete "obj1"`) {
+		t.Fatalf("the wrapping context must survive: %q", got)
 	}
 }

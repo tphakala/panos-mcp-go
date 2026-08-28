@@ -109,9 +109,9 @@ func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string
 // it is a read that happens to have them in hand.
 //
 // It takes the error rather than its string so that the device's numeric code
-// survives the collapse. pango puts the fallback marker at offset 0, so a
-// collapsed message would otherwise carry no code, no xpath and no device text at
-// all, for every family including the ones with no secret. pango parses the code
+// survives the collapse. pango puts the fallback marker at offset 0 for an
+// unwrapped error, so a collapsed message would otherwise carry no code, no xpath
+// and no device text at all, for every family including the ones with no secret. pango parses the code
 // off the response attribute and keeps it on the error VALUE (errors.Parse builds
 // Panos{Msg, Code} and fills Code on the fallback branch too), so it is still in
 // hand after the body is discarded. Surfacing it cannot leak what the body held:
@@ -122,7 +122,11 @@ func redactDeviceError(err error, secrets ...string) string {
 		return ""
 	}
 	msg := redactSecrets(err.Error(), secrets, true)
-	if !strings.HasPrefix(msg, rawResponseMarker) {
+	// Contains, not HasPrefix: the marker sits at offset 0 for an unwrapped pango
+	// error, but a wrapped one ("delete %q: %w") leaves context in front of it and
+	// a prefix test would then silently drop the code. Since collapseRaw is true
+	// here, the marker is present in the result exactly when the collapse fired.
+	if !strings.Contains(msg, rawResponseMarker) {
 		return msg
 	}
 	if pe, ok := errors.AsType[panoserr.Panos](err); ok {
