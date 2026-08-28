@@ -478,6 +478,12 @@ func isObjectNotFound(err error) bool {
 // (issue #99), because a read-modify-write update resends a stored secret the
 // caller never sent. opts is empty for object families, which carry no secret
 // and so keep their device error verbatim.
+//
+// The read, list and delete cores collapse pango's raw-response fallback for
+// EVERY family, not only secret-bearing ones, because that per-family signal
+// cannot reach them: it is carried by writeOption, which is parameterized on the
+// write input type. See redactDeviceError for why unconditional is the right
+// trade and for exactly what was and was not measured (issue #105).
 
 func listCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
@@ -497,8 +503,9 @@ func listCore[L, E, In any](
 		entries, err := svc.List(ctx, loc, "get", "", "")
 		if err != nil {
 			if !isObjectNotFound(err) {
-				d.Logger.Error("failed: "+tool, "error", err)
-				res, v := errorResult("failed: %s: %v", tool, err)
+				red := redactDeviceError(err.Error())
+				d.Logger.Error("failed: "+tool, "error", red)
+				res, v := errorResult("failed: %s: %s", tool, red)
 				return res, v, nil
 			}
 			// An empty object set: PAN-OS returns code 7 for a config get on a
@@ -531,8 +538,9 @@ func getCore[L, E, In any](
 		}
 		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactDeviceError(err.Error())
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		res, v := jsonResult(summarize(entry))
@@ -558,8 +566,9 @@ func deleteCore[L, E, In any](
 		}
 		defer d.LockWrites()()
 		if err := svc.Delete(ctx, loc, n); err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: %v", tool, err)
+			red := redactDeviceError(err.Error())
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
 		}
 		res, v := successResult(d.Logger, tool, "deleted %q from candidate config; run panos_commit to apply", n)

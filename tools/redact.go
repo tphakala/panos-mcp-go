@@ -29,18 +29,38 @@ const rawResponseMarker = "(raw response:"
 // A family that carries no secret passes false and keeps its full raw response,
 // where the non-secret context (error code, xpath, schema message) is the whole
 // value of the message.
+//
+// When the collapse DOES fire it discards everything, not just a tail. pango
+// formats the fallback as exactly "(raw response: %s)", so the marker sits at
+// offset 0 and no error code, xpath or device explanation precedes it; all of it
+// lives inside the body. MEASURED on pango v0.10.3-0.20260731153743 by parsing a
+// PAN-OS 11.2.6 validation failure: the result was
+// `(raw response: <response status="error" code="12">...`, prefix empty. That
+// total loss of diagnostics is the accepted cost of the guarantee, not an
+// oversight; reducing the body to its <msg> lines instead is tracked separately.
+//
+// The marker is located BEFORE any replacement runs. The needles are caller-
+// supplied tool arguments, so a caller who submits the marker text itself as a
+// secret value would otherwise have ReplaceAll destroy every marker occurrence
+// and silently disarm the collapse for the whole message (issue #106).
 func redactSecrets(msg string, secrets []string, collapseRaw bool) string {
+	// Split first, then replace, because replacement invalidates a saved index:
+	// the needles and the placeholder differ in length. A secret occurrence that
+	// straddled the marker would be missed, which cannot arise for a real pango
+	// message: the fallback message BEGINS at the marker, so the prefix is empty
+	// whenever the collapse fires.
+	tail := ""
+	if collapseRaw {
+		if i := strings.Index(msg, rawResponseMarker); i >= 0 {
+			msg, tail = msg[:i], rawResponseMarker+" [redacted])"
+		}
+	}
 	for _, s := range secrets {
 		if s != "" {
 			msg = strings.ReplaceAll(msg, s, redactedPlaceholder)
 		}
 	}
-	if collapseRaw {
-		if i := strings.Index(msg, rawResponseMarker); i >= 0 {
-			msg = msg[:i] + rawResponseMarker + " [redacted])"
-		}
-	}
-	return msg
+	return msg + tail
 }
 
 // redactWriteError is the seam every write handler uses. It replaces the secret
@@ -50,6 +70,32 @@ func redactSecrets(msg string, secrets []string, collapseRaw bool) string {
 // the handler call sites while leaving the primitive directly unit-testable.
 func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string {
 	return redactSecrets(msg, gatherSecrets(in, opts), isSecretBearing(opts))
+}
+
+// redactDeviceError is the seam the read, list and delete handlers use. Those
+// paths hold no submitted value to replace, so the raw-response collapse is the
+// whole of it, and it runs for EVERY family rather than only secret-bearing ones
+// (issue #105).
+//
+// Unconditional because the write path's per-family signal cannot reach here:
+// writeOption is parameterized on the write input type, and a get, list or delete
+// input is a different type. Threading a second family-level flag would touch six
+// scope wrapper families and every read-handler call site, and would fail open on
+// any family that forgot it, which is the failure mode issue #99 was.
+//
+// Whether a failed get, list or delete can even return a body carrying the entry
+// is NOT PROVEN. Probed against one PA-VM on PAN-OS 11.2.6: a get of a missing
+// entry, container or vsys came back status="success" code="7" (which pango still
+// reports as an error, but resolves to a non-empty "Object not found", so no
+// echo); a delete of a missing entry came back status="success" code="7" with a
+// non-empty msg; and outright rejections came back code="16" with a structured
+// single-line msg. Every one of those has a non-empty parsed message, which is
+// the condition that skips the raw-response fallback, so the collapse never fired
+// on any shape that box produced. That bounds the risk on that version; it does
+// not eliminate it. Panorama, other PAN-OS versions and unenumerated failure
+// modes were NOT MEASURED. This closes one shape of the leak, not the leak.
+func redactDeviceError(msg string) string {
+	return redactSecrets(msg, nil, true)
 }
 
 // isSecretBearing reports whether any option declares a secret extractor, which
@@ -65,11 +111,14 @@ func isSecretBearing[In any](opts []writeOption[In]) bool {
 	return false
 }
 
-// writeOption configures a create or update handler. Its only current use is
-// supplying the secret values a tool submitted so the write-error sinks can
-// redact them (see redactSecrets). Handlers for families that carry no secret
-// take no options, and the variadic parameter keeps every existing call site
-// unchanged.
+// writeOption configures a create or update handler. It carries two things that
+// look like one: the extractor that supplies the secret values a tool submitted,
+// and, through its mere PRESENCE, the family's declaration that its entries carry
+// write-only key material at all. isSecretBearing reads only the presence and
+// ignores the values, and that is what arms the raw-response collapse for a
+// read-modify-write that resends a stored secret the caller never sent (issue
+// #99). Handlers for families that carry no secret take no options, and the
+// variadic parameter keeps every existing call site unchanged.
 type writeOption[In any] struct {
 	secrets func(*In) []string
 }
