@@ -82,6 +82,11 @@ type IkeCryptoProfileInput struct {
 // countInt64Ptrs reports how many of the given optional int64 inputs are set.
 // The lifetime and lifesize choices are single-unit, so a caller may provide at
 // most one.
+//
+// Left as its own helper rather than folded into countSet: it is variadic over
+// *int64, a different signature. Its call sites could spell the same thing as
+// countSet(a != nil, b != nil, ...); this stays because the name carries the
+// "single-unit, at most one" rule, not because the rewrite is impossible.
 func countInt64Ptrs(ps ...*int64) int {
 	n := 0
 	for _, p := range ps {
@@ -470,12 +475,7 @@ type IkeGatewayInput struct {
 // existing peer address untouched. Any Misc on PeerAddress is preserved.
 func applyIkeGatewayPeer(e *gateway.Entry, in *IkeGatewayInput) error {
 	dynamic := in.PeerDynamic != nil && *in.PeerDynamic
-	n := 0
-	for _, set := range []bool{in.PeerIp != nil, in.PeerFqdn != nil, dynamic} {
-		if set {
-			n++
-		}
-	}
+	n := countSet(in.PeerIp != nil, in.PeerFqdn != nil, dynamic)
 	if n == 0 {
 		return nil
 	}

@@ -19,7 +19,13 @@ import (
 // on). This server models ONLY the Layer3 mode. On create it builds a Layer3
 // interface; on update it applies the Layer3 fields into the existing (or a new)
 // Layer3 block via read-modify-write and never clears a sibling mode block, so
-// the SDK-only subtrees round-trip through Entry.Misc untouched. Converting an
+// a sibling survives the update. What preserves it is the read-modify-write
+// itself, not Entry.Misc: pango declares each sibling mode block as its own
+// typed field on the Entry, and the overlay simply never writes them. The two
+// families this file manages do not carry the same set: ethernet.Entry declares
+// Layer2, VirtualWire, Tap, Ha, LogCard, DecryptMirror, Poe and Lacp, while
+// aggregate.Entry declares only DecryptMirror, Ha, Layer2 and VirtualWire.
+// Converting an
 // existing layer2 or virtual-wire port to layer3 is therefore out of scope: it
 // would require wiping a sibling block, which these tools deliberately do not do.
 

@@ -13,29 +13,56 @@ const rawResponseMarker = "(raw response:"
 
 // redactSecrets scrubs a device error message before it reaches a log sink or a
 // tool result. It literally replaces every known secret value with a placeholder
-// and, for a request that actually submitted a secret, collapses pango's
-// raw-response fallback. This is defense in depth for the write-only secret
-// guarantee (issue #92): it can only scrub the exact values it is given, so a
-// value the device transforms before echoing would not match a literal replace;
-// the raw-response collapse is the backstop for that case. secrets may contain
-// empty strings (an unset optional secret); those are skipped so an empty needle
-// never matches. A request that submitted no secret leaves the message intact so
-// its non-secret context (error code, xpath, schema message, even the raw
-// response) stays available for debugging.
-func redactSecrets(msg string, secrets []string) string {
-	submitted := false
+// and, when collapseRaw is set, truncates pango's raw-response fallback. This is
+// defense in depth for the write-only secret guarantee (issue #92): it can only
+// scrub the exact values it is given, so a value the device transforms before
+// echoing would not match a literal replace; the raw-response collapse is the
+// backstop for that case. secrets may contain empty strings (an unset optional
+// secret); those are skipped so an empty needle never matches.
+//
+// collapseRaw is deliberately independent of whether secrets is non-empty. A
+// read-modify-write update resends the stored secret whenever the caller omits
+// it, which is the documented way to keep that value, so the handler holds no
+// plaintext to replace even though the device can still echo one (issue #99).
+// Callers therefore arm the collapse on whether the tool family is
+// secret-bearing at all, not on what this call submitted; see redactWriteError.
+// A family that carries no secret passes false and keeps its full raw response,
+// where the non-secret context (error code, xpath, schema message) is the whole
+// value of the message.
+func redactSecrets(msg string, secrets []string, collapseRaw bool) string {
 	for _, s := range secrets {
 		if s != "" {
 			msg = strings.ReplaceAll(msg, s, redactedPlaceholder)
-			submitted = true
 		}
 	}
-	if submitted {
+	if collapseRaw {
 		if i := strings.Index(msg, rawResponseMarker); i >= 0 {
 			msg = msg[:i] + rawResponseMarker + " [redacted])"
 		}
 	}
 	return msg
+}
+
+// redactWriteError is the seam every write handler uses. It replaces the secret
+// values this particular call submitted and collapses the raw-response fallback
+// for any secret-bearing family, whether or not this call carried a value.
+// Keeping this wrapper separate from redactSecrets keeps a bare boolean out of
+// the handler call sites while leaving the primitive directly unit-testable.
+func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string {
+	return redactSecrets(msg, gatherSecrets(in, opts), isSecretBearing(opts))
+}
+
+// isSecretBearing reports whether any option declares a secret extractor, which
+// is how a tool family states that its entries carry write-only key material.
+// Presence of the extractor is what matters, not whether it yielded a value on
+// this call: that distinction is exactly the hole issue #99 describes.
+func isSecretBearing[In any](opts []writeOption[In]) bool {
+	for _, o := range opts {
+		if o.secrets != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // writeOption configures a create or update handler. Its only current use is

@@ -487,6 +487,56 @@ func TestAdministratorUpdateRedactsPasswordHashOnError(t *testing.T) {
 	}
 }
 
+// TestAdministratorUpdateRedactsResentPasswordHashOnRawResponseError is the
+// handler-level statement of issue #99, and the test that would have caught it.
+// The caller omits password_hash, which is the documented way to KEEP the stored
+// value, so gatherSecrets yields nothing. updateCore still reads the entry
+// (populating Phash) and resubmits it, and the device rejects the write with a
+// body carrying no <msg>, which is the shape that makes pango fall back to
+// embedding the whole raw response. Before the fix the redactor was armed by
+// what the caller submitted, so it stayed disarmed here and the STORED hash
+// reached both Logger.Error and the tool result.
+//
+// Sabotage: re-gate the collapse in redactSecrets on a non-empty secrets slice
+// (the pre-fix behaviour) and this turns red while the submitted-secret twin
+// above stays green.
+func TestAdministratorUpdateRedactsResentPasswordHashOnRawResponseError(t *testing.T) {
+	const stored = "$1$storedsalt$STOREDHASHTHECALLERNEVERSENT"
+	// A body with no <msg> and no error code: MEASURED against pango
+	// v0.10.3-0.20260731153743 by running errors.Parse on it, this is a shape
+	// that takes the raw-response fallback, which is the only path that can echo
+	// the entry. It is NOT the only such shape (an empty <result><msg></msg>
+	// takes it too, even with a mapped error code), so do not read this fixture
+	// as a statement of when the fallback fires. That is exactly why the
+	// collapse is armed on the family rather than on any property of the error.
+	rawErr := `<response status="error"><result><entry name="admin1"><phash>` + stored + `</phash></entry></result></response>`
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="admin1"><phash>` + stored + `</phash></entry></result></response>`},
+		fakeRoute{Match: configAction("multi-config"), Body: rawErr},
+		fakeRoute{Match: configAction("edit"), Body: rawErr},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterAdministratorTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_administrator_update", Arguments: map[string]any{
+		"name":                   "admin1",
+		"authentication_profile": "ap1",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected the device error to surface as a tool error")
+	}
+	out := textContent(t, res)
+	if strings.Contains(out, stored) {
+		t.Fatalf("the resent stored password hash leaked into the update error: %q", out)
+	}
+	if !strings.Contains(out, "(raw response: [redacted])") {
+		t.Fatalf("expected the raw-response fallback to be collapsed: %q", out)
+	}
+}
+
 // TestAdministratorReadOnlyGating pins read-only tool gating for administrators.
 // Sabotage: deleting the if d.ReadOnly guard in RegisterAdministratorTools exposes write tools in read-only mode and fails this test.
 func TestAdministratorReadOnlyGating(t *testing.T) {

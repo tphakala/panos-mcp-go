@@ -169,15 +169,10 @@ const authMethodBranchNames = "method_kerberos, method_ldap, method_local_databa
 // rebuild keeps that branch's unmodeled Misc, and the Method container itself is
 // reused rather than replaced so the container's own Misc survives.
 func applyAuthProfileMethod(e *authprofile.Entry, in *AuthProfileInput) error {
-	n := 0
-	for _, set := range []bool{
+	n := countSet(
 		in.MethodKerberos != nil, in.MethodLdap != nil, in.MethodLocalDatabase != nil,
 		in.MethodNone != nil, in.MethodRadius != nil, in.MethodSamlIdp != nil, in.MethodTacplus != nil,
-	} {
-		if set {
-			n++
-		}
-	}
+	)
 	if n == 0 {
 		return nil
 	}
@@ -237,18 +232,6 @@ func applyAuthProfileMethod(e *authprofile.Entry, in *AuthProfileInput) error {
 		m.Tacplus = b
 	}
 	return nil
-}
-
-// seedBranch returns the stored method branch so a same-branch rebuild keeps its
-// unmodeled Misc, or a fresh one when the profile previously used a different
-// branch. Taking the stored pointer rather than copying is safe because the
-// caller has already cleared every branch off the container, so the returned
-// value has exactly one owner.
-func seedBranch[T any](old *T) *T {
-	if old != nil {
-		return old
-	}
-	return new(T)
 }
 
 // applyAuthProfileLockout sets the lockout sub-block, allocating it only when the

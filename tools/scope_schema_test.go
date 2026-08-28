@@ -123,12 +123,33 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 			"retry_interval", "servers", "ssl", "timelimit", "verify_server_certificate"},
 		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
+		"shared":         "Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for syslog, snmp-trap, email and authentication profiles.",
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
 		"template_stack": "Panorama template-stack name (Panorama only; mutually exclusive with template)",
+		"template_vsys":  "vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope",
 	})
+	// The shared description is now pinned literally above, because an edit to it
+	// changes the published schema of 50 tools (ten device-scoped families times
+	// five tools) and nothing used to fail when it did. TestProfileScopeSchemaUnchanged
+	// already pins its equivalent; this closes the same gap on the device scope.
+	//
+	// The Contains check below is complementary, not redundant. The literal pin
+	// catches an edit to the struct tag; this catches an edit to the const that
+	// leaves the tag stale, which the literal pin alone would let through. A Go
+	// struct tag cannot reference a const, so the tag restates noSharedScopeProfiles
+	// in prose and only an assertion keeps the two copies honest.
+	//
+	// Sabotage: change a word in the DeviceScopeInput.Shared jsonschema tag and the
+	// literal pin turns red; change a word in noSharedScopeProfiles instead and only
+	// this Contains assertion turns red.
 	for _, prop := range []string{"vsys", "shared"} {
 		if _, ok := got.Properties[prop]; !ok {
 			t.Errorf("%s lost the %q property: the device scope has that tier", tool, prop)
+		}
+	}
+	if shared, ok := got.Properties["shared"]; ok {
+		if d := shared.Description; !strings.Contains(d, noSharedScopeProfiles) {
+			t.Errorf("%s: the shared description must restate noSharedScopeProfiles verbatim (a struct tag cannot reference a const); got %q, want it to contain %q", tool, d, noSharedScopeProfiles)
 		}
 	}
 	if _, ok := got.Properties["panorama"]; ok {
