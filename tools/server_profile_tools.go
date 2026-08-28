@@ -57,6 +57,9 @@ func newLdapProfileService(d *Deps) nameFixAdapter[ldap.Location, ldap.Entry] {
 
 func ldapProfileParts() deviceScopeParts[ldap.Location] {
 	return deviceScopeParts[ldap.Location]{
+		panorama: func() ldap.Location {
+			return ldap.Location{Panorama: &ldap.PanoramaLocation{}}
+		},
 		shared: func() ldap.Location { return ldap.Location{Shared: &ldap.SharedLocation{}} },
 		vsys: func(ngfw, vsys string) ldap.Location {
 			return ldap.Location{Vsys: &ldap.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
@@ -191,7 +194,7 @@ func RegisterLdapProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ldap_profile_list",
-		Description: "List LDAP server profiles. Firewall: vsys or shared; Panorama: template, template_stack or shared. Read-only.",
+		Description: "List LDAP server profiles. Firewall: vsys or shared; Panorama: template, template_stack, shared, or panorama. Read-only.",
 		Annotations: readOnlyTool("List LDAP server profiles"),
 	}, deviceListHandler(d, "panos_ldap_profile_list", svc, parts, svc.name, ldapProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
@@ -234,6 +237,9 @@ func newTacacsProfileService(d *Deps) nameFixAdapter[tacacsplus.Location, tacacs
 
 func tacacsProfileParts() deviceScopeParts[tacacsplus.Location] {
 	return deviceScopeParts[tacacsplus.Location]{
+		panorama: func() tacacsplus.Location {
+			return tacacsplus.Location{Panorama: &tacacsplus.PanoramaLocation{}}
+		},
 		shared: func() tacacsplus.Location { return tacacsplus.Location{Shared: &tacacsplus.SharedLocation{}} },
 		vsys: func(ngfw, vsys string) tacacsplus.Location {
 			return tacacsplus.Location{Vsys: &tacacsplus.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
@@ -339,7 +345,7 @@ func RegisterTacacsProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_tacacs_profile_list",
-		Description: "List TACACS+ server profiles. Firewall: vsys or shared; Panorama: template, template_stack or shared. Read-only.",
+		Description: "List TACACS+ server profiles. Firewall: vsys or shared; Panorama: template, template_stack, shared, or panorama. Read-only.",
 		Annotations: readOnlyTool("List TACACS+ server profiles"),
 	}, deviceListHandler(d, "panos_tacacs_profile_list", svc, parts, svc.name, tacacsProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
@@ -382,6 +388,9 @@ func newRadiusProfileService(d *Deps) nameFixAdapter[radius.Location, radius.Ent
 
 func radiusProfileParts() deviceScopeParts[radius.Location] {
 	return deviceScopeParts[radius.Location]{
+		panorama: func() radius.Location {
+			return radius.Location{Panorama: &radius.PanoramaLocation{}}
+		},
 		shared: func() radius.Location { return radius.Location{Shared: &radius.SharedLocation{}} },
 		vsys: func(ngfw, vsys string) radius.Location {
 			return radius.Location{Vsys: &radius.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
@@ -487,7 +496,7 @@ func RegisterRadiusProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_radius_profile_list",
-		Description: "List RADIUS server profiles. Firewall: vsys or shared; Panorama: template, template_stack or shared. Read-only.",
+		Description: "List RADIUS server profiles. Firewall: vsys or shared; Panorama: template, template_stack, shared, or panorama. Read-only.",
 		Annotations: readOnlyTool("List RADIUS server profiles"),
 	}, deviceListHandler(d, "panos_radius_profile_list", svc, parts, svc.name, radiusProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
@@ -530,6 +539,9 @@ func newSyslogProfileService(d *Deps) nameFixAdapter[syslog.Location, syslog.Ent
 
 func syslogProfileParts() deviceScopeParts[syslog.Location] {
 	return deviceScopeParts[syslog.Location]{
+		panorama: func() syslog.Location {
+			return syslog.Location{Panorama: &syslog.PanoramaLocation{}}
+		},
 		shared: func() syslog.Location {
 			return syslog.Location{Shared: &syslog.SharedLocation{}}
 		},
@@ -638,7 +650,7 @@ func RegisterSyslogProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_syslog_profile_list",
-		Description: "List syslog server profiles. Firewall: vsys or shared; Panorama: template, template_stack, or shared. Read-only.",
+		Description: "List syslog server profiles. Firewall: vsys or shared; Panorama: template, template_stack, shared, or panorama. Read-only.",
 		Annotations: readOnlyTool("List syslog server profiles"),
 	}, deviceListHandler(d, "panos_syslog_profile_list", svc, parts, svc.name, syslogProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
@@ -681,6 +693,9 @@ func newSnmpTrapProfileService(d *Deps) nameFixAdapter[snmptrap.Location, snmptr
 
 func snmpTrapProfileParts() deviceScopeParts[snmptrap.Location] {
 	return deviceScopeParts[snmptrap.Location]{
+		panorama: func() snmptrap.Location {
+			return snmptrap.Location{Panorama: &snmptrap.PanoramaLocation{}}
+		},
 		vsys: func(ngfw, vsys string) snmptrap.Location {
 			return snmptrap.Location{Vsys: &snmptrap.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
 		},
@@ -876,7 +891,7 @@ func RegisterSnmpTrapProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_snmptrap_profile_list",
-		Description: "List SNMP-trap server profiles. Firewall: vsys; Panorama: template or template_stack (no shared scope). Read-only.",
+		Description: "List SNMP-trap server profiles. Firewall: vsys; Panorama: template, template_stack, or panorama (no shared scope). Read-only.",
 		Annotations: readOnlyTool("List SNMP-trap server profiles"),
 	}, deviceListHandler(d, "panos_snmptrap_profile_list", svc, parts, svc.name, snmpTrapProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{
@@ -919,6 +934,9 @@ func newEmailProfileService(d *Deps) nameFixAdapter[email.Location, email.Entry]
 
 func emailProfileParts() deviceScopeParts[email.Location] {
 	return deviceScopeParts[email.Location]{
+		panorama: func() email.Location {
+			return email.Location{Panorama: &email.PanoramaLocation{}}
+		},
 		vsys: func(ngfw, vsys string) email.Location {
 			return email.Location{Vsys: &email.VsysLocation{NgfwDevice: ngfw, Vsys: vsys}}
 		},
@@ -1045,7 +1063,7 @@ func RegisterEmailProfileTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_email_profile_list",
-		Description: "List email server profiles. Firewall: vsys; Panorama: template or template_stack (no shared scope). Read-only.",
+		Description: "List email server profiles. Firewall: vsys; Panorama: template, template_stack, or panorama (no shared scope). Read-only.",
 		Annotations: readOnlyTool("List email server profiles"),
 	}, deviceListHandler(d, "panos_email_profile_list", svc, parts, svc.name, emailProfileSummary))
 	mcp.AddTool(s, &mcp.Tool{

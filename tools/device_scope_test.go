@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -114,7 +115,7 @@ func TestResolveDeviceScopePanoramaStackAndShared(t *testing.T) {
 	}
 
 	if _, err := resolveDeviceScope(d, DeviceScopeInput{}, parts); err == nil ||
-		!strings.Contains(err.Error(), "template, template_stack, or shared") {
+		!strings.Contains(err.Error(), "template, template_stack, shared, or panorama") {
 		t.Fatalf("a bare Panorama connection must require an explicit scope, got %v", err)
 	}
 }
@@ -185,5 +186,154 @@ func TestResolveDeviceScopeSyslogShared(t *testing.T) {
 	loc, err = resolveDeviceScope(pano, DeviceScopeInput{Shared: true}, parts)
 	if err != nil || loc.Shared == nil {
 		t.Fatalf("shared syslog on Panorama must resolve to the shared location: loc=%+v err=%v", loc, err)
+	}
+}
+
+// TestResolveDeviceScopePanorama pins the Panorama management-plane tier, which
+// is what makes Panorama's OWN appliance-level configuration reachable rather
+// than only a firewall's or a template's. The tier is Panorama-only: /config/panorama
+// exists on a firewall but holds nothing these families live under (MEASURED on a
+// PA-VM running PAN-OS 11.2.6: it contained only an empty vsys element), so a
+// firewall request is rejected rather than silently retargeted to its vsys.
+//
+// Sabotage: delete "in.Panorama ||" from the firewall guard in resolveDeviceScope
+// and the firewall subcheck goes green by falling through to the vsys scope.
+func TestResolveDeviceScopePanorama(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+	fw, _ := newTestDeps(t, "PA-VM")
+	parts := ldapProfileParts()
+
+	if _, err := resolveDeviceScope(fw, DeviceScopeInput{Panorama: true}, parts); err == nil ||
+		!strings.Contains(err.Error(), "Panorama connection") {
+		t.Fatalf("panorama on a firewall must be rejected, got %v", err)
+	}
+
+	loc, err := resolveDeviceScope(pano, DeviceScopeInput{Panorama: true}, parts)
+	if err != nil {
+		t.Fatalf("panorama on Panorama: %v", err)
+	}
+	if loc.Panorama == nil {
+		t.Fatalf("panorama must resolve to the panorama location: %+v", loc)
+	}
+	if loc.Shared != nil || loc.Template != nil || loc.Vsys != nil {
+		t.Fatalf("panorama must not also set another tier: %+v", loc)
+	}
+}
+
+// assertResolvesToPanorama resolves a panorama request against one family's
+// parts and checks the pango location it produced has the Panorama branch set
+// and no other branch set alongside it.
+//
+// It marshals the location rather than naming each family's own Location type,
+// so the eight families share one assertion without this file importing eight
+// pango packages. Every one of these Location structs tags Panorama as
+// `json:"panorama"` with no omitempty, so the key is present either way and an
+// unset branch is distinguishable as null. The "no other branch" half matters as
+// much as the first: a constructor that filled two branches would build an xpath
+// pango rejects, and pango does not enforce exactly-one itself.
+func assertResolvesToPanorama[L any](t *testing.T, d *Deps, parts deviceScopeParts[L]) {
+	t.Helper()
+	loc, err := resolveDeviceScope(d, DeviceScopeInput{Panorama: true}, parts)
+	if err != nil {
+		t.Fatalf("panorama must resolve: %v", err)
+	}
+	raw, err := json.Marshal(loc)
+	if err != nil {
+		t.Fatalf("marshal location: %v", err)
+	}
+	var branches map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &branches); err != nil {
+		t.Fatalf("unmarshal location: %v", err)
+	}
+	if b, ok := branches["panorama"]; !ok || string(b) == "null" {
+		t.Fatalf("panorama must fill the Panorama branch: %s", raw)
+	}
+	for name, b := range branches {
+		if name != "panorama" && string(b) != "null" {
+			t.Fatalf("panorama must not also set the %q branch: %s", name, raw)
+		}
+	}
+}
+
+// TestResolveDeviceScopePanoramaConstructor pins that every family this server
+// offers the tier for actually fills its own Panorama branch. A missing
+// constructor is a nil func, so this fails loudly rather than resolving to a
+// zero location that would write to the wrong node.
+//
+// The two families deliberately absent from this list, local users and MFA
+// profiles, are covered by TestDevicePanoramaScopeUnavailable instead.
+//
+// Sabotage: delete the panorama constructor from any one of these parts
+// functions and that subtest panics on the nil func.
+func TestResolveDeviceScopePanoramaConstructor(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+
+	t.Run("ldap", func(t *testing.T) { assertResolvesToPanorama(t, pano, ldapProfileParts()) })
+	t.Run("tacacs", func(t *testing.T) { assertResolvesToPanorama(t, pano, tacacsProfileParts()) })
+	t.Run("radius", func(t *testing.T) { assertResolvesToPanorama(t, pano, radiusProfileParts()) })
+	t.Run("syslog", func(t *testing.T) { assertResolvesToPanorama(t, pano, syslogProfileParts()) })
+	t.Run("snmptrap", func(t *testing.T) { assertResolvesToPanorama(t, pano, snmpTrapProfileParts()) })
+	t.Run("email", func(t *testing.T) { assertResolvesToPanorama(t, pano, emailProfileParts()) })
+	t.Run("samlidp", func(t *testing.T) { assertResolvesToPanorama(t, pano, samlIdpProfileParts()) })
+	t.Run("authprofile", func(t *testing.T) { assertResolvesToPanorama(t, pano, authProfileParts()) })
+}
+
+// TestResolveDeviceScopePanoramaExclusivity pins that panorama cannot be combined
+// with another tier, and that adding it did NOT change the pre-existing
+// template+shared divergence.
+//
+// The asymmetry is deliberate. panorama with a template is rejected because
+// resolving it to the template would push the write to every managed firewall
+// while the caller believes it landed on the Panorama appliance. shared with a
+// template keeps resolving to the template because that is shipped behaviour a
+// test already pins; see TestResolveDeviceScopePanoramaTemplate and issue #98.
+//
+// Sabotage: delete the "in.Shared && in.Panorama" arm from
+// validateDeviceScopeExclusivity and the first subcheck resolves with no error;
+// delete the template arm and the second and third do.
+func TestResolveDeviceScopePanoramaExclusivity(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+	parts := ldapProfileParts()
+
+	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Panorama: true, Shared: true}, parts); err == nil ||
+		!strings.Contains(err.Error(), "only one of shared or panorama") {
+		t.Fatalf("panorama with shared must be rejected, got %v", err)
+	}
+	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Panorama: true, Template: "t1"}, parts); err == nil ||
+		!strings.Contains(err.Error(), "cannot be combined with panorama") {
+		t.Fatalf("panorama with template must be rejected, got %v", err)
+	}
+	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Panorama: true, TemplateStack: "s1"}, parts); err == nil ||
+		!strings.Contains(err.Error(), "cannot be combined with panorama") {
+		t.Fatalf("panorama with template_stack must be rejected, got %v", err)
+	}
+
+	// The divergence this change deliberately did not widen.
+	loc, err := resolveDeviceScope(pano, DeviceScopeInput{Template: "t1", Shared: true}, parts)
+	if err != nil || loc.Template == nil {
+		t.Fatalf("template with shared must still resolve to the template: loc=%+v err=%v", loc, err)
+	}
+}
+
+// TestDevicePanoramaScopeUnavailable pins the rejection for the two families
+// pango models no Panorama location for. The list is named by
+// noPanoramaScopeFamilies.
+//
+// The usual "add the constructor and watch it go green" sabotage does not compile
+// here: device/localdb/user and device/profiles/mfa carry no PanoramaLocation type
+// at pango v0.10.3-0.20260731153743, which is the very reason these two are on the
+// list. Sabotage instead by deleting the "p.panorama == nil" guard from
+// resolvePanoramaDeviceScope: both subchecks then panic on the nil func rather
+// than returning the error.
+func TestDevicePanoramaScopeUnavailable(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+
+	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Panorama: true}, localUserParts()); err == nil ||
+		!strings.Contains(err.Error(), "panorama scope is not available") {
+		t.Fatalf("panorama on local users must be rejected, got %v", err)
+	}
+	if _, err := resolveDeviceScope(pano, DeviceScopeInput{Panorama: true}, mfaProfileParts()); err == nil ||
+		!strings.Contains(err.Error(), "panorama scope is not available") {
+		t.Fatalf("panorama on MFA profiles must be rejected, got %v", err)
 	}
 }

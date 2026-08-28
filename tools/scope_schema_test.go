@@ -118,12 +118,13 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 	const tool = "panos_ldap_profile_create"
 	got := inputSchema(t, tool)
 	assertProperties(t, tool, got,
-		[]string{"name", "vsys", "shared", "template", "template_stack", "template_vsys",
+		[]string{"name", "vsys", "shared", "panorama", "template", "template_stack", "template_vsys",
 			"base", "bind_dn", "bind_password", "bind_timelimit", "disabled", "ldap_type",
 			"retry_interval", "servers", "ssl", "timelimit", "verify_server_certificate"},
 		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
 		"shared":         "Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for snmp-trap, email and authentication profiles.",
+		"panorama":       "Use the Panorama management-plane scope (Panorama only). Not available for local database users and MFA server profiles.",
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
 		"template_stack": "Panorama template-stack name (Panorama only; mutually exclusive with template)",
 		"template_vsys":  "vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope",
@@ -141,8 +142,9 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 	//
 	// Sabotage: change a word in the DeviceScopeInput.Shared jsonschema tag and the
 	// literal pin turns red; change a word in noSharedScopeProfiles instead and only
-	// this Contains assertion turns red.
-	for _, prop := range []string{"vsys", "shared"} {
+	// this Contains assertion turns red. The panorama property below is pinned the
+	// same way against noPanoramaScopeFamilies.
+	for _, prop := range []string{"vsys", "shared", "panorama"} {
 		if _, ok := got.Properties[prop]; !ok {
 			t.Errorf("%s lost the %q property: the device scope has that tier", tool, prop)
 		}
@@ -152,8 +154,10 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 			t.Errorf("%s: the shared description must restate noSharedScopeProfiles verbatim (a struct tag cannot reference a const); got %q, want it to contain %q", tool, d, noSharedScopeProfiles)
 		}
 	}
-	if _, ok := got.Properties["panorama"]; ok {
-		t.Errorf("%s must not expose panorama: that tier belongs to the profile scope", tool)
+	if panorama, ok := got.Properties["panorama"]; ok {
+		if d := panorama.Description; !strings.Contains(d, noPanoramaScopeFamilies) {
+			t.Errorf("%s: the panorama description must restate noPanoramaScopeFamilies verbatim (a struct tag cannot reference a const); got %q, want it to contain %q", tool, d, noPanoramaScopeFamilies)
+		}
 	}
 }
 
