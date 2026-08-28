@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"bytes"
+	"log/slog"
 	"net/url"
 	"strings"
 	"testing"
@@ -225,16 +227,26 @@ func assertRedactsSecret(t *testing.T, res *mcp.CallToolResult, err error, secre
 // a caller who passes only empty needles is told rather than silently passing.
 // Mirrors TestAssertNoSecretLeakSkipsEmptyNeedle.
 //
+// The result deliberately satisfies EVERY other check the helper makes: it is an
+// error result and its text carries the placeholder. That is what makes the guard
+// the only thing that can fail. An earlier version passed a zero-value result,
+// whose IsError == false tripped the next check instead, so the test stayed green
+// with the guard deleted and asserted only "the helper failed somehow".
+//
 // Sabotage: delete the len(needles) == 0 guard from assertRedactsSecret and this
 // turns red.
 func TestAssertRedactsSecretRejectsVacuousCall(t *testing.T) {
+	res := &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{&mcp.TextContent{Text: "failed: " + redactedPlaceholder}},
+	}
 	fake := &testing.T{}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		// The helper calls t.Fatal, which runs runtime.Goexit; a dedicated
 		// goroutine contains that, matching TestAssertNoSecretLeakSkipsEmptyNeedle.
-		assertRedactsSecret(fake, &mcp.CallToolResult{}, nil, "", "")
+		assertRedactsSecret(fake, res, nil, "", "")
 	}()
 	<-done
 	if !fake.Failed() {
@@ -253,9 +265,10 @@ func TestAssertRedactsSecretRejectsVacuousCall(t *testing.T) {
 // substitutes the entire raw body. That is why the COLLAPSE, not the literal
 // replacement, is what defends the shape a real device actually produces.
 //
-// Deleting a production line does not sabotage this test, the same way it does
-// not for the tests that pin an absent pango location: the load-bearing thing is
-// a dependency's behaviour. It is an upgrade tripwire. If a pango bump teaches
+// No production LOGIC line sabotages this test, the same way none does for the
+// tests that pin an absent pango location: the load-bearing thing is a
+// dependency's behaviour. (It does read one production const, rawResponseMarker,
+// so changing that reddens it.) It is an upgrade tripwire. If a pango bump teaches
 // its line type to recurse, this goes red and tells the reader exactly what
 // changed: the collapse would stop firing for the real device shape, and line
 // text that echoes submitted values would reach the sinks with only the literal
@@ -291,10 +304,11 @@ func TestPangoNestedLineErrorTakesRawFallback(t *testing.T) {
 	})
 }
 
-// rawEchoBody is a device error whose <msg> is present but empty, which is one of
-// the two shapes that make pango fall back to embedding the whole raw body
-// (verified by parsing it in TestGetCollapsesRawResponse's sibling above). The
-// entry element stands in for content a failed read could echo.
+// rawEchoBody is a constructed device error whose result>msg is present but
+// empty, so pango's errorCheck.Message() returns "" and Parse substitutes the
+// whole raw body. Several distinct shapes reach that fallback; this is one, and
+// TestPangoNestedLineErrorTakesRawFallback covers the one a real device produced.
+// The entry element stands in for content a failed read could echo.
 const rawEchoBody = `<response status="error" code="12"><result><msg></msg>` +
 	`<entry name="leaky-entry"><ip-netmask>10.0.0.1/32</ip-netmask></entry></result></response>`
 
@@ -312,46 +326,83 @@ const rawEchoBody = `<response status="error" code="12"><result><msg></msg>` +
 // They are three tests rather than one table so that deleting the redaction from
 // any single core turns exactly one of them red.
 
+// captureLogs redirects d.Logger into a buffer. Issue #105 names TWO sinks, the
+// tool result and the log sink, and the tool result is the only one a test could
+// see before: newTestDeps wires slog.DiscardHandler, so a regression that
+// redacted the result and passed the raw error to Logger.Error would leave every
+// redaction test in this package green while the body reached the log.
+func captureLogs(t *testing.T, d *Deps) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	d.Logger = slog.New(slog.NewTextHandler(&buf, nil))
+	return &buf
+}
+
 // Sabotage: delete the redactDeviceError call from getCore.
 func TestGetCollapsesRawResponse(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
+	logs := captureLogs(t, d)
 	h := getHandler[address.Location, address.Entry](d, "panos_address_get",
 		newAddressService(d), addressResolve(d), addressSummary)
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
-	assertCollapsedRawResponse(t, res, err)
+	assertCollapsedRawResponse(t, res, err, logs)
 }
 
 // Sabotage: delete the redactDeviceError call from listCore.
 func TestListCollapsesRawResponse(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
+	logs := captureLogs(t, d)
 	h := listHandler[address.Location, address.Entry](d, "panos_address_list",
 		newAddressService(d), addressResolve(d),
 		func(e *address.Entry) string { return e.Name }, addressSummary)
 
 	res, _, err := h(t.Context(), nil, ListInput{})
-	assertCollapsedRawResponse(t, res, err)
+	assertCollapsedRawResponse(t, res, err, logs)
 }
 
 // Sabotage: delete the redactDeviceError call from deleteCore.
 func TestDeleteCollapsesRawResponse(t *testing.T) {
-	// Any config request, not just action=delete: pango's Delete resolves the
-	// entry before removing it, so the failure can surface on either leg. Either
-	// way the error reaches deleteCore, which is what this pins.
+	// Any config request, not just action=delete: pango's Delete batches its
+	// deletes into a MultiConfig, which the client sends as action="multi-config"
+	// (pango client.go:673), so a route matching action=delete never fires. The
+	// error still reaches deleteCore, which is what this pins.
 	d, _ := newTestDeps(t, "PA-VM", fakeRoute{
 		Match: func(v url.Values) bool { return v.Get("type") == "config" },
 		Body:  rawEchoBody,
 	})
+	logs := captureLogs(t, d)
 	h := deleteHandler[address.Location, address.Entry](d, "panos_address_delete",
 		newAddressService(d), addressResolve(d))
 
 	res, _, err := h(t.Context(), nil, NameInput{Name: "nope"})
-	assertCollapsedRawResponse(t, res, err)
+	assertCollapsedRawResponse(t, res, err, logs)
 }
 
-// assertCollapsedRawResponse checks a device error reached the tool result with
-// the raw body collapsed rather than echoed.
-func assertCollapsedRawResponse(t *testing.T, res *mcp.CallToolResult, err error) {
+// TestUpdateSeedReadCollapsesRawResponse covers the seed read of a
+// read-modify-write update. It is a read, so it collapses like getCore rather
+// than arming on the write family: before that change the SAME svc.Read call
+// collapsed in getCore and did not here for a family carrying no secret, and
+// address is exactly such a family.
+//
+// Sabotage: put redactWriteError(err.Error(), &in, opts) back at the seed read in
+// updateCore and this turns red, because gatherSecrets yields nothing for a family
+// with no extractor so isSecretBearing returns false and the collapse never fires.
+func TestUpdateSeedReadCollapsesRawResponse(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
+	logs := captureLogs(t, d)
+	h := updateHandler[address.Location, address.Entry, AddressInput](d, "panos_address_update",
+		newAddressService(d), addressResolve(d), func(in AddressInput) LocationInput { return in.Location },
+		func(in AddressInput) string { return in.Name }, overlayAddress, addressSummary)
+
+	res, _, err := h(t.Context(), nil, AddressInput{Name: "nope", Description: "x"})
+	assertCollapsedRawResponse(t, res, err, logs)
+}
+
+// assertCollapsedRawResponse checks a device error reached BOTH sinks with the
+// raw body collapsed rather than echoed, and that the device's numeric code
+// survived the collapse.
+func assertCollapsedRawResponse(t *testing.T, res *mcp.CallToolResult, err error, logs *bytes.Buffer) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
@@ -359,11 +410,17 @@ func assertCollapsedRawResponse(t *testing.T, res *mcp.CallToolResult, err error
 	if !res.IsError {
 		t.Fatal("a device error must surface as a tool error")
 	}
-	out := textContent(t, res)
-	if strings.Contains(out, "leaky-entry") || strings.Contains(out, "10.0.0.1/32") {
-		t.Fatalf("the raw response body reached the tool result: %q", out)
-	}
-	if !strings.Contains(out, "(raw response: [redacted])") {
-		t.Fatalf("expected the collapsed raw response: %q", out)
+	for name, out := range map[string]string{"tool result": textContent(t, res), "log sink": logs.String()} {
+		if strings.Contains(out, "leaky-entry") || strings.Contains(out, "10.0.0.1/32") {
+			t.Fatalf("the raw response body reached the %s: %q", name, out)
+		}
+		if !strings.Contains(out, "(raw response: [redacted])") {
+			t.Fatalf("expected the collapsed raw response in the %s: %q", name, out)
+		}
+		// The collapse discards the whole body, so the code pango kept on the
+		// error value is the only diagnostic left. rawEchoBody carries code 12.
+		if !strings.Contains(out, "device response code 12") {
+			t.Fatalf("the device response code must survive the collapse in the %s: %q", name, out)
+		}
 	}
 }

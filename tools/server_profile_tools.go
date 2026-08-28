@@ -23,8 +23,8 @@ const protocolKey = "protocol"
 // log settings.
 //
 // All six are device-scoped, resolved by resolveDeviceScope: a firewall vsys or
-// (for the three authentication SERVER profiles) shared scope, or a Panorama
-// template, template-stack or shared scope. Two of the three log-forwarding
+// (for the three authentication SERVER profiles and syslog) shared scope, or a
+// Panorama template, template-stack, shared or panorama scope. Two of the three log-forwarding
 // profiles (snmptrap and email) have no shared scope; resolveDeviceScope rejects a
 // shared request for them, while syslog has one. Do not read that as the complete
 // no-shared set:

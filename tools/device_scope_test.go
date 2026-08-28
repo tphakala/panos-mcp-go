@@ -127,7 +127,7 @@ func TestResolveDeviceScopePanoramaStackAndShared(t *testing.T) {
 // models no shared location for email at all, while syslog has one and this
 // server now exposes it (see noSharedScopeProfiles and
 // TestResolveDeviceScopeSyslogShared). Sabotage: making the shared field non-nil
-// in emailProfileParts turns the two "no shared" subchecks green.
+// in emailProfileParts makes the two "no shared" subchecks fail.
 func TestResolveDeviceScopeErrors(t *testing.T) {
 	pano, _ := newTestDeps(t, "Panorama")
 	fw, _ := newTestDeps(t, "PA-VM")
@@ -165,7 +165,8 @@ func TestResolveDeviceScopeErrors(t *testing.T) {
 // TestResolveDeviceScopeSyslogShared pins the shared scope this server now
 // exposes for syslog on both device types. syslog was grouped with the other
 // log-settings profiles as having no shared scope until it was measured: pango
-// models one (device/profiles/syslog/location.go:14, XpathPrefix at :187 emitting
+// models one (device/profiles/syslog/location.go:14, the Shared arm of XpathPrefix
+// at :187 emitting
 // config/shared), and one PA-VM on PAN-OS 11.2.6 answered an XML API get of
 // /config/shared/log-settings/syslog with status="success" code="19"
 // total-count="1" holding a pre-existing operator-created profile. Scope of that
@@ -197,7 +198,8 @@ func TestResolveDeviceScopeSyslogShared(t *testing.T) {
 // firewall request is rejected rather than silently retargeted to its vsys.
 //
 // Sabotage: delete "in.Panorama ||" from the firewall guard in resolveDeviceScope
-// and the firewall subcheck goes green by falling through to the vsys scope.
+// and the firewall subcheck fails, because the request falls through to the vsys
+// scope and returns no error.
 func TestResolveDeviceScopePanorama(t *testing.T) {
 	pano, _ := newTestDeps(t, "Panorama")
 	fw, _ := newTestDeps(t, "PA-VM")
@@ -220,22 +222,28 @@ func TestResolveDeviceScopePanorama(t *testing.T) {
 	}
 }
 
-// assertResolvesToPanorama resolves a panorama request against one family's
-// parts and checks the pango location it produced has the Panorama branch set
-// and no other branch set alongside it.
+// assertResolvesToBranch resolves one scope request against one family's parts
+// and checks the pango location it produced has exactly the wanted branch set.
 //
-// It marshals the location rather than naming each family's own Location type,
-// so the eight families share one assertion without this file importing eight
-// pango packages. Every one of these Location structs tags Panorama as
-// `json:"panorama"` with no omitempty, so the key is present either way and an
-// unset branch is distinguishable as null. The "no other branch" half matters as
-// much as the first: a constructor that filled two branches would build an xpath
-// pango rejects, and pango does not enforce exactly-one itself.
-func assertResolvesToPanorama[L any](t *testing.T, d *Deps, parts deviceScopeParts[L]) {
+// It marshals the location rather than naming each family's own Location type, so
+// all ten families share one assertion without this file importing ten pango
+// packages. A set branch is a non-nil pointer, which always serialises, so
+// finding the wanted key non-null is a sound positive check. An unset branch
+// either serialises as null or, where its tag carries omitempty, is omitted
+// entirely; neither can read as set, so the "no other branch" half is checked
+// over whichever keys are present.
+//
+// That half matters as much as the first, and the hazard is worse than a rejected
+// write: Location.XpathPrefix is a switch, so a constructor filling two branches
+// resolves silently to whichever arm that family happens to list first and writes
+// to the WRONG node with no error. pango does not enforce exactly-one either,
+// because Location.IsValid is a switch too, which makes its "multiple paths
+// specified" arm unreachable.
+func assertResolvesToBranch[L any](t *testing.T, d *Deps, in DeviceScopeInput, parts deviceScopeParts[L], want string) {
 	t.Helper()
-	loc, err := resolveDeviceScope(d, DeviceScopeInput{Panorama: true}, parts)
+	loc, err := resolveDeviceScope(d, in, parts)
 	if err != nil {
-		t.Fatalf("panorama must resolve: %v", err)
+		t.Fatalf("%s must resolve: %v", want, err)
 	}
 	raw, err := json.Marshal(loc)
 	if err != nil {
@@ -245,37 +253,80 @@ func assertResolvesToPanorama[L any](t *testing.T, d *Deps, parts deviceScopePar
 	if err := json.Unmarshal(raw, &branches); err != nil {
 		t.Fatalf("unmarshal location: %v", err)
 	}
-	if b, ok := branches["panorama"]; !ok || string(b) == "null" {
-		t.Fatalf("panorama must fill the Panorama branch: %s", raw)
+	if b, ok := branches[want]; !ok || string(b) == "null" {
+		t.Fatalf("%s must fill the %q branch: %s", want, want, raw)
 	}
 	for name, b := range branches {
-		if name != "panorama" && string(b) != "null" {
-			t.Fatalf("panorama must not also set the %q branch: %s", name, raw)
+		if name != want && string(b) != "null" {
+			t.Fatalf("%s must not also set the %q branch: %s", want, name, raw)
 		}
 	}
 }
 
-// TestResolveDeviceScopePanoramaConstructor pins that every family this server
-// offers the tier for actually fills its own Panorama branch. A missing
-// constructor is a nil func, so this fails loudly rather than resolving to a
-// zero location that would write to the wrong node.
-//
-// The two families deliberately absent from this list, local users and MFA
-// profiles, are covered by TestDevicePanoramaScopeUnavailable instead.
-//
-// Sabotage: delete the panorama constructor from any one of these parts
-// functions and that subtest panics on the nil func.
-func TestResolveDeviceScopePanoramaConstructor(t *testing.T) {
-	pano, _ := newTestDeps(t, "Panorama")
+// assertTemplateTiers drives all FOUR template-tier constructors for one family.
+// One input per constructor is the point: resolveTemplateTier calls template,
+// templateVsys, templateStack and templateStackVsys unguarded, so a missing one is
+// a nil-func panic inside a live tool handler rather than an error, and exercising
+// only the plain template tier leaves three of the four unpinned.
+func assertTemplateTiers[L any](t *testing.T, d *Deps, parts deviceScopeParts[L]) {
+	t.Helper()
+	for _, c := range []struct {
+		name string
+		in   DeviceScopeInput
+		want string
+	}{
+		{"template", DeviceScopeInput{Template: "t1"}, "template"},
+		{"template_vsys", DeviceScopeInput{Template: "t1", TemplateVsys: "vsys2"}, "template_vsys"},
+		{"template_stack", DeviceScopeInput{TemplateStack: "s1"}, "template_stack"},
+		{"template_stack_vsys", DeviceScopeInput{TemplateStack: "s1", TemplateVsys: "vsys2"}, "template_stack_vsys"},
+	} {
+		t.Run(c.name, func(t *testing.T) { assertResolvesToBranch(t, d, c.in, parts, c.want) })
+	}
+}
 
-	t.Run("ldap", func(t *testing.T) { assertResolvesToPanorama(t, pano, ldapProfileParts()) })
-	t.Run("tacacs", func(t *testing.T) { assertResolvesToPanorama(t, pano, tacacsProfileParts()) })
-	t.Run("radius", func(t *testing.T) { assertResolvesToPanorama(t, pano, radiusProfileParts()) })
-	t.Run("syslog", func(t *testing.T) { assertResolvesToPanorama(t, pano, syslogProfileParts()) })
-	t.Run("snmptrap", func(t *testing.T) { assertResolvesToPanorama(t, pano, snmpTrapProfileParts()) })
-	t.Run("email", func(t *testing.T) { assertResolvesToPanorama(t, pano, emailProfileParts()) })
-	t.Run("samlidp", func(t *testing.T) { assertResolvesToPanorama(t, pano, samlIdpProfileParts()) })
-	t.Run("authprofile", func(t *testing.T) { assertResolvesToPanorama(t, pano, authProfileParts()) })
+// TestResolveDeviceScopeConstructors pins that every family fills the branch its
+// constructors promise, for the template tiers and the panorama tier.
+//
+// The template half covers all ten families across all four template
+// constructors, because none of them is nil-guarded (see assertTemplateTiers).
+// Before this test, ldap and authprofile pinned all four through tests of their
+// own and email pinned the plain template tier; the other seven had none.
+//
+// The panorama half covers the eight families that have the tier. The other two,
+// local users and MFA profiles, are covered by TestDevicePanoramaScopeUnavailable.
+//
+// Sabotage: delete any one template constructor from any one parts function and
+// that family's matching template subtest panics; delete its panorama constructor
+// and the panorama subtest fails with "the panorama scope is not available"
+// instead, because resolvePanoramaDeviceScope nil-guards that one. That
+// difference is the reason the template half exists.
+func TestResolveDeviceScopeConstructors(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+	panorama := DeviceScopeInput{Panorama: true}
+
+	t.Run("template", func(t *testing.T) {
+		t.Run("ldap", func(t *testing.T) { assertTemplateTiers(t, pano, ldapProfileParts()) })
+		t.Run("tacacs", func(t *testing.T) { assertTemplateTiers(t, pano, tacacsProfileParts()) })
+		t.Run("radius", func(t *testing.T) { assertTemplateTiers(t, pano, radiusProfileParts()) })
+		t.Run("syslog", func(t *testing.T) { assertTemplateTiers(t, pano, syslogProfileParts()) })
+		t.Run("snmptrap", func(t *testing.T) { assertTemplateTiers(t, pano, snmpTrapProfileParts()) })
+		t.Run("email", func(t *testing.T) { assertTemplateTiers(t, pano, emailProfileParts()) })
+		t.Run("samlidp", func(t *testing.T) { assertTemplateTiers(t, pano, samlIdpProfileParts()) })
+		t.Run("authprofile", func(t *testing.T) { assertTemplateTiers(t, pano, authProfileParts()) })
+		t.Run("localuser", func(t *testing.T) { assertTemplateTiers(t, pano, localUserParts()) })
+		t.Run("mfa", func(t *testing.T) { assertTemplateTiers(t, pano, mfaProfileParts()) })
+	})
+
+	t.Run("panorama", func(t *testing.T) {
+		t.Run("ldap", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, ldapProfileParts(), "panorama") })
+		t.Run("tacacs", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, tacacsProfileParts(), "panorama") })
+		t.Run("radius", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, radiusProfileParts(), "panorama") })
+		t.Run("syslog", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, syslogProfileParts(), "panorama") })
+		t.Run("snmptrap", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, snmpTrapProfileParts(), "panorama") })
+		t.Run("email", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, emailProfileParts(), "panorama") })
+		t.Run("samlidp", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, samlIdpProfileParts(), "panorama") })
+		t.Run("authprofile", func(t *testing.T) { assertResolvesToBranch(t, pano, panorama, authProfileParts(), "panorama") })
+	})
 }
 
 // TestResolveDeviceScopePanoramaExclusivity pins that panorama cannot be combined

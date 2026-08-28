@@ -475,15 +475,18 @@ func isObjectNotFound(err error) bool {
 // pango location; page and name extract the per-verb inputs; opts supplies the
 // secret extractor for a secret-bearing family. The presence of that extractor,
 // not whatever a given call submitted, is what arms the raw-response collapse
-// (issue #99), because a read-modify-write update resends a stored secret the
-// caller never sent. opts is empty for object families, which carry no secret
-// and so keep their device error verbatim.
+// (issue #99) at the create and update WRITE sinks, because a read-modify-write
+// update resends a stored secret the caller never sent. The seed read of an
+// update is a read, so it collapses unconditionally like the three read cores. opts is empty for object families, which carry no secret
+// and so keep their device WRITE error verbatim.
 //
 // The read, list and delete cores collapse pango's raw-response fallback for
-// EVERY family, not only secret-bearing ones, because that per-family signal
-// cannot reach them: it is carried by writeOption, which is parameterized on the
-// write input type. See redactDeviceError for why unconditional is the right
-// trade and for exactly what was and was not measured (issue #105).
+// every family routed through them, not only secret-bearing ones. A per-family
+// opt-in was rejected because it fails open: a family that forgot to pass it
+// would silently lose the collapse, which is the failure mode issue #99 was.
+// Families with their own handlers do not route through these cores and are not
+// covered; see redactDeviceError for that boundary, for the trade, and for
+// exactly what was and was not measured (issue #105).
 
 func listCore[L, E, In any](
 	d *Deps, tool string, svc crudService[L, E],
@@ -503,7 +506,7 @@ func listCore[L, E, In any](
 		entries, err := svc.List(ctx, loc, "get", "", "")
 		if err != nil {
 			if !isObjectNotFound(err) {
-				red := redactDeviceError(err.Error())
+				red := redactDeviceError(err)
 				d.Logger.Error("failed: "+tool, "error", red)
 				res, v := errorResult("failed: %s: %s", tool, red)
 				return res, v, nil
@@ -538,7 +541,7 @@ func getCore[L, E, In any](
 		}
 		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
-			red := redactDeviceError(err.Error())
+			red := redactDeviceError(err)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
@@ -566,7 +569,7 @@ func deleteCore[L, E, In any](
 		}
 		defer d.LockWrites()()
 		if err := svc.Delete(ctx, loc, n); err != nil {
-			red := redactDeviceError(err.Error())
+			red := redactDeviceError(err)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
@@ -630,13 +633,11 @@ func updateCore[L, E, In any](
 		defer d.LockWrites()()
 		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
-			// The read that seeds a read-modify-write is armed the same way the
-			// write sinks below are. Whether PAN-OS ever answers a get with an
-			// error body that still carries the entry is NOT MEASURED; the
-			// collapse costs nothing here and this keeps the seed read from
-			// being the one unguarded sink in this function (issue #99). The
-			// sibling read, list and delete paths are NOT armed; see issue #105.
-			red := redactWriteError(err.Error(), &in, opts)
+			// This is a read, so it collapses unconditionally like getCore does,
+			// while still replacing any secret this call submitted. Arming it on
+			// the write family instead would make the SAME svc.Read collapse in
+			// getCore and not here for a family carrying no secret.
+			red := redactDeviceError(err, gatherSecrets(&in, opts)...)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: read %q: %s", tool, n, red)
 			return res, v, nil

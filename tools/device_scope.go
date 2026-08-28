@@ -18,8 +18,9 @@ import (
 // Shared field and carry no SharedLocation type to build one from.
 //
 // syslog was on this list until it was measured. pango DOES model a shared
-// location for it (device/profiles/syslog/location.go:14, XpathPrefix at :187
-// emitting config/shared, entry suffix log-settings/syslog/$name), and on one
+// location for it (device/profiles/syslog/location.go:14, and the Shared arm of
+// XpathPrefix at :187 emitting config/shared, entry suffix
+// log-settings/syslog/$name), and on one
 // PA-VM running PAN-OS 11.2.6 an XML API get of /config/shared/log-settings/syslog
 // returned status="success" code="19" total-count="1" holding a pre-existing,
 // operator-created profile. That box stores and serves syslog profiles at exactly
@@ -29,9 +30,10 @@ import (
 // on both device types because pango addresses both the same way, not because both
 // were tested.
 //
-// The DeviceScopeInput.Shared jsonschema tag and the doc comments in this file
-// repeat these names because a Go struct tag cannot reference a const; keep them
-// in sync with this value when a new no-shared family is added.
+// A Go struct tag cannot reference a const, so this list is restated in the
+// DeviceScopeInput.Shared jsonschema tag, in the doc comments in this file, in
+// each affected family's _list tool description, and in README.md. Grep this
+// const's contents before changing it; the sweep is wider than this file.
 const noSharedScopeProfiles = "snmp-trap, email and authentication profiles"
 
 // noPanoramaScopeFamilies lists the device-scoped families this server does not
@@ -46,12 +48,15 @@ const noSharedScopeProfiles = "snmp-trap, email and authentication profiles"
 // packages do. That is an upstream gap, not a decision taken here.
 //
 // Named families rather than profiles because a local database user is not a
-// profile. The DeviceScopeInput.Panorama jsonschema tag repeats these names
-// because a Go struct tag cannot reference a const; keep the two in sync.
+// profile. As with noSharedScopeProfiles, a Go struct tag cannot reference a
+// const, so this list is restated in the DeviceScopeInput.Panorama jsonschema
+// tag, in each affected family's _list tool description, and in README.md. Grep
+// this const's contents before changing it.
 const noPanoramaScopeFamilies = "local database users and MFA server profiles"
 
-// DeviceScopeInput selects where a device server profile lives. The
-// device/profiles/* packages (LDAP, RADIUS, TACACS+, syslog, SNMP-trap, email)
+// DeviceScopeInput selects where a device-scoped object lives. The ten families
+// that embed it (LDAP, RADIUS, TACACS+, syslog, SNMP-trap, email, SAML IdP, MFA,
+// local database users and authentication profiles)
 // model their location more richly than either LocationInput (the object
 // shared/vsys/device_group model) or NetScopeInput (the {Ngfw|Template|
 // TemplateStack} model): a firewall vsys or shared scope, a Panorama template or
@@ -104,8 +109,8 @@ type deviceScopeParts[L any] struct {
 // and tracked by issue #98; the asymmetry is preserved rather than widened.
 // panorama is rejected with a template tier because the failure modes differ in
 // blast radius: silently resolving panorama+template writes into a template,
-// which pushes to every managed firewall while the caller believes the write
-// landed on the Panorama appliance itself.
+// which pushes to every managed firewall using that template while the caller
+// believes the write landed on the Panorama appliance itself.
 func validateDeviceScopeExclusivity(in DeviceScopeInput) error {
 	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, in.TemplateVsys); err != nil {
 		return err
@@ -166,7 +171,7 @@ func resolvePanoramaDeviceScope[L any](in DeviceScopeInput, p deviceScopeParts[L
 		return p.panorama(), nil
 	case in.Shared:
 		if p.shared == nil {
-			return zero, errors.New("the shared scope is not available for this profile type; use a template or template_stack")
+			return zero, errors.New("the shared scope is not available for this profile type; use a template, template_stack, or panorama")
 		}
 		return p.shared(), nil
 	default:

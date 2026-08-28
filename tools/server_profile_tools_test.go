@@ -406,8 +406,6 @@ func TestServerProfileDeviceScopeGating(t *testing.T) {
 		switch register {
 		case "ldap":
 			RegisterLdapProfileTools(srv, d)
-		case "syslog":
-			RegisterSyslogProfileTools(srv, d)
 		case "email":
 			RegisterEmailProfileTools(srv, d)
 		}

@@ -1,6 +1,13 @@
 package tools
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	panoserr "github.com/PaloAltoNetworks/pango/errors"
+	"github.com/PaloAltoNetworks/pango/xmlapi"
+)
 
 const redactedPlaceholder = "[REDACTED]"
 
@@ -72,16 +79,18 @@ func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string
 	return redactSecrets(msg, gatherSecrets(in, opts), isSecretBearing(opts))
 }
 
-// redactDeviceError is the seam the read, list and delete handlers use. Those
-// paths hold no submitted value to replace, so the raw-response collapse is the
-// whole of it, and it runs for EVERY family rather than only secret-bearing ones
-// (issue #105).
+// redactDeviceError is the seam getCore, listCore and deleteCore use. Those paths
+// hold no submitted value to replace, so the raw-response collapse is the whole of
+// it, and it runs for every family routed through those three cores rather than
+// only secret-bearing ones (issue #105). Families with hand-written handlers that
+// bypass the cores are NOT covered: the zone list, get, delete and update-seed-read
+// paths in device_tools.go and the seed read in policy_tools.go's moveHandler are
+// the current examples. No secret-bearing family has a bespoke handler, so nothing
+// with a withSecrets extractor sits outside this seam.
 //
-// Unconditional because the write path's per-family signal cannot reach here:
-// writeOption is parameterized on the write input type, and a get, list or delete
-// input is a different type. Threading a second family-level flag would touch six
-// scope wrapper families and every read-handler call site, and would fail open on
-// any family that forgot it, which is the failure mode issue #99 was.
+// Unconditional rather than opted into per family because a per-family flag fails
+// open: a family that forgot to pass it would silently lose the collapse, which is
+// the failure mode issue #99 was.
 //
 // Whether a failed get, list or delete can even return a body carrying the entry
 // is NOT PROVEN. Probed against one PA-VM on PAN-OS 11.2.6: a get of a missing
@@ -94,8 +103,57 @@ func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string
 // on any shape that box produced. That bounds the risk on that version; it does
 // not eliminate it. Panorama, other PAN-OS versions and unenumerated failure
 // modes were NOT MEASURED. This closes one shape of the leak, not the leak.
-func redactDeviceError(msg string) string {
-	return redactSecrets(msg, nil, true)
+//
+// secrets is empty for the three cores, which hold no submitted value. The seed
+// read of a read-modify-write update passes the values that call submitted, since
+// it is a read that happens to have them in hand.
+//
+// It takes the error rather than its string so that the device's numeric code
+// survives the collapse. pango puts the fallback marker at offset 0, so a
+// collapsed message would otherwise carry no code, no xpath and no device text at
+// all, for every family including the ones with no secret. pango parses the code
+// off the response attribute and keeps it on the error VALUE (errors.Parse builds
+// Panos{Msg, Code} and fills Code on the fallback branch too), so it is still in
+// hand after the body is discarded. Surfacing it cannot leak what the body held:
+// the field is an int, and a non-numeric attribute unmarshals to 0 rather than to
+// any of the body's text.
+func redactDeviceError(err error, secrets ...string) string {
+	if err == nil {
+		return ""
+	}
+	msg := redactSecrets(err.Error(), secrets, true)
+	if !strings.HasPrefix(msg, rawResponseMarker) {
+		return msg
+	}
+	if pe, ok := errors.AsType[panoserr.Panos](err); ok {
+		return withDeviceCode(pe.Code, msg)
+	}
+	// A failed delete reports through a different type: pango batches deletes into
+	// a MultiConfig, and the client returns the *xmlapi.MultiConfigResponse itself
+	// as the error (client.go:694). Its Error() falls back to errors.Parse over the
+	// raw body only when the response carries no per-operation results
+	// (xmlapi/multiconfig.go:110), which is when the marker can appear; with
+	// results it returns the last result's own message and no marker. Checking both
+	// types is what keeps the read paths behaving alike; without it delete alone
+	// lost its code.
+	if mc, ok := errors.AsType[*xmlapi.MultiConfigResponse](err); ok {
+		return withDeviceCode(mc.Code, msg)
+	}
+	return msg
+}
+
+// withDeviceCode prefixes a collapsed message with the device's response code.
+//
+// Code 0 is omitted because it is what a response with no code attribute
+// unmarshals to, so printing it would invent a code the device never sent. The
+// wording is "response code" rather than "error code" because the value is just
+// the response's code attribute, and the collapse fires whenever pango's parsed
+// message comes out empty, which is reachable at codes that are not error codes.
+func withDeviceCode(code int, msg string) string {
+	if code == 0 {
+		return msg
+	}
+	return fmt.Sprintf("device response code %d: %s", code, msg)
 }
 
 // isSecretBearing reports whether any option declares a secret extractor, which
