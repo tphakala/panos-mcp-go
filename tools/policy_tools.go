@@ -412,10 +412,9 @@ func moveHandler[L, E any](
 			// This existence check is a read, so it collapses the raw-response
 			// fallback like the read cores do (issue #108): a device error whose
 			// parsed message is empty must not echo the raw body it read back. The
-			// move itself carries no secret, so only the collapse applies here.
-			red := redactDeviceError(err)
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: read %q: %s", tool, in.Name, red)
+			// move itself carries no secret, so it passes none (see
+			// deviceReadErrorResult).
+			res, v := deviceReadErrorResult(d, tool, in.Name, err)
 			return res, v, nil
 		}
 		if err := mover.MoveGroup(ctx, loc, pos, []*E{entry}, 1); err != nil {

@@ -31,6 +31,13 @@ import (
 // than the literal placeholder, because the double-nested shape parses empty and
 // takes the raw fallback. It checks BOTH sinks the write path writes (the tool
 // result and the log), the same two-sink concern issue #105 raised for reads.
+//
+// It also pins that the device response code survives the write-path collapse
+// (issue #109): once the body is discarded the code is the only diagnostic left, so
+// a failed create must not yield strictly less than a failed read. The fixtures
+// driving this helper carry code="12". Sabotage: drop the withDeviceCodeFromErr
+// call from redactWriteError and the code assertion turns red (the secret-leak
+// assertions stay green, isolating the two concerns).
 func assertCollapsedWriteError(t *testing.T, res *mcp.CallToolResult, err error, logs *bytes.Buffer, secret string) {
 	t.Helper()
 	if err != nil {
@@ -45,6 +52,9 @@ func assertCollapsedWriteError(t *testing.T, res *mcp.CallToolResult, err error,
 		}
 		if !strings.Contains(out, "(raw response: [redacted])") {
 			t.Fatalf("expected the collapsed raw response in the %s: %q", name, out)
+		}
+		if !strings.Contains(out, "device response code 12") {
+			t.Fatalf("the device response code must survive the write-path collapse in the %s: %q", name, out)
 		}
 	}
 }

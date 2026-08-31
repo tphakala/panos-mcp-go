@@ -70,13 +70,35 @@ func redactSecrets(msg string, secrets []string, collapseRaw bool) string {
 	return msg + tail
 }
 
-// redactWriteError is the seam every write handler uses. It replaces the secret
-// values this particular call submitted and collapses the raw-response fallback
-// for any secret-bearing family, whether or not this call carried a value.
-// Keeping this wrapper separate from redactSecrets keeps a bare boolean out of
-// the handler call sites while leaving the primitive directly unit-testable.
-func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string {
-	return redactSecrets(msg, gatherSecrets(in, opts), isSecretBearing(opts))
+// redactWriteError is the write-error seam the generic create and update cores
+// use. It replaces the secret values this particular call submitted and collapses
+// the raw-response fallback for any secret-bearing family, whether or not this call
+// carried a value. A bespoke write handler carries no secret (no secret-bearing
+// family has a bespoke handler), so it has nothing to redact and emits its raw
+// device error directly rather than routing through here. When
+// the collapse fires it surfaces the device's response code the same way
+// redactDeviceError does on the read paths (issue #109): a failed create or update
+// is where a validation failure carries the most actionable detail, so it must not
+// yield strictly less than a failed read of the same object once the body is
+// discarded. Keeping this wrapper separate from redactSecrets keeps a bare boolean
+// out of the handler call sites while leaving the primitive directly unit-testable.
+//
+// It takes the error rather than its string so the code is still in hand after the
+// body is redacted; the leak argument is redactDeviceError's, unchanged, since the
+// code is an int parsed from a response attribute and a non-numeric attribute
+// unmarshals to 0.
+func redactWriteError[In any](err error, in *In, opts []writeOption[In]) string {
+	collapse := isSecretBearing(opts)
+	msg := redactSecrets(err.Error(), gatherSecrets(in, opts), collapse)
+	// Surface the code only once the collapse has actually fired. A non-secret-
+	// bearing write keeps its full uncollapsed body, and a structured message that
+	// never held the marker keeps its own text; neither needs a code prefix. With
+	// collapse true, redactSecrets leaves the marker in place exactly when it
+	// collapsed, so Contains is the collapse test only under that guard.
+	if collapse && strings.Contains(msg, rawResponseMarker) {
+		return withDeviceCodeFromErr(err, msg)
+	}
+	return msg
 }
 
 // redactDeviceError is the seam getCore, listCore and deleteCore use (through
@@ -85,9 +107,9 @@ func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string
 // through those three cores rather than only secret-bearing ones (issue #105).
 // The read paths with hand-written handlers that bypass the cores now route
 // through this seam too (issue #108): the zone list, get and delete handlers via
-// deviceErrorResult, and the zone update and moveHandler seed reads by calling
-// redactDeviceError directly (their "read %q" message shape does not fit
-// deviceErrorResult). No bespoke read path is left echoing the raw body, and no
+// deviceErrorResult, and the zone update and moveHandler seed reads via
+// deviceReadErrorResult, which wraps this seam for their "read %q" message shape.
+// No bespoke read path is left echoing the raw body, and no
 // secret-bearing family has a bespoke handler, so nothing with a withSecrets
 // extractor sits outside this seam.
 //
@@ -132,17 +154,28 @@ func redactDeviceError(err error, secrets ...string) string {
 	if !strings.Contains(msg, rawResponseMarker) {
 		return msg
 	}
+	return withDeviceCodeFromErr(err, msg)
+}
+
+// withDeviceCodeFromErr prefixes msg with the device's response code when err
+// carries one, and is the shared tail of both collapsing sinks: redactDeviceError
+// on the read paths and redactWriteError on the write paths. Both call it only
+// after the raw-response collapse has fired, when the code is the sole diagnostic
+// the discarded body leaves behind.
+//
+// A create, update or the get behind a read reports through panoserr.Panos. A
+// failed delete reports through a different type: pango batches deletes into a
+// MultiConfig, and the client returns the *xmlapi.MultiConfigResponse itself as
+// the error (client.go:694). Its Error() falls back to errors.Parse over the raw
+// body only when the response carries no per-operation results
+// (xmlapi/multiconfig.go:110), which is when the marker can appear; with results
+// it returns the last result's own message and no marker. Checking both types is
+// what keeps every collapsing sink surfacing the code; a plain Go error carries
+// none, so msg is returned unchanged.
+func withDeviceCodeFromErr(err error, msg string) string {
 	if pe, ok := errors.AsType[panoserr.Panos](err); ok {
 		return withDeviceCode(pe.Code, msg)
 	}
-	// A failed delete reports through a different type: pango batches deletes into
-	// a MultiConfig, and the client returns the *xmlapi.MultiConfigResponse itself
-	// as the error (client.go:694). Its Error() falls back to errors.Parse over the
-	// raw body only when the response carries no per-operation results
-	// (xmlapi/multiconfig.go:110), which is when the marker can appear; with
-	// results it returns the last result's own message and no marker. Checking both
-	// types is what keeps the read paths behaving alike; without it delete alone
-	// lost its code.
 	if mc, ok := errors.AsType[*xmlapi.MultiConfigResponse](err); ok {
 		return withDeviceCode(mc.Code, msg)
 	}

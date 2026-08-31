@@ -231,3 +231,27 @@ func checkCount(t *testing.T, label string, got, want int) {
 		t.Errorf("README %s count is %d, RegisterAll actually registers %d; update the count sentence in the Tools section or the registration", label, got, want)
 	}
 }
+
+// TestReadmeRestatesScopeExceptionConsts pins the device-scope exception family
+// lists in the README against their source-of-truth consts. device_scope.go
+// documents that noSharedScopeProfiles and noPanoramaScopeFamilies are restated in
+// README.md because a Go struct tag cannot reference a const, yet nothing checked
+// that copy: TestDeviceScopeSchemaUnchanged pins the struct tag against each const,
+// but the README prose could drift while the tag stayed correct. This closes that
+// gap the same way, with a verbatim Contains.
+//
+// Sabotage: reword the README's device-scope family lists away from either const
+// (for example back to "SNMP-trap and email ... authentication profile") and this
+// turns red while the schema pins stay green.
+func TestReadmeRestatesScopeExceptionConsts(t *testing.T) {
+	b, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatalf("reading README.md: %v", err)
+	}
+	readme := string(b)
+	for _, want := range []string{noSharedScopeProfiles, noPanoramaScopeFamilies} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("README.md must restate %q verbatim (device_scope.go documents this restatement; a struct tag cannot reference the const)", want)
+		}
+	}
+}
