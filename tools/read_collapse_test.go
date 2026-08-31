@@ -71,3 +71,17 @@ func TestMoveCollapsesRawResponseOnSeedRead(t *testing.T) {
 	res, _, err := h(t.Context(), nil, MoveInput{Name: "nope", Position: "top"})
 	assertCollapsedRawResponse(t, res, err, logs)
 }
+
+// Sabotage: revert zoneUpdateHandler's redactDeviceError call at the seed read to
+// pass the raw svc.Read error to errorResult. The overlay and write never run: the
+// read-modify-write seed read fails first, the same read path #108 names. The
+// write error below stays raw on purpose (non-secret write convention), so this
+// pins only the seed read.
+func TestZoneUpdateCollapsesRawResponseOnSeedRead(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
+	logs := captureLogs(t, d)
+	h := zoneUpdateHandler(d)
+
+	res, _, err := h(t.Context(), nil, ZoneWriteInput{Name: "nope"})
+	assertCollapsedRawResponse(t, res, err, logs)
+}

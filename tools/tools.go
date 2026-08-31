@@ -405,12 +405,13 @@ func errorResult(format string, args ...any) (res *mcp.CallToolResult, anyVal an
 // deviceErrorResult collapses a device error's raw-response fallback, logs the
 // collapsed form, and returns it as a tool error in the shared "failed: <tool>:
 // <msg>" shape. It is the seam the read cores (listCore, getCore, deleteCore)
-// and the bespoke read paths that cannot route through them (the zone family's
-// flat-location handlers) share, so a device error on any of them has its raw
-// body collapsed to the response code rather than echoed. Each call site is its
-// own deletable seam: reverting one core to hand the raw error to errorResult
-// reddens exactly that core's collapse test. Write paths do NOT use it: they
-// carry submitted secret values and go through redactWriteError instead.
+// and the zone family's flat-location list, get and delete handlers share, so a
+// device error on any of them has its raw body collapsed to the response code
+// rather than echoed. The seed reads that carry a "read %q" message shape (the
+// zone update handler and moveHandler) call redactDeviceError directly instead.
+// Each call site is its own deletable seam: reverting one core to hand the raw
+// error to errorResult reddens exactly that core's collapse test. Write paths do
+// NOT use it: they carry submitted secret values and go through redactWriteError.
 func deviceErrorResult(d *Deps, tool string, err error) (res *mcp.CallToolResult, anyVal any) {
 	red := redactDeviceError(err)
 	d.Logger.Error("failed: "+tool, "error", red)

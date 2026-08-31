@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -28,8 +29,9 @@ import (
 // raw-response body collapsed rather than echoed, so the secret the body carried
 // did not leak. Unlike assertRedactsSecret, it expects the collapse marker rather
 // than the literal placeholder, because the double-nested shape parses empty and
-// takes the raw fallback.
-func assertCollapsedWriteError(t *testing.T, res *mcp.CallToolResult, err error, secret string) {
+// takes the raw fallback. It checks BOTH sinks the write path writes (the tool
+// result and the log), the same two-sink concern issue #105 raised for reads.
+func assertCollapsedWriteError(t *testing.T, res *mcp.CallToolResult, err error, logs *bytes.Buffer, secret string) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
@@ -37,12 +39,13 @@ func assertCollapsedWriteError(t *testing.T, res *mcp.CallToolResult, err error,
 	if !res.IsError {
 		t.Fatal("expected the device error to surface as a tool error")
 	}
-	out := textContent(t, res)
-	if strings.Contains(out, secret) {
-		t.Fatalf("secret leaked into the tool error: %q", out)
-	}
-	if !strings.Contains(out, "(raw response: [redacted])") {
-		t.Fatalf("expected the collapsed raw response in the error: %q", out)
+	for name, out := range map[string]string{"tool result": textContent(t, res), "log sink": logs.String()} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("secret leaked into the %s: %q", name, out)
+		}
+		if !strings.Contains(out, "(raw response: [redacted])") {
+			t.Fatalf("expected the collapsed raw response in the %s: %q", name, out)
+		}
 	}
 }
 
@@ -55,6 +58,7 @@ func TestLdapProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error" code="12"><msg><line><line>validation error for bind-password ` + fixture + `</line></line></msg></response>`},
 	)
+	logs := captureLogs(t, d)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterLdapProfileTools(srv, d)
 	cs := connectInMemory(t, srv)
@@ -62,7 +66,7 @@ func TestLdapProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 		"name":          "ldap1",
 		"bind_password": fixture,
 	}})
-	assertCollapsedWriteError(t, res, err, fixture)
+	assertCollapsedWriteError(t, res, err, logs, fixture)
 }
 
 // Sabotage target: the withSecrets(radiusProfileSecrets) argument on the
@@ -72,6 +76,7 @@ func TestRadiusProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error" code="12"><msg><line><line>validation error for secret ` + fixture + `</line></line></msg></response>`},
 	)
+	logs := captureLogs(t, d)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterRadiusProfileTools(srv, d)
 	cs := connectInMemory(t, srv)
@@ -79,5 +84,5 @@ func TestRadiusProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 		"name":    "rad1",
 		"servers": []any{map[string]any{"name": "s1", "ip_address": "10.0.0.2", "secret": fixture}},
 	}})
-	assertCollapsedWriteError(t, res, err, fixture)
+	assertCollapsedWriteError(t, res, err, logs, fixture)
 }

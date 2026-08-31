@@ -620,8 +620,13 @@ func zoneUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Zone
 		defer d.LockWrites()()
 		entry, err := svc.Read(ctx, loc, in.Name, "get")
 		if err != nil {
-			d.Logger.Error("failed: panos_zone_update", "error", err)
-			res, v := errorResult("failed: panos_zone_update: read %q: %v", in.Name, err)
+			// The seed read of a read-modify-write update is a read, so it collapses
+			// the raw-response fallback like getCore and updateCore do (issue #108).
+			// A zone carries no secret, so only the collapse applies. The write below
+			// stays raw, matching the non-secret write convention (see updateCore).
+			red := redactDeviceError(err)
+			d.Logger.Error("failed: panos_zone_update", "error", red)
+			res, v := errorResult("failed: panos_zone_update: read %q: %s", in.Name, red)
 			return res, v, nil
 		}
 		if err := overlayZone(entry, &in); err != nil {

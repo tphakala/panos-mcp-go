@@ -115,8 +115,8 @@ func validateTemplateExclusivity(template, stack, vsys string) error {
 
 // validateSharedPanoramaExclusivity rejects naming both the shared and the
 // Panorama management-plane scope. The device and profile scopes forbid this
-// pairing with the same message; extracting it keeps the third would-be copy out
-// of the tree. The template tier is checked separately because its rule differs
+// pairing with the same message; extracting it stops each from carrying its own
+// inline copy. The template tier is checked separately because its rule differs
 // between those two scopes.
 func validateSharedPanoramaExclusivity(shared, panorama bool) error {
 	if shared && panorama {

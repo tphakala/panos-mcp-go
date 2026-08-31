@@ -79,14 +79,17 @@ func redactWriteError[In any](msg string, in *In, opts []writeOption[In]) string
 	return redactSecrets(msg, gatherSecrets(in, opts), isSecretBearing(opts))
 }
 
-// redactDeviceError is the seam getCore, listCore and deleteCore use. Those paths
-// hold no submitted value to replace, so the raw-response collapse is the whole of
-// it, and it runs for every family routed through those three cores rather than
-// only secret-bearing ones (issue #105). Families with hand-written handlers that
-// bypass the cores are NOT covered: the zone list, get, delete and update-seed-read
-// paths in device_tools.go and the seed read in policy_tools.go's moveHandler are
-// the current examples. No secret-bearing family has a bespoke handler, so nothing
-// with a withSecrets extractor sits outside this seam.
+// redactDeviceError is the seam getCore, listCore and deleteCore use (through
+// deviceErrorResult). Those paths hold no submitted value to replace, so the
+// raw-response collapse is the whole of it, and it runs for every family routed
+// through those three cores rather than only secret-bearing ones (issue #105).
+// The read paths with hand-written handlers that bypass the cores now route
+// through this seam too (issue #108): the zone list, get and delete handlers via
+// deviceErrorResult, and the zone update and moveHandler seed reads by calling
+// redactDeviceError directly (their "read %q" message shape does not fit
+// deviceErrorResult). No bespoke read path is left echoing the raw body, and no
+// secret-bearing family has a bespoke handler, so nothing with a withSecrets
+// extractor sits outside this seam.
 //
 // Unconditional rather than opted into per family because a per-family flag fails
 // open: a family that forgot to pass it would silently lose the collapse, which is
