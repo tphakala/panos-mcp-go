@@ -115,13 +115,10 @@ func validateDeviceScopeExclusivity(in DeviceScopeInput) error {
 	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, in.TemplateVsys); err != nil {
 		return err
 	}
-	switch {
-	case in.Shared && in.Panorama:
-		return errors.New("set only one of shared or panorama, not both")
-	case (in.Template != "" || in.TemplateStack != "") && in.Panorama:
-		return errors.New("set exactly one scope: template or template_stack cannot be combined with panorama")
+	if err := validateSharedPanoramaExclusivity(in.Shared, in.Panorama); err != nil {
+		return err
 	}
-	return nil
+	return validateTemplatePanoramaExclusivity(in.Template, in.TemplateStack, in.Panorama)
 }
 
 // resolveDeviceScope maps a DeviceScopeInput onto a pango location for the
@@ -142,7 +139,8 @@ func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[
 	}
 
 	if in.Panorama || in.Template != "" || in.TemplateStack != "" {
-		return zero, errors.New("panorama, template and template_stack require a Panorama connection")
+		return zero, errors.New("panorama, template and template_stack require a Panorama connection; " +
+			"on a firewall these live in the vsys scope (set vsys, or omit for vsys1)")
 	}
 	if in.Shared {
 		if p.shared == nil {
@@ -160,7 +158,11 @@ func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[
 // validateDeviceScopeExclusivity keeps resolving to the template.
 func resolvePanoramaDeviceScope[L any](in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
-	if loc, ok := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts); ok {
+	loc, ok, err := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts)
+	if err != nil {
+		return zero, err
+	}
+	if ok {
 		return loc, nil
 	}
 	switch {

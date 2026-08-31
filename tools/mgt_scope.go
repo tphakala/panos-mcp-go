@@ -50,13 +50,11 @@ func resolveMgtScope[L any](d *Deps, in MgtScopeInput, p mgtScopeParts[L]) (L, e
 	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, ""); err != nil {
 		return zero, err
 	}
-	// panorama and a template tier are different destinations, so naming both is
-	// a client error rather than a precedence question. Resolving it silently
-	// would create the entry inside the template, which pushes it to every
-	// managed firewall using that template, while the caller believes it landed
-	// on Panorama. The profile scope rejects the same combination.
-	if in.Panorama && (in.Template != "" || in.TemplateStack != "") {
-		return zero, errors.New("set exactly one scope: template or template_stack cannot be combined with panorama")
+	// panorama and a template tier are different destinations; the shared helper
+	// rejects the pairing with the same message the device scope uses (see
+	// validateTemplatePanoramaExclusivity for why silently resolving it is unsafe).
+	if err := validateTemplatePanoramaExclusivity(in.Template, in.TemplateStack, in.Panorama); err != nil {
+		return zero, err
 	}
 	if !d.IsPanorama {
 		if in.Panorama || in.Template != "" || in.TemplateStack != "" {
@@ -64,7 +62,11 @@ func resolveMgtScope[L any](d *Deps, in MgtScopeInput, p mgtScopeParts[L]) (L, e
 		}
 		return p.ngfw(), nil
 	}
-	if loc, ok := resolveTemplateTier(in.Template, in.TemplateStack, "", p.templateScopeParts); ok {
+	loc, ok, err := resolveTemplateTier(in.Template, in.TemplateStack, "", p.templateScopeParts)
+	if err != nil {
+		return zero, err
+	}
+	if ok {
 		return loc, nil
 	}
 	if in.Panorama {

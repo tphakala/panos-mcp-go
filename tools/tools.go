@@ -402,6 +402,22 @@ func errorResult(format string, args ...any) (res *mcp.CallToolResult, anyVal an
 	}, nil
 }
 
+// deviceErrorResult collapses a device error's raw-response fallback, logs the
+// collapsed form, and returns it as a tool error in the shared "failed: <tool>:
+// <msg>" shape. It is the seam the read cores (listCore, getCore, deleteCore)
+// and the zone family's flat-location list, get and delete handlers share, so a
+// device error on any of them has its raw body collapsed to the response code
+// rather than echoed. The seed reads that carry a "read %q" message shape (the
+// zone update handler and moveHandler) call redactDeviceError directly instead.
+// Each call site is its own deletable seam: reverting one core to hand the raw
+// error to errorResult reddens exactly that core's collapse test. Write paths do
+// NOT use it: they carry submitted secret values and go through redactWriteError.
+func deviceErrorResult(d *Deps, tool string, err error) (res *mcp.CallToolResult, anyVal any) {
+	red := redactDeviceError(err)
+	d.Logger.Error("failed: "+tool, "error", red)
+	return errorResult("failed: %s: %s", tool, red)
+}
+
 // Shared JSON result-map keys, so the same literal is not repeated across the
 // list handlers (listHandler, zoneListHandler) and the op handlers (goconst).
 // The "name" key reuses tagNameKey.
@@ -506,9 +522,7 @@ func listCore[L, E, In any](
 		entries, err := svc.List(ctx, loc, "get", "", "")
 		if err != nil {
 			if !isObjectNotFound(err) {
-				red := redactDeviceError(err)
-				d.Logger.Error("failed: "+tool, "error", red)
-				res, v := errorResult("failed: %s: %s", tool, red)
+				res, v := deviceErrorResult(d, tool, err)
 				return res, v, nil
 			}
 			// An empty object set: PAN-OS returns code 7 for a config get on a
@@ -541,9 +555,7 @@ func getCore[L, E, In any](
 		}
 		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
-			red := redactDeviceError(err)
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: %s", tool, red)
+			res, v := deviceErrorResult(d, tool, err)
 			return res, v, nil
 		}
 		res, v := jsonResult(summarize(entry))
@@ -569,9 +581,7 @@ func deleteCore[L, E, In any](
 		}
 		defer d.LockWrites()()
 		if err := svc.Delete(ctx, loc, n); err != nil {
-			red := redactDeviceError(err)
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: %s", tool, red)
+			res, v := deviceErrorResult(d, tool, err)
 			return res, v, nil
 		}
 		res, v := successResult(d.Logger, tool, "deleted %q from candidate config; run panos_commit to apply", n)

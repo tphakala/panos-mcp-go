@@ -339,7 +339,8 @@ func captureLogs(t *testing.T, d *Deps) *bytes.Buffer {
 	return &buf
 }
 
-// Sabotage: delete the redactDeviceError call from getCore.
+// Sabotage: revert getCore's deviceErrorResult call to hand svc.Read's raw error
+// to errorResult.
 func TestGetCollapsesRawResponse(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
 	logs := captureLogs(t, d)
@@ -350,7 +351,8 @@ func TestGetCollapsesRawResponse(t *testing.T) {
 	assertCollapsedRawResponse(t, res, err, logs)
 }
 
-// Sabotage: delete the redactDeviceError call from listCore.
+// Sabotage: revert listCore's deviceErrorResult call to hand the raw List error
+// to errorResult.
 func TestListCollapsesRawResponse(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
 	logs := captureLogs(t, d)
@@ -362,7 +364,8 @@ func TestListCollapsesRawResponse(t *testing.T) {
 	assertCollapsedRawResponse(t, res, err, logs)
 }
 
-// Sabotage: delete the redactDeviceError call from deleteCore.
+// Sabotage: revert deleteCore's deviceErrorResult call to hand the raw Delete
+// error to errorResult.
 func TestDeleteCollapsesRawResponse(t *testing.T) {
 	// Any config request, not just action=delete: pango's Delete batches its
 	// deletes into a MultiConfig, which the client sends as action="multi-config"

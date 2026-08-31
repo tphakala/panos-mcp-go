@@ -113,23 +113,62 @@ func validateTemplateExclusivity(template, stack, vsys string) error {
 	return nil
 }
 
+// validateSharedPanoramaExclusivity rejects naming both the shared and the
+// Panorama management-plane scope. The device and profile scopes forbid this
+// pairing with the same message; extracting it stops each from carrying its own
+// inline copy. The template tier is checked separately because its rule differs
+// between those two scopes.
+func validateSharedPanoramaExclusivity(shared, panorama bool) error {
+	if shared && panorama {
+		return errors.New("set only one of shared or panorama, not both")
+	}
+	return nil
+}
+
+// validateTemplatePanoramaExclusivity rejects combining a template tier with the
+// Panorama management-plane scope: they name different destinations, so naming
+// both is a client error rather than a precedence question, and resolving it
+// silently would create the entry inside the template, which pushes it to every
+// managed firewall using that template while the caller believes it landed on
+// Panorama. The device and management scopes share this exact rule and message;
+// the profile scope's variant also folds in the shared scope, so it keeps its
+// own combined check.
+func validateTemplatePanoramaExclusivity(template, stack string, panorama bool) error {
+	if (template != "" || stack != "") && panorama {
+		return errors.New("set exactly one scope: template or template_stack cannot be combined with panorama")
+	}
+	return nil
+}
+
 // resolveTemplateTier returns the location a template or template-stack request
 // names, narrowed to a vsys when one is given. ok is false when the request
 // names neither tier, which leaves the caller to handle its own remaining
 // scopes. Callers must have validated exclusivity first, so a request naming
 // both tiers cannot reach here.
-func resolveTemplateTier[L any](template, stack, vsys string, p templateScopeParts[L]) (loc L, ok bool) {
+//
+// A scope with no vsys level leaves the two vsys-narrowed constructors nil (see
+// templateScopeParts). No current family both leaves them nil and exposes a
+// template_vsys field, so today the nil branch is unreachable; guarding it turns
+// that latent trap for the next family into a clear error rather than a nil-call
+// panic. err is non-nil only in that guarded case.
+func resolveTemplateTier[L any](template, stack, vsys string, p templateScopeParts[L]) (loc L, ok bool, err error) {
 	switch {
 	case template != "":
 		if vsys != "" {
-			return p.templateVsys(defaultPanoramaDevice, template, defaultNgfwDevice, vsys), true
+			if p.templateVsys == nil {
+				return loc, false, errors.New("template_vsys is not supported for this family")
+			}
+			return p.templateVsys(defaultPanoramaDevice, template, defaultNgfwDevice, vsys), true, nil
 		}
-		return p.template(defaultPanoramaDevice, template), true
+		return p.template(defaultPanoramaDevice, template), true, nil
 	case stack != "":
 		if vsys != "" {
-			return p.templateStackVsys(defaultPanoramaDevice, stack, defaultNgfwDevice, vsys), true
+			if p.templateStackVsys == nil {
+				return loc, false, errors.New("template_vsys is not supported for this family")
+			}
+			return p.templateStackVsys(defaultPanoramaDevice, stack, defaultNgfwDevice, vsys), true, nil
 		}
-		return p.templateStack(defaultPanoramaDevice, stack), true
+		return p.templateStack(defaultPanoramaDevice, stack), true, nil
 	}
-	return loc, false
+	return loc, false, nil
 }

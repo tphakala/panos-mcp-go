@@ -63,10 +63,13 @@ func validateProfileScopeExclusivity(in ProfileScopeInput) error {
 	if err := validateTemplateExclusivity(in.Template, in.TemplateStack, in.TemplateVsys); err != nil {
 		return err
 	}
-	switch {
-	case in.Shared && in.Panorama:
-		return errors.New("set only one of shared or panorama, not both")
-	case (in.Template != "" || in.TemplateStack != "") && (in.Shared || in.Panorama):
+	if err := validateSharedPanoramaExclusivity(in.Shared, in.Panorama); err != nil {
+		return err
+	}
+	// The profile scope's template rule folds in the shared scope as well, so it
+	// cannot use the shared template+panorama helper (which the device and
+	// management scopes share verbatim); it keeps its own combined check.
+	if (in.Template != "" || in.TemplateStack != "") && (in.Shared || in.Panorama) {
 		return errors.New("set exactly one scope: template or template_stack cannot be combined with shared or panorama")
 	}
 	return nil
@@ -77,7 +80,11 @@ func validateProfileScopeExclusivity(in ProfileScopeInput) error {
 // management-plane scope, or the shared scope is required.
 func resolvePanoramaProfileScope[L any](in ProfileScopeInput, p profileScopeParts[L]) (L, error) {
 	var zero L
-	if loc, ok := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts); ok {
+	loc, ok, err := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts)
+	if err != nil {
+		return zero, err
+	}
+	if ok {
 		return loc, nil
 	}
 	switch {
