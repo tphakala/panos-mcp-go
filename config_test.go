@@ -510,6 +510,14 @@ func TestConfigRedactsSecrets(t *testing.T) {
 	var buf bytes.Buffer
 	slog.New(slog.NewJSONHandler(&buf, nil)).Info("startup", "config", cfg)
 
+	// main.go logs cfg.LogValue() explicitly, not cfg, to keep the raw APIKey and
+	// Password fields out of the logging call for the go/clear-text-logging scanner
+	// (which cannot model the LogValuer redaction); slog resolves cfg to the same
+	// group anyway, so the output is identical. Render that exact form here so the
+	// call site main actually uses is covered, not only the bare-struct form.
+	var logValueBuf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&logValueBuf, nil)).Info("startup", "config", cfg.LogValue())
+
 	// Nested inside another struct, the JSON handler falls through to
 	// encoding/json, which consults neither LogValuer nor Stringer. The json:"-"
 	// tags are what close this path.
@@ -530,14 +538,15 @@ func TestConfigRedactsSecrets(t *testing.T) {
 	viaPtr := fmt.Sprintf("%v", &cfg) //nolint:gocritic // redundantSprint: exercising a *Config is the point.
 
 	for name, rendered := range map[string]string{
-		"String()":           cfg.String(),
-		"%v":                 viaV,
-		"%+v":                fmt.Sprintf("%+v", cfg),
-		"%s":                 viaS,
-		"pointer %v":         viaPtr,
-		"slog JSON handler":  buf.String(),
-		"slog nested struct": nested.String(),
-		"json.Marshal":       string(marshalled),
+		"String()":             cfg.String(),
+		"%v":                   viaV,
+		"%+v":                  fmt.Sprintf("%+v", cfg),
+		"%s":                   viaS,
+		"pointer %v":           viaPtr,
+		"slog JSON handler":    buf.String(),
+		"slog LogValue() form": logValueBuf.String(),
+		"slog nested struct":   nested.String(),
+		"json.Marshal":         string(marshalled),
 	} {
 		if strings.Contains(rendered, "LUFRPT1TUPERSECRETKEY") {
 			t.Errorf("%s leaked the API key: %s", name, rendered)

@@ -704,10 +704,12 @@ func deleteHandler[L, E any](
 }
 
 // createHandler builds a create tool handler from a resource-specific entry
-// builder. Unlike the net- and device-scope create/update handlers it takes no
-// writeOption secret extractor: no object family carries a write-only secret, so
-// there is nothing to redact from its device-error output (issue #92). A future
-// secret-bearing object family would thread the same opts seam through here.
+// builder. It accepts optional writeOption secret extractors and threads them to
+// createCore: object families carry no write-only secret and pass none, so there
+// is nothing to redact from their device-error output (issue #92), while a
+// secret-bearing family that registers through this generic handler rather than a
+// scope-specific one (the Panorama device group's authorization_code) passes
+// withSecrets(...) so its value is redacted on a write error.
 //
 // It also still takes an explicit location closure, where the net, device,
 // profile and mgt scopes replaced theirs with a promoted accessor. That is not
@@ -726,10 +728,11 @@ func createHandler[L, E, In any](
 	location func(In) LocationInput,
 	build func(In) (*E, error),
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return createCore(d, tool, svc,
 		func(in In) (L, error) { return resolve(location(in)) },
-		build, summarize)
+		build, summarize, opts...)
 }
 
 // updateHandler builds a read-modify-write update tool handler. The overlay
@@ -742,10 +745,11 @@ func updateHandler[L, E, In any](
 	name func(In) string,
 	overlay func(*E, In) error,
 	summarize func(*E) any,
+	opts ...writeOption[In],
 ) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return updateCore(d, tool, svc,
 		func(in In) (L, error) { return resolve(location(in)) },
-		name, overlay, summarize)
+		name, overlay, summarize, opts...)
 }
 
 // RegisterAll registers every tool for the connected device type.
