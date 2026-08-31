@@ -239,6 +239,8 @@ func collectSecrets[T any](items []T, get func(T) *string) []string {
 // one place (issue #92). A new secret-bearing family adds its extractor here and
 // passes it via withSecrets at registration.
 
+func deviceGroupSecrets(in *DeviceGroupInput) []string { return secretVals(in.AuthorizationCode) }
+
 func ldapProfileSecrets(in *LdapProfileInput) []string { return secretVals(in.BindPassword) }
 
 func tacacsProfileSecrets(in *TacacsProfileInput) []string {

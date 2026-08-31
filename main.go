@@ -44,7 +44,16 @@ func runMain() error {
 			"source", cfg.SkipVerifySource)
 	}
 	levelVar.Set(cfg.LogLevel)
-	logger.Debug("configuration loaded", "version", version, "config", cfg)
+	// Log the redacted group explicitly. slog already resolves Config through its
+	// LogValue method, so cfg.LogValue() produces byte-identical output to passing
+	// cfg; the difference is visible only to static analysis. The go/clear-text-logging
+	// scanner cannot model the slog.LogValuer redaction, so it reads a bare cfg as the
+	// APIKey and Password fields flowing into a log call. Passing the resolved group
+	// reduces those secret fields to the api_key_set/password_set/http_token_set
+	// presence booleans (the non-secret fields such as host and username are logged as
+	// before), keeping the raw secrets out of the call while the runtime output is
+	// unchanged (see Config.LogValue and TestConfigRedactsSecrets).
+	logger.Debug("configuration loaded", "version", version, "config", cfg.LogValue())
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

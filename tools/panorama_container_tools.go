@@ -133,14 +133,16 @@ func RegisterDeviceGroupWriteTools(s *mcp.Server, d *Deps) {
 		Description: "Create a Panorama device group in the candidate config. Parent device-group hierarchy is not managed. Run panos_commit to apply, then panos_push to its firewalls.",
 		Annotations: createTool("Create device group"),
 	}, createHandler[devicegroup.Location, devicegroup.Entry, DeviceGroupInput](
-		d, "panos_device_group_create", svc, deviceGroupResolve("panos_device_group_create"), loc, buildDeviceGroup, deviceGroupDetail))
+		d, "panos_device_group_create", svc, deviceGroupResolve("panos_device_group_create"), loc, buildDeviceGroup, deviceGroupDetail,
+		withSecrets(deviceGroupSecrets)))
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_device_group_update",
 		Description: "Update a Panorama device group: read-modify-write, only provided fields change; a provided templates list replaces the bound templates fully, and firewall membership is preserved. Run panos_commit to apply.",
 		Annotations: updateTool("Update device group"),
 	}, updateHandler[devicegroup.Location, devicegroup.Entry, DeviceGroupInput](
 		d, "panos_device_group_update", svc, deviceGroupResolve("panos_device_group_update"), loc,
-		func(in DeviceGroupInput) string { return in.Name }, overlayDeviceGroup, deviceGroupDetail))
+		func(in DeviceGroupInput) string { return in.Name }, overlayDeviceGroup, deviceGroupDetail,
+		withSecrets(deviceGroupSecrets)))
 
 	delInner := deleteHandler[devicegroup.Location, devicegroup.Entry](
 		d, "panos_device_group_delete", svc, deviceGroupResolve("panos_device_group_delete"))

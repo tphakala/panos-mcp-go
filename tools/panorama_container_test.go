@@ -278,3 +278,48 @@ func TestTemplateStackDeleteViaRegisteredTool(t *testing.T) {
 		t.Fatalf("delete must target the template-stack entry xpath: %s", el)
 	}
 }
+
+// TestDeviceGroupCreateRedactsAuthCodeOnError drives panos_device_group_create
+// through the registered handler. DeviceGroupInput.AuthorizationCode is a
+// write-only secret (the get projection reports only has_authorization_code), so
+// a device write error echoing it must not reach the tool result. This pins that
+// withSecrets(deviceGroupSecrets) is wired into the create registration.
+// Sabotage: remove withSecrets(deviceGroupSecrets) from the
+// panos_device_group_create registration in RegisterDeviceGroupWriteTools
+// (tools/panorama_container_tools.go); this test turns red.
+func TestDeviceGroupCreateRedactsAuthCodeOnError(t *testing.T) {
+	const fixture = "AUTHCODE-SECRET-abc123"
+	d, _ := newTestDeps(t, "Panorama",
+		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for authorization-code ` + fixture + `</line></msg></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterDeviceGroupWriteTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_device_group_create", Arguments: map[string]any{
+		"name":               "dg1",
+		"authorization_code": fixture,
+	}})
+	assertRedactsSecret(t, res, err, fixture)
+}
+
+// TestDeviceGroupUpdateRedactsAuthCodeOnError is the update-path twin: the seed
+// read succeeds, then the write is rejected with an error echoing the submitted
+// authorization code, which must not reach the tool result. Sabotage: remove
+// withSecrets(deviceGroupSecrets) from the panos_device_group_update
+// registration in RegisterDeviceGroupWriteTools; this test turns red.
+func TestDeviceGroupUpdateRedactsAuthCodeOnError(t *testing.T) {
+	const fixture = "AUTHCODE-SECRET-def456"
+	d, _ := newTestDeps(t, "Panorama",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="dg1"/></result></response>`},
+		fakeRoute{Match: configAction("multi-config"), Body: `<response status="error"><msg><line>validation error for authorization-code ` + fixture + `</line></msg></response>`},
+		fakeRoute{Match: configAction("edit"), Body: `<response status="error"><msg><line>validation error for authorization-code ` + fixture + `</line></msg></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterDeviceGroupWriteTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_device_group_update", Arguments: map[string]any{
+		"name":               "dg1",
+		"authorization_code": fixture,
+	}})
+	assertRedactsSecret(t, res, err, fixture)
+}
