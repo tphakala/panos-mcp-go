@@ -23,29 +23,29 @@ type secretWiring struct{ create, update bool }
 // the wiring itself, so a secret-bearing family whose update path lost its
 // withSecrets(...) fails here even if its per-family test was never added.
 //
-// It also pins the SET of secret-bearing families. Adding a new one makes this
-// test fail until the extractor is listed in wantExtractors below, which is the
-// point: the failure lands the author on this comment, which tells them to pass
-// withSecrets on both the create and the update registration and to add a
+// It also pins the SET of secret-bearing families three ways: the extractors
+// DECLARED in redact.go, those listed in wantExtractors below, and those actually
+// WIRED must all agree. So a new fooSecrets extractor added to redact.go but never
+// wired (or never listed here) fails this test rather than passing silently, which
+// is the point: the failure lands the author on this comment, which tells them to
+// pass withSecrets on both the create and the update registration and to add a
 // per-family redaction test.
 //
-// LIMITATION: this checks that every DECLARED extractor is wired. It does NOT
-// verify that every secret-bearing input FIELD has an extractor at all. A family
-// with a write-only secret field but no extractor (as device group's
+// LIMITATION: this checks that every DECLARED extractor is listed and wired. It
+// does NOT verify that every secret-bearing input FIELD has an extractor at all. A
+// family with a write-only secret field but no extractor (as device group's
 // authorization_code was before it was wired) is invisible here: it has no
-// extractor to list, so nothing flags it. Catching that class would need a scan of
-// the tool input structs for secret-shaped fields, which is left to review and to
-// the per-family tests rather than to a heuristic here. A defined-but-entirely-
-// unwired extractor is separately caught by the unused-code linter.
+// extractor to declare, so nothing flags it. Catching that class would need a scan
+// of the tool input structs for secret-shaped fields, which is left to review and
+// to the per-family tests rather than to a heuristic here.
 //
 // Sabotage: delete withSecrets(ikeGatewaySecrets) from either the create or the
 // update registration in vpn_tools.go and this turns red.
 func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
-	// The secret-bearing families, keyed by their extractor in redact.go. Grep to
-	// re-derive the set: grep -oE 'func [a-zA-Z]+Secrets\(' tools/redact.go yields
-	// these extractors plus redactSecrets, which is the one non-extractor to drop
-	// (the generic gatherSecrets/collectSecrets have a type-parameter list before
-	// their paren and secretVals does not end in "Secrets", so neither matches).
+	// The secret-bearing families, keyed by their extractor in redact.go. This list
+	// is cross-checked against the extractors actually declared in redact.go below,
+	// so it cannot silently drift: adding an extractor there without adding it here
+	// (or vice versa) fails the test.
 	wantExtractors := map[string]struct{}{
 		"deviceGroupSecrets":     {},
 		"ldapProfileSecrets":     {},
@@ -81,6 +81,22 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 	for name := range got {
 		if _, want := wantExtractors[name]; !want {
 			t.Errorf("withSecrets(%s) is wired but %s is not in wantExtractors; add it here and add a per-family redaction test", name, name)
+		}
+	}
+	// wantExtractors must equal the extractors actually declared in redact.go.
+	// Without this, a new fooSecrets extractor added to redact.go but never wired
+	// appears in neither wantExtractors nor got, so the two loops above would pass
+	// while its secret went unredacted on the write-error path. Deriving the
+	// declared set closes that: the extractor shows up here even with no wiring.
+	declared := declaredSecretExtractors(t)
+	for name := range declared {
+		if _, want := wantExtractors[name]; !want {
+			t.Errorf("redact.go declares extractor %s but it is not in wantExtractors; add it here and wire withSecrets(%s) on both its create and update registrations", name, name)
+		}
+	}
+	for name := range wantExtractors {
+		if _, ok := declared[name]; !ok {
+			t.Errorf("wantExtractors lists %s but redact.go declares no such extractor; remove it here or restore the extractor", name)
 		}
 	}
 }
@@ -221,4 +237,70 @@ func withSecretsExtractor(arg ast.Expr) string {
 		return ""
 	}
 	return ext.Name
+}
+
+// declaredSecretExtractors parses redact.go and returns the set of per-family
+// secret extractor functions declared there, keyed by name. An extractor is a
+// package-level function whose name ends in "Secrets" with the shape
+// func(*XxxInput) []string, which selects the per-family extractors and excludes
+// the helpers (redactSecrets, gatherSecrets, collectSecrets, secretVals,
+// isSecretBearing) that have a different signature. The extractors live in
+// redact.go by convention (see its "per-family secret extractors" section), so
+// parsing that one file is enough.
+func declaredSecretExtractors(t *testing.T) map[string]struct{} {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "redact.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parsing redact.go: %v", err)
+	}
+	out := map[string]struct{}{}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || !strings.HasSuffix(fn.Name.Name, "Secrets") {
+			continue
+		}
+		if isSecretExtractorSig(fn.Type) {
+			out[fn.Name.Name] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("no secret extractors found in redact.go; the signature match is broken and the cross-check would pass vacuously")
+	}
+	return out
+}
+
+// isSecretExtractorSig reports whether ft is the extractor shape
+// func(*XxxInput) []string: no type parameters, exactly one non-variadic
+// parameter that is a pointer to an identifier ending in "Input", and a single
+// []string result. This is what tells a per-family extractor apart from the
+// generic redaction helpers in redact.go.
+func isSecretExtractorSig(ft *ast.FuncType) bool {
+	if ft.TypeParams != nil && len(ft.TypeParams.List) > 0 {
+		return false
+	}
+	if ft.Params == nil || len(ft.Params.List) != 1 {
+		return false
+	}
+	p := ft.Params.List[0]
+	if len(p.Names) > 1 {
+		return false
+	}
+	star, ok := p.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	id, ok := star.X.(*ast.Ident)
+	if !ok || !strings.HasSuffix(id.Name, "Input") {
+		return false
+	}
+	if ft.Results == nil || len(ft.Results.List) != 1 {
+		return false
+	}
+	arr, ok := ft.Results.List[0].Type.(*ast.ArrayType)
+	if !ok || arr.Len != nil {
+		return false
+	}
+	elt, ok := arr.Elt.(*ast.Ident)
+	return ok && elt.Name == "string"
 }
