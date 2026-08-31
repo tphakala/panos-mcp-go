@@ -311,8 +311,7 @@ func zoneListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneLi
 		entries, err := svc.List(ctx, loc, "get", "", "")
 		if err != nil {
 			if !isObjectNotFound(err) {
-				d.Logger.Error("failed: panos_zone_list", "error", err)
-				res, v := errorResult("failed: panos_zone_list: %v", err)
+				res, v := deviceErrorResult(d, "panos_zone_list", err)
 				return res, v, nil
 			}
 			// No zones configured: PAN-OS returns code 7 for the empty node.
@@ -656,8 +655,7 @@ func zoneDeleteHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Zone
 		}
 		defer d.LockWrites()()
 		if err := svc.Delete(ctx, loc, in.Name); err != nil {
-			d.Logger.Error("failed: panos_zone_delete", "error", err)
-			res, v := errorResult("failed: panos_zone_delete: %v", err)
+			res, v := deviceErrorResult(d, "panos_zone_delete", err)
 			return res, v, nil
 		}
 		res, v := successResult(d.Logger, "panos_zone_delete", "deleted %q from candidate config; run panos_commit to apply", in.Name)
@@ -687,8 +685,7 @@ func zoneGetHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneNam
 		}
 		entry, err := svc.Read(ctx, loc, in.Name, "get")
 		if err != nil {
-			d.Logger.Error("failed: panos_zone_get", "error", err)
-			res, v := errorResult("failed: panos_zone_get: %v", err)
+			res, v := deviceErrorResult(d, "panos_zone_get", err)
 			return res, v, nil
 		}
 		res, v := jsonResult(zoneSummary(entry))

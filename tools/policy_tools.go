@@ -409,8 +409,13 @@ func moveHandler[L, E any](
 		defer d.LockWrites()()
 		entry, err := svc.Read(ctx, loc, in.Name, "get")
 		if err != nil {
-			d.Logger.Error("failed: "+tool, "error", err)
-			res, v := errorResult("failed: %s: read %q: %v", tool, in.Name, err)
+			// This existence check is a read, so it collapses the raw-response
+			// fallback like the read cores do (issue #108): a device error whose
+			// parsed message is empty must not echo the raw body it read back. The
+			// move itself carries no secret, so only the collapse applies here.
+			red := redactDeviceError(err)
+			d.Logger.Error("failed: "+tool, "error", red)
+			res, v := errorResult("failed: %s: read %q: %s", tool, in.Name, red)
 			return res, v, nil
 		}
 		if err := mover.MoveGroup(ctx, loc, pos, []*E{entry}, 1); err != nil {
