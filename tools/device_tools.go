@@ -622,11 +622,10 @@ func zoneUpdateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Zone
 		if err != nil {
 			// The seed read of a read-modify-write update is a read, so it collapses
 			// the raw-response fallback like getCore and updateCore do (issue #108).
-			// A zone carries no secret, so only the collapse applies. The write below
-			// stays raw, matching the non-secret write convention (see updateCore).
-			red := redactDeviceError(err)
-			d.Logger.Error("failed: panos_zone_update", "error", red)
-			res, v := errorResult("failed: panos_zone_update: read %q: %s", in.Name, red)
+			// A zone carries no secret, so it passes none (see deviceReadErrorResult).
+			// The write below stays raw, matching the non-secret write convention
+			// (see updateCore).
+			res, v := deviceReadErrorResult(d, "panos_zone_update", in.Name, err)
 			return res, v, nil
 		}
 		if err := overlayZone(entry, &in); err != nil {

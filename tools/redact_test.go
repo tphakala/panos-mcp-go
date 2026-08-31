@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -117,16 +118,19 @@ func TestRedactWriteErrorArmsOnFamilyNotSubmission(t *testing.T) {
 	extract := func(i *in) []string { return secretVals(i.Secret) }
 	opts := []writeOption[in]{withSecrets(extract)}
 	const msg = "config failed (raw response: <entry><phash>STORED-HASH</phash></entry>)"
+	// A plain error carries no device code, so this suite exercises the collapse and
+	// secret replacement only; the code-surfacing half is TestRedactWriteErrorSurfacesDeviceCode.
+	err := errors.New(msg)
 
 	t.Run("caller submitted a secret", func(t *testing.T) {
-		got := redactWriteError(msg, &in{Secret: new("SUBMITTED")}, opts)
+		got := redactWriteError(err, &in{Secret: new("SUBMITTED")}, opts)
 		if !strings.Contains(got, "(raw response: [redacted])") {
 			t.Fatalf("raw response not collapsed: %q", got)
 		}
 	})
 
 	t.Run("caller omitted the secret", func(t *testing.T) {
-		got := redactWriteError(msg, &in{}, opts)
+		got := redactWriteError(err, &in{}, opts)
 		if strings.Contains(got, "STORED-HASH") {
 			t.Fatalf("stored secret leaked when none was submitted: %q", got)
 		}
@@ -136,10 +140,38 @@ func TestRedactWriteErrorArmsOnFamilyNotSubmission(t *testing.T) {
 	})
 
 	t.Run("a family with no extractor keeps its raw response", func(t *testing.T) {
-		if got := redactWriteError(msg, &in{}, nil); got != msg {
+		if got := redactWriteError(err, &in{}, nil); got != msg {
 			t.Fatalf("message altered for a non-secret family: %q", got)
 		}
 	})
+}
+
+// TestRedactWriteErrorSurfacesDeviceCode pins issue #109's write-path half: when a
+// secret-bearing create or update collapses the raw-response fallback, the device's
+// response code must survive the same way it does on the read paths (see
+// assertCollapsedRawResponse), since the collapse discards the whole body and the
+// code is the only diagnostic left. A failed write is where a validation failure
+// carries the most actionable detail, so it must not yield strictly less than a
+// failed read of the same object.
+//
+// Sabotage: drop the withDeviceCodeFromErr call from redactWriteError (return msg)
+// and this turns red, while TestRedactWriteErrorArmsOnFamilyNotSubmission, whose
+// error carries no code, stays green.
+func TestRedactWriteErrorSurfacesDeviceCode(t *testing.T) {
+	type in struct{ Secret *string }
+	opts := []writeOption[in]{withSecrets(func(i *in) []string { return secretVals(i.Secret) })}
+	err := panoserr.Panos{Msg: rawResponseMarker + ` <response status="error" code="12"><entry><phash>STORED-HASH</phash></entry></response>)`, Code: 12}
+
+	got := redactWriteError(err, &in{}, opts)
+	if strings.Contains(got, "STORED-HASH") {
+		t.Fatalf("the raw body survived the write-path collapse: %q", got)
+	}
+	if !strings.Contains(got, "(raw response: [redacted])") {
+		t.Fatalf("expected the collapsed raw response: %q", got)
+	}
+	if !strings.Contains(got, "device response code 12") {
+		t.Fatalf("the device response code must survive the write-path collapse: %q", got)
+	}
 }
 
 // TestServerProfileCreateRedactsSecretOnError drives the tacacs create tool

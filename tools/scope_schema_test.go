@@ -221,3 +221,107 @@ func TestMgtScopeSchemaUnchanged(t *testing.T) {
 		t.Errorf("%s password_hash must document that it is never returned, got %q", tool, p.Description)
 	}
 }
+
+// allInputSchemas returns the inferred input schema of every registered tool,
+// keyed by tool name, from a single Panorama registration. inputSchema re-runs
+// RegisterAll per tool, which is fine for the one-tool pins above but wasteful for
+// a whole-surface sweep.
+func allInputSchemas(t *testing.T) map[string]toolSchema {
+	t.Helper()
+	d, _ := newTestDeps(t, "Panorama")
+	s := mcp.NewServer(&mcp.Implementation{Name: "schema-test", Version: "0"}, nil)
+	RegisterAll(s, d)
+	cs := connectInMemory(t, s)
+	res, err := cs.ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make(map[string]toolSchema, len(res.Tools))
+	for _, tl := range res.Tools {
+		raw, err := json.Marshal(tl.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s input schema: %v", tl.Name, err)
+		}
+		var got toolSchema
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("unmarshal %s input schema: %v", tl.Name, err)
+		}
+		out[tl.Name] = got
+	}
+	return out
+}
+
+// hasAllProps reports whether the schema exposes every named top-level property.
+func hasAllProps(sc toolSchema, props []string) bool {
+	for _, p := range props {
+		if _, ok := sc.Properties[p]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// TestDeviceScopeSchemaUniformAcrossTools broadens TestDeviceScopeSchemaUnchanged
+// from one representative tool to every device-scoped tool. They all embed the same
+// DeviceScopeInput, so every one must expose the six scope properties with
+// byte-identical descriptions; a scope refactor that skewed one family's scope
+// schema, or a new family that embedded a divergent scope input, fails here.
+//
+// A device-scoped tool is identified by its scope signature: it exposes all six of
+// vsys, shared, panorama, template, template_stack and template_vsys at top level.
+// That set is unique to the device scope: the profile scope has no vsys, the net
+// scope has neither vsys, shared nor panorama, the management scope has no shared,
+// vsys or template_vsys, and the object and zone scopes expose no template_vsys at
+// top level. The reference descriptions come from panos_ldap_profile_create, which
+// TestDeviceScopeSchemaUnchanged pins against literals, so the two tests together
+// cover all device-scoped tools: that one proves the reference wording, this one
+// proves every other device-scoped tool matches it.
+func TestDeviceScopeSchemaUniformAcrossTools(t *testing.T) {
+	scopeProps := []string{"vsys", "shared", "panorama", "template", "template_stack", "template_vsys"}
+	all := allInputSchemas(t)
+
+	const ref = "panos_ldap_profile_create"
+	refSchema, ok := all[ref]
+	if !ok {
+		t.Fatalf("reference tool %q is not registered", ref)
+	}
+	want := make(map[string]string, len(scopeProps))
+	for _, p := range scopeProps {
+		pv, ok := refSchema.Properties[p]
+		if !ok {
+			t.Fatalf("reference tool %q lost scope property %q", ref, p)
+		}
+		want[p] = pv.Description
+	}
+
+	var deviceTools []string
+	for name, sc := range all {
+		if hasAllProps(sc, scopeProps) {
+			deviceTools = append(deviceTools, name)
+		}
+	}
+	slices.Sort(deviceTools)
+
+	// The device scope has ten families of five CRUD tools each. Asserting the exact
+	// count guards against a signature change that silently narrowed the selection
+	// (which would make the per-tool loop below vacuous) and makes an added family a
+	// deliberate update here, matching the "prove a refactor changed nothing" intent
+	// of the pins above.
+	if len(deviceTools) != 50 {
+		t.Errorf("expected 50 device-scoped tools (ten families x five CRUD tools), got %d: %v", len(deviceTools), deviceTools)
+	}
+
+	for _, name := range deviceTools {
+		sc := all[name]
+		for _, p := range scopeProps {
+			pv, ok := sc.Properties[p]
+			if !ok {
+				t.Errorf("%s: device-scoped tool lost scope property %q", name, p)
+				continue
+			}
+			if pv.Description != want[p] {
+				t.Errorf("%s: scope property %q description diverges from %s:\n got  %q\n want %q", name, p, ref, pv.Description, want[p])
+			}
+		}
+	}
+}

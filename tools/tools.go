@@ -407,8 +407,9 @@ func errorResult(format string, args ...any) (res *mcp.CallToolResult, anyVal an
 // <msg>" shape. It is the seam the read cores (listCore, getCore, deleteCore)
 // and the zone family's flat-location list, get and delete handlers share, so a
 // device error on any of them has its raw body collapsed to the response code
-// rather than echoed. The seed reads that carry a "read %q" message shape (the
-// zone update handler and moveHandler) call redactDeviceError directly instead.
+// rather than echoed. The seed reads that carry a "read %q" message shape
+// (updateCore, the zone update handler and moveHandler) share deviceReadErrorResult
+// instead, which threads the entry name into the message.
 // Each call site is its own deletable seam: reverting one core to hand the raw
 // error to errorResult reddens exactly that core's collapse test. Write paths do
 // NOT use it: they carry submitted secret values and go through redactWriteError.
@@ -416,6 +417,21 @@ func deviceErrorResult(d *Deps, tool string, err error) (res *mcp.CallToolResult
 	red := redactDeviceError(err)
 	d.Logger.Error("failed: "+tool, "error", red)
 	return errorResult("failed: %s: %s", tool, red)
+}
+
+// deviceReadErrorResult is deviceErrorResult for the seed read of a
+// read-modify-write update and the move handlers, whose message names the entry:
+// "failed: <tool>: read %q: <msg>". It collapses the raw-response fallback the same
+// way (issue #108) so a device error on the seed read cannot echo the body it read
+// back, and surfaces the response code when the collapse fires. updateCore passes
+// the secret values that call submitted, since its seed read is a read that happens
+// to have them in hand; the move and zone-update seed reads carry no secret and
+// pass none. Each call site stays a deletable seam: reverting one to hand the raw
+// error to errorResult reddens exactly that path's collapse test.
+func deviceReadErrorResult(d *Deps, tool, name string, err error, secrets ...string) (res *mcp.CallToolResult, anyVal any) {
+	red := redactDeviceError(err, secrets...)
+	d.Logger.Error("failed: "+tool, "error", red)
+	return errorResult("failed: %s: read %q: %s", tool, name, red)
 }
 
 // Shared JSON result-map keys, so the same literal is not repeated across the
@@ -610,7 +626,7 @@ func createCore[L, E, In any](
 		defer d.LockWrites()()
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
-			red := redactWriteError(err.Error(), &in, opts)
+			red := redactWriteError(err, &in, opts)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
@@ -643,13 +659,12 @@ func updateCore[L, E, In any](
 		defer d.LockWrites()()
 		entry, err := svc.Read(ctx, loc, n, "get")
 		if err != nil {
-			// This is a read, so it collapses unconditionally like getCore does,
-			// while still replacing any secret this call submitted. Arming it on
-			// the write family instead would make the SAME svc.Read collapse in
-			// getCore and not here for a family carrying no secret.
-			red := redactDeviceError(err, gatherSecrets(&in, opts)...)
-			d.Logger.Error("failed: "+tool, "error", red)
-			res, v := errorResult("failed: %s: read %q: %s", tool, n, red)
+			// The seed read collapses unconditionally like getCore does while still
+			// replacing any secret this call submitted, so it passes gatherSecrets
+			// (see deviceReadErrorResult). Arming the collapse on the write family
+			// instead would make the SAME svc.Read collapse in getCore and not here
+			// for a family carrying no secret.
+			res, v := deviceReadErrorResult(d, tool, n, err, gatherSecrets(&in, opts)...)
 			return res, v, nil
 		}
 		if err := overlay(entry, in); err != nil {
@@ -658,7 +673,7 @@ func updateCore[L, E, In any](
 		}
 		updated, err := svc.Update(ctx, loc, entry, n)
 		if err != nil {
-			red := redactWriteError(err.Error(), &in, opts)
+			red := redactWriteError(err, &in, opts)
 			d.Logger.Error("failed: "+tool, "error", red)
 			res, v := errorResult("failed: %s: %s", tool, red)
 			return res, v, nil
