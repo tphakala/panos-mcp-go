@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -189,24 +190,10 @@ func secretFieldsInStruct(structName string, st *ast.StructType) []secretField {
 }
 
 // extractorCoveredFields parses redact.go and returns the (struct, field) pairs
-// whose value FLOWS INTO a per-family extractor's returned secrets, keyed by
-// "StructName.FieldName". It resolves each selector expression (in.X, s.Secret,
-// c.Value) to its struct by tracking the type of every parameter in scope: the
-// extractor's own receiver-shaped parameter (in *XxxInput) and any func-literal
-// parameter (func(s TacacsServerInput) *string) it introduces for a per-element
-// secret. Reading redact.go alone is enough because the extractors live there by
-// convention (see its "per-family secret extractors" section).
-//
-// It counts a field only when its selector sits inside a return statement (the
-// outer extractor's, or a collectSecrets closure's), which is where every current
-// extractor puts the value it redacts. A field that is merely MENTIONED elsewhere,
-// a bare `_ = in.X` or an `if in.X != nil` guard, does not flow into the returned
-// secrets and must NOT count as covered: otherwise an extractor that dropped a
-// field from its result while still naming it would report the field redacted when
-// its value no longer is. New extractors must keep the secretVals(in.X) /
-// collectSecrets(in.List, func(s Elem) *string { return s.X }) shape the walk
-// understands; one that assembles its result some other way fails the scan loudly
-// (a false flag) rather than silently under-reporting a real secret.
+// whose value is actually collected as a secret by a per-family extractor, keyed
+// by "StructName.FieldName". It delegates to coveredFieldsFromExtractors and adds
+// the fail-closed guard; reading redact.go alone is enough because the extractors
+// live there by convention (see its "per-family secret extractors" section).
 func extractorCoveredFields(t *testing.T) map[string]bool {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -214,54 +201,97 @@ func extractorCoveredFields(t *testing.T) map[string]bool {
 	if err != nil {
 		t.Fatalf("parsing redact.go: %v", err)
 	}
-
-	covered := map[string]bool{}
-	for _, decl := range f.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil || !strings.HasSuffix(fn.Name.Name, "Secrets") || fn.Body == nil {
-			continue
-		}
-		// One pre-order pass. addParams runs on each func literal before the walk
-		// descends into that closure's return, so env[s] holds the CURRENT closure's
-		// element type when its `return s.Secret` is recorded. This per-closure
-		// scoping matters: snmpTrapProfileSecrets has three closures that all name
-		// their parameter s but with different element types, and a two-pass walk that
-		// built env up front would collapse them to the last type.
-		env := map[string]string{}
-		addParams(env, fn.Type.Params)
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			switch e := n.(type) {
-			case *ast.FuncLit:
-				addParams(env, e.Type.Params)
-			case *ast.ReturnStmt:
-				recordReturnedSecretSelectors(e, env, covered)
-			}
-			return true
-		})
-	}
-
+	covered := coveredFieldsFromExtractors(f)
 	if len(covered) == 0 {
 		t.Fatal("no fields read by any extractor in redact.go; the coverage walk is broken and every field would report uncovered")
 	}
 	return covered
 }
 
-// recordReturnedSecretSelectors records every selector under a return statement
-// (the return's whole subtree, so a collectSecrets closure's `return s.Secret` is
-// reached too) whose base identifier is an in-scope XxxInput parameter.
-func recordReturnedSecretSelectors(ret ast.Node, env map[string]string, covered map[string]bool) {
-	ast.Inspect(ret, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
+// coveredFieldsFromExtractors is the coverage walk over a parsed source file,
+// split out from the redact.go read so it can be unit-tested against synthetic
+// extractors (see TestCoveredFieldsFromExtractors). For each per-family extractor
+// (a package-level func whose name ends in "Secrets") it resolves the input-field
+// selectors that its result actually COLLECTS, tracking each parameter's XxxInput
+// type: the extractor's own parameter and each collectSecrets getter's parameter.
+//
+// Coverage is credited only through the two shapes a per-family extractor uses to
+// build its result: an argument to secretVals(...), or the selector a
+// collectSecrets(list, getter) getter returns. A selector that merely appears in a
+// return expression some other way (an `if in.X != nil` guard, an ignored argument
+// to an immediately-invoked closure) collects no value and is NOT counted: crediting
+// it would report a field redacted when its value never enters the returned slice.
+// New extractors must keep the secretVals / collectSecrets shape; one that builds
+// its result another way fails the scan loudly (a false flag) rather than silently
+// under-reporting a real secret.
+func coveredFieldsFromExtractors(f *ast.File) map[string]bool {
+	covered := map[string]bool{}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || !strings.HasSuffix(fn.Name.Name, "Secrets") || fn.Body == nil {
+			continue
 		}
-		if id, ok := sel.X.(*ast.Ident); ok {
-			if st := env[id.Name]; st != "" {
-				covered[st+"."+sel.Sel.Name] = true
+		env := map[string]string{}
+		addParams(env, fn.Type.Params)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				recordCollectedSecrets(call, env, covered)
 			}
+			return true
+		})
+	}
+	return covered
+}
+
+// recordCollectedSecrets records the input-field selectors that one secretVals or
+// collectSecrets call collects. secretVals(a, b, ...) collects each selector
+// argument; collectSecrets(list, func(s Elem) *string { return s.Field }) collects
+// the selectors its getter returns (the getter's parameter is added to a local env
+// so per-element types like s.Secret resolve, kept per call so the three
+// same-named snmpTrap getters do not collapse to one element type).
+func recordCollectedSecrets(call *ast.CallExpr, env map[string]string, covered map[string]bool) {
+	fnID, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return
+	}
+	switch fnID.Name {
+	case "secretVals":
+		for _, arg := range call.Args {
+			recordSelector(arg, env, covered)
 		}
-		return true
-	})
+	case "collectSecrets":
+		if len(call.Args) != 2 {
+			return
+		}
+		getter, ok := call.Args[1].(*ast.FuncLit)
+		if !ok {
+			return
+		}
+		inner := maps.Clone(env)
+		addParams(inner, getter.Type.Params)
+		ast.Inspect(getter.Body, func(n ast.Node) bool {
+			if ret, ok := n.(*ast.ReturnStmt); ok {
+				for _, r := range ret.Results {
+					recordSelector(r, inner, covered)
+				}
+			}
+			return true
+		})
+	}
+}
+
+// recordSelector records expr when it is a base-identifier selector (id.Field)
+// whose identifier is an in-scope XxxInput parameter.
+func recordSelector(expr ast.Expr, env map[string]string, covered map[string]bool) {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return
+	}
+	if id, ok := sel.X.(*ast.Ident); ok {
+		if st := env[id.Name]; st != "" {
+			covered[st+"."+sel.Sel.Name] = true
+		}
+	}
 }
 
 // addParams records each parameter whose type is XxxInput or *XxxInput, mapping
@@ -404,6 +434,49 @@ func TestIsSecretShapedMatching(t *testing.T) {
 	for _, c := range cases {
 		if got := isSecretShaped(c.json, c.goName); got != c.want {
 			t.Errorf("isSecretShaped(%q, %q) = %v, want %v", c.json, c.goName, got, c.want)
+		}
+	}
+}
+
+// TestCoveredFieldsFromExtractors pins the coverage walk against synthetic
+// extractors, including the negative controls the redact.go tree does not exercise:
+// a selector used only in a condition, and a selector handed to an immediately
+// invoked closure that discards it, must NOT be counted as covered, because neither
+// puts the value into the returned secret slice. Without that, an extractor could
+// name a secret field while redacting nothing and still report the field covered.
+func TestCoveredFieldsFromExtractors(t *testing.T) {
+	const src = `package tools
+func directSecrets(in *DirectInput) []string { return secretVals(in.Password, in.Token) }
+func elemSecrets(in *ElemProfileInput) []string {
+	return collectSecrets(in.Servers, func(s ElemServerInput) *string { return s.Secret })
+}
+func condOnlySecrets(in *CondInput) []string {
+	if in.Password != nil {
+		return nil
+	}
+	return nil
+}
+func iifeSecrets(in *IifeInput) []string {
+	return func(_ bool) []string { return nil }(in.Password != nil)
+}
+func notAnExtractor(in *OtherInput) string { return *in.Password }
+`
+	f, err := parser.ParseFile(token.NewFileSet(), "synthetic.go", src, 0)
+	if err != nil {
+		t.Fatalf("parsing synthetic source: %v", err)
+	}
+	covered := coveredFieldsFromExtractors(f)
+
+	for _, want := range []string{"DirectInput.Password", "DirectInput.Token", "ElemServerInput.Secret"} {
+		if !covered[want] {
+			t.Errorf("%s should be covered (collected by secretVals/collectSecrets) but is not", want)
+		}
+	}
+	// Negative controls: a condition-only selector, an ignored-argument selector,
+	// and a field read by a func that is not an extractor must NOT count.
+	for _, notWant := range []string{"CondInput.Password", "IifeInput.Password", "OtherInput.Password"} {
+		if covered[notWant] {
+			t.Errorf("%s must NOT be covered: its value never enters a returned secret slice", notWant)
 		}
 	}
 }
