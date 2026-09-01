@@ -35,9 +35,10 @@ type secretWiring struct{ create, update bool }
 // does NOT verify that every secret-bearing input FIELD has an extractor at all. A
 // family with a write-only secret field but no extractor (as device group's
 // authorization_code was before it was wired) is invisible here: it has no
-// extractor to declare, so nothing flags it. Catching that class would need a scan
-// of the tool input structs for secret-shaped fields, which is left to review and
-// to the per-family tests rather than to a heuristic here.
+// extractor to declare, so nothing flags it. That class IS caught by
+// TestSecretShapedInputFieldsHaveRedactionExtractor, which scans the tool input
+// structs for a secret-shaped field no extractor reads; the two tripwires are
+// complementary, this one over the extractor set and that one over the field set.
 //
 // Sabotage: delete withSecrets(ikeGatewaySecrets) from either the create or the
 // update registration in vpn_tools.go and this turns red.
