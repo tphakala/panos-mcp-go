@@ -26,10 +26,10 @@ func TestRegisterAllToolCounts(t *testing.T) {
 		readOnly bool
 		want     int
 	}{
-		{"PA-VM", false, 342},
-		{"Panorama", false, 358},
-		{"PA-VM", true, 140},
-		{"Panorama", true, 143},
+		{"PA-VM", false, 352},
+		{"Panorama", false, 368},
+		{"PA-VM", true, 144},
+		{"Panorama", true, 147},
 	}
 	for _, c := range cases {
 		if got := len(allRegisteredNames(t, c.model, c.readOnly)); got != c.want {

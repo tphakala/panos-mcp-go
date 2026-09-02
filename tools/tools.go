@@ -789,6 +789,8 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterProfileGroupTools(s, d)
 	RegisterLogForwardingProfileTools(s, d)
 	RegisterDecryptionProfileTools(s, d)
+	RegisterDataFilteringProfileTools(s, d)
+	RegisterDataPatternTools(s, d)
 	RegisterSecurityRuleTools(s, d)
 	RegisterNatRuleTools(s, d)
 	RegisterDecryptionRuleTools(s, d)

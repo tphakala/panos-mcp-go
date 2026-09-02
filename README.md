@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 358 tools on Panorama and 342 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 143 on Panorama, 140 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 368 tools on Panorama and 352 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 147 on Panorama, 144 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -185,6 +185,16 @@ A security rule references a profile group via its `profile_group` field. create
 | `panos_decryption_profile_create` | write | Create a decryption profile in the candidate config. |
 | `panos_decryption_profile_update` | write | Update a decryption profile: read-modify-write; the SDK-only proxy subtrees and per-algorithm toggles are preserved. |
 | `panos_decryption_profile_delete` | write | Delete a decryption profile from the candidate config. |
+| `panos_data_filtering_profile_list` | read-only | List data filtering profiles at a location (managed at shared on a firewall). |
+| `panos_data_filtering_profile_get` | read-only | Get one data filtering profile by name with its managed fields and match rules. |
+| `panos_data_filtering_profile_create` | write | Create a data filtering profile in the candidate config; each rule's data_object names a data pattern. |
+| `panos_data_filtering_profile_update` | write | Update a data filtering profile: read-modify-write; a provided rules list replaces the whole set. |
+| `panos_data_filtering_profile_delete` | write | Delete a data filtering profile from the candidate config. |
+| `panos_data_pattern_list` | read-only | List data patterns at a location. |
+| `panos_data_pattern_get` | read-only | Get one data pattern by name with its pattern type and entries. |
+| `panos_data_pattern_create` | write | Create a data pattern in the candidate config; set one pattern type (file_properties, predefined, or regex). |
+| `panos_data_pattern_update` | write | Update a data pattern: read-modify-write; setting one pattern type clears the others. |
+| `panos_data_pattern_delete` | write | Delete a data pattern from the candidate config. |
 
 ### Security and NAT policy
 
