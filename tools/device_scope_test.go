@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TestResolveDeviceScopeFirewall pins the firewall branch of resolveDeviceScope
@@ -363,6 +365,75 @@ func TestResolveDeviceScopePanoramaExclusivity(t *testing.T) {
 	loc, err := resolveDeviceScope(pano, DeviceScopeInput{Template: "t1", Shared: true}, parts)
 	if err != nil || loc.Template == nil {
 		t.Fatalf("template with shared must still resolve to the template: loc=%+v err=%v", loc, err)
+	}
+}
+
+// TestResolveDeviceScopePanoramaVsysRejected pins that a firewall vsys is rejected
+// on a Panorama connection rather than silently dropped. vsys is the firewall-only
+// scope; the way to narrow within a template is template_vsys. Before this change a
+// vsys was ignored on Panorama, so a request naming both a template and a vsys
+// resolved to the broader template-shared node the caller did not name (#117).
+//
+// Every case asserts the specific "firewall-only" message, not just err != nil:
+// with the guard removed, the vsys-alone case still errors (it falls through to the
+// "set template, template_stack, shared, or panorama" message), so only pinning the
+// message distinguishes the new guard from that pre-existing rejection. The other
+// four cases resolve with no error once the guard is gone.
+//
+// Sabotage: delete the `if in.Vsys != ""` block from resolvePanoramaDeviceScope and
+// every subtest turns red: four resolve with a nil error, and the vsys-alone case
+// returns the wrong message.
+func TestResolveDeviceScopePanoramaVsysRejected(t *testing.T) {
+	pano, _ := newTestDeps(t, "Panorama")
+	parts := ldapProfileParts()
+	for _, tc := range []struct {
+		name string
+		in   DeviceScopeInput
+	}{
+		{"vsys with template", DeviceScopeInput{Template: "t1", Vsys: "vsys2"}},
+		{"vsys with template_stack", DeviceScopeInput{TemplateStack: "s1", Vsys: "vsys2"}},
+		{"vsys with shared", DeviceScopeInput{Shared: true, Vsys: "vsys2"}},
+		{"vsys with panorama", DeviceScopeInput{Panorama: true, Vsys: "vsys2"}},
+		{"vsys alone", DeviceScopeInput{Vsys: "vsys2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := resolveDeviceScope(pano, tc.in, parts); err == nil ||
+				!strings.Contains(err.Error(), "vsys is a firewall-only scope") {
+				t.Fatalf("a firewall vsys on Panorama must be rejected, got %v", err)
+			}
+		})
+	}
+}
+
+// TestDeviceVsysOnPanoramaRejectedThroughTool proves the resolver rejection reaches
+// an MCP client through a real device-scoped handler, not only the resolver in
+// isolation. Every device-scoped tool embeds DeviceScopeInput and routes through
+// resolveDeviceScope (TestDeviceScopeSchemaUniformAcrossTools pins that all 50 share
+// the input), so one representative read tool pins the wiring for the family.
+//
+// A read tool is used because scope resolution fails before any device call, so no
+// fake device response is needed. Sabotage: delete the `if in.Vsys != ""` block from
+// resolvePanoramaDeviceScope and the request resolves to the template-shared node
+// and attempts a device read, so the result no longer carries the firewall-only
+// message.
+func TestDeviceVsysOnPanoramaRejectedThroughTool(t *testing.T) {
+	d, _ := newTestDeps(t, "Panorama")
+	srv := mcp.NewServer(&mcp.Implementation{Name: "panos-test", Version: "0"}, nil)
+	RegisterLdapProfileTools(srv, d)
+	cs := connectInMemory(t, srv)
+
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      "panos_ldap_profile_get",
+		Arguments: map[string]any{"name": "p1", "template": "t1", "vsys": "vsys2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatalf("a firewall vsys on Panorama must be an error result, got %s", textContent(t, res))
+	}
+	if txt := textContent(t, res); !strings.Contains(txt, "vsys is a firewall-only scope") {
+		t.Fatalf("the error result must explain the firewall-only vsys, got %q", txt)
 	}
 }
 
