@@ -377,12 +377,12 @@ func TestResolveDeviceScopePanoramaExclusivity(t *testing.T) {
 // Every case asserts the specific "firewall-only" message, not just err != nil:
 // with the guard removed, the vsys-alone case still errors (it falls through to the
 // "set template, template_stack, shared, or panorama" message), so only pinning the
-// message distinguishes the new guard from that pre-existing rejection. The other
-// four cases resolve with no error once the guard is gone.
+// message distinguishes the new guard from that pre-existing rejection. Every other
+// case resolves with no error once the guard is gone.
 //
 // Sabotage: delete the `if in.Vsys != ""` block from resolvePanoramaDeviceScope and
-// every subtest turns red: four resolve with a nil error, and the vsys-alone case
-// returns the wrong message.
+// every subtest turns red: all but the vsys-alone case resolve with a nil error, and
+// the vsys-alone case returns the wrong message.
 func TestResolveDeviceScopePanoramaVsysRejected(t *testing.T) {
 	pano, _ := newTestDeps(t, "Panorama")
 	parts := ldapProfileParts()
@@ -391,6 +391,7 @@ func TestResolveDeviceScopePanoramaVsysRejected(t *testing.T) {
 		in   DeviceScopeInput
 	}{
 		{"vsys with template", DeviceScopeInput{Template: "t1", Vsys: "vsys2"}},
+		{"vsys with template and template_vsys", DeviceScopeInput{Template: "t1", TemplateVsys: "vsys3", Vsys: "vsys2"}},
 		{"vsys with template_stack", DeviceScopeInput{TemplateStack: "s1", Vsys: "vsys2"}},
 		{"vsys with shared", DeviceScopeInput{Shared: true, Vsys: "vsys2"}},
 		{"vsys with panorama", DeviceScopeInput{Panorama: true, Vsys: "vsys2"}},

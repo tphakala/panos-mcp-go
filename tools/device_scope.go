@@ -129,7 +129,8 @@ func validateDeviceScopeExclusivity(in DeviceScopeInput) error {
 // vsys is the firewall-only scope: it selects a vsys on a firewall, while a
 // Panorama connection rejects it (see resolvePanoramaDeviceScope) rather than
 // silently dropping it and resolving to the wrong location. This mirrors the
-// firewall branch below, which rejects the Panorama-only fields.
+// firewall branch below, which rejects the Panorama-connection fields (panorama,
+// template, template_stack).
 func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
 	if err := validateDeviceScopeExclusivity(in); err != nil {
