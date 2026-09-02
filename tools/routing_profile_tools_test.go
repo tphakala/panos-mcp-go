@@ -344,7 +344,9 @@ func testRoutingPimInterfaceTimer(t *testing.T) {
 	}
 }
 
-// testRoutingNameRequired checks every non-secret family rejects an empty name.
+// testRoutingNameRequired checks the empty-name guard on a representative set of
+// the non-secret families; every buildX uses the identical `if in.Name == ""`
+// check, so a sample suffices.
 func testRoutingNameRequired(t *testing.T) {
 	if _, err := buildBgpDampeningProfile(BgpDampeningProfileInput{}); err == nil {
 		t.Fatal("bgp dampening: empty name must be rejected")
