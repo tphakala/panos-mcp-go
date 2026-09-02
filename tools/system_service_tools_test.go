@@ -22,6 +22,11 @@ func TestSingletonAbsentMatchesEmptyGet(t *testing.T) {
 	if !isSingletonAbsent(panoserr.ObjectNotFound()) {
 		t.Error("PAN-OS code 7 must be treated as an absent singleton")
 	}
+	// A nil error is not "absent" and must not panic (the helper is called only
+	// under `err != nil` today, but stays nil-safe like isObjectNotFound).
+	if isSingletonAbsent(nil) {
+		t.Error("a nil error must not be treated as absent")
+	}
 
 	d, _ := newTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result/></response>`},
@@ -278,5 +283,40 @@ func TestSingletonUpdateCreatesWhenAbsent(t *testing.T) {
 	}
 	if strings.Contains(text, "UPDATE-PATH-MARKER") {
 		t.Fatalf("absent node must not go through Update; got: %s", text)
+	}
+}
+
+// TestSingletonUpdateUsesUpdateWhenPresent is the twin of the absent case: when
+// the seed read finds an existing config node, the write must go through Update
+// (an "edit"/"multi-config"), not Create (a "set"). The seed get returns one
+// populated <system> entry so isSingletonAbsent is false; the per-action markers
+// identify which write path ran.
+// Sabotage: force the handler to always call svc.Create and this turns red with
+// the CREATE-PATH-MARKER.
+func TestSingletonUpdateUsesUpdateWhenPresent(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><system><hostname>oldfw</hostname></system></result></response>`},
+		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>CREATE-PATH-MARKER</line></msg></response>`},
+		fakeRoute{Match: configAction("edit"), Body: `<response status="error"><msg><line>UPDATE-PATH-MARKER</line></msg></response>`},
+		fakeRoute{Match: configAction("multi-config"), Body: `<response status="error"><msg><line>UPDATE-PATH-MARKER</line></msg></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterGeneralSettingsTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_general_settings_update", Arguments: map[string]any{
+		"hostname": "fw-new",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("the write must surface as a tool error in this fixture")
+	}
+	text := textContent(t, res)
+	if !strings.Contains(text, "UPDATE-PATH-MARKER") {
+		t.Fatalf("a present node must be written via Update (edit); got: %s", text)
+	}
+	if strings.Contains(text, "CREATE-PATH-MARKER") {
+		t.Fatalf("a present node must not go through Create; got: %s", text)
 	}
 }

@@ -97,6 +97,9 @@ type singletonService[L, C any] interface {
 // so it still surfaces. The string match is pinned by
 // TestSingletonAbsentMatchesEmptyGet so a pango wording change fails loudly.
 func isSingletonAbsent(err error) bool {
+	if err == nil {
+		return false
+	}
 	return isObjectNotFound(err) || strings.Contains(err.Error(), "1 entry, got 0")
 }
 
