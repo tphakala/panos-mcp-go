@@ -39,11 +39,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// netProfileParts builds the {Ngfw | Template | TemplateStack} location
-// constructors for a routing profile package. Every routing-profile package
-// shares the identical NgfwLocation/TemplateLocation/TemplateStackLocation
-// shape, so each family below binds this once through a small adapter rather
-// than repeating the three closures.
+// Each family below builds its own netScopeParts (net_scope.go) from its pango
+// package's {Ngfw | Template | TemplateStack} location constructors and resolves
+// through resolveNetScope, the same net scope the interface and virtual-router
+// tools use. The three constructors are spelled out per family because each
+// routing-profile package has its own distinct Location types with no shared
+// interface, so a single generic constructor is not expressible; this repeats
+// the pattern every existing net-scoped family already uses.
 
 // --- BGP authentication profile (routing-profile/bgp/authprofile) -----------
 

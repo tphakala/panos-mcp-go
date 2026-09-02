@@ -16,10 +16,20 @@ import (
 func assertNoLeak(t *testing.T, v any, forbidden ...string) {
 	t.Helper()
 	hay := fmt.Sprintf("%v", v)
+	sawNonEmpty := false
 	for _, s := range forbidden {
-		if s != "" && strings.Contains(hay, s) {
+		if s == "" {
+			continue
+		}
+		sawNonEmpty = true
+		if strings.Contains(hay, s) {
 			t.Fatalf("summary leaked secret %q in %s", s, hay)
 		}
+	}
+	// Guard against a vacuous call: a caller passing only empty strings would
+	// assert nothing. Mirrors assertRedactsSecret's non-empty-needle guard.
+	if !sawNonEmpty {
+		t.Fatal("assertNoLeak needs at least one non-empty forbidden string")
 	}
 }
 
@@ -158,6 +168,192 @@ func TestBgpTimerProfileBuildAndSummary(t *testing.T) {
 	}
 	if m["min_route_adv_interval"] != int64(5) {
 		t.Fatalf("summary min_route_adv_interval wrong: %v", m["min_route_adv_interval"])
+	}
+}
+
+// TestRoutingTimerFamiliesBuildSummaryOverlay covers the build, summary and
+// overlay of the non-secret routing profile families (the timer, dampening, BFD
+// and PIM families). Summary field-mapping is this repo's most common
+// escaped-defect class, so each subtest asserts the set fields round-trip
+// through summary, then overlays a partial change and asserts only the provided
+// field moved. The *Entry flows opaquely between buildX and summaryX so no pango
+// type is named here.
+func TestRoutingTimerFamiliesBuildSummaryOverlay(t *testing.T) {
+	t.Run("bgp_dampening", testRoutingBgpDampening)
+	t.Run("bgp_timer_overlay", testRoutingBgpTimerOverlay)
+	t.Run("ospf_interface_timer", testRoutingOspfInterfaceTimer)
+	t.Run("ospf_spf_timer", testRoutingOspfSpfTimer)
+	t.Run("ospfv3_interface_timer", testRoutingOspfv3InterfaceTimer)
+	t.Run("ospfv3_spf_timer", testRoutingOspfv3SpfTimer)
+	t.Run("routing_bfd", testRoutingBfd)
+	t.Run("pim_interface_timer", testRoutingPimInterfaceTimer)
+	t.Run("name_required", testRoutingNameRequired)
+}
+
+func testRoutingBgpDampening(t *testing.T) {
+	e, err := buildBgpDampeningProfile(BgpDampeningProfileInput{
+		Name: "d1", Description: new("desc"), HalfLife: new(int64(15)),
+		MaxSuppressLimit: new(int64(60)), ReuseLimit: new(int64(750)), SuppressLimit: new(int64(3000)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, bgpDampeningProfileSummary(e))
+	if m["description"] != "desc" || m["half_life"] != int64(15) || m["suppress_limit"] != int64(3000) {
+		t.Fatalf("dampening summary wrong: %v", m)
+	}
+	if err := overlayBgpDampeningProfile(e, BgpDampeningProfileInput{Name: "d1", ReuseLimit: new(int64(900))}); err != nil {
+		t.Fatal(err)
+	}
+	m = asMap(t, bgpDampeningProfileSummary(e))
+	if m["reuse_limit"] != int64(900) || m["half_life"] != int64(15) {
+		t.Fatalf("overlay must change reuse_limit only, keeping half_life: %v", m)
+	}
+}
+
+func testRoutingBgpTimerOverlay(t *testing.T) {
+	e, err := buildBgpTimerProfile(BgpTimerProfileInput{Name: "t1", HoldTime: new("90"), MinRouteAdvInterval: new(int64(5))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := overlayBgpTimerProfile(e, BgpTimerProfileInput{Name: "t1", KeepAliveInterval: new("30")}); err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, bgpTimerProfileSummary(e))
+	if m["keep_alive_interval"] != "30" || m["hold_time"] != "90" || m["min_route_adv_interval"] != int64(5) {
+		t.Fatalf("overlay must add keep_alive_interval, preserving hold_time and min_route_adv_interval: %v", m)
+	}
+}
+
+func testRoutingOspfInterfaceTimer(t *testing.T) {
+	e, err := buildOspfInterfaceTimerProfile(OspfInterfaceTimerProfileInput{
+		Name: "i1", HelloInterval: new(int64(10)), DeadCounts: new(int64(4)),
+		RetransmitInterval: new(int64(5)), TransitDelay: new(int64(1)), GrDelay: new(int64(10)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, ospfInterfaceTimerProfileSummary(e))
+	if m["hello_interval"] != int64(10) || m["dead_counts"] != int64(4) || m["transit_delay"] != int64(1) {
+		t.Fatalf("ospf interface timer summary wrong: %v", m)
+	}
+	if err := overlayOspfInterfaceTimerProfile(e, OspfInterfaceTimerProfileInput{Name: "i1", HelloInterval: new(int64(20))}); err != nil {
+		t.Fatal(err)
+	}
+	m = asMap(t, ospfInterfaceTimerProfileSummary(e))
+	if m["hello_interval"] != int64(20) || m["dead_counts"] != int64(4) {
+		t.Fatalf("overlay must change hello_interval only: %v", m)
+	}
+}
+
+func testRoutingOspfSpfTimer(t *testing.T) {
+	e, err := buildOspfSpfTimerProfile(OspfSpfTimerProfileInput{
+		Name: "s1", SpfCalculationDelay: new(int64(5)), LsaInterval: new(int64(5)),
+		InitialHoldTime: new(int64(50)), MaxHoldTime: new(int64(5000)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, ospfSpfTimerProfileSummary(e))
+	if m["spf_calculation_delay"] != int64(5) || m["max_hold_time"] != int64(5000) {
+		t.Fatalf("ospf spf timer summary wrong: %v", m)
+	}
+	if err := overlayOspfSpfTimerProfile(e, OspfSpfTimerProfileInput{Name: "s1", MaxHoldTime: new(int64(9000))}); err != nil {
+		t.Fatal(err)
+	}
+	if asMap(t, ospfSpfTimerProfileSummary(e))["max_hold_time"] != int64(9000) {
+		t.Fatal("overlay must change max_hold_time")
+	}
+}
+
+func testRoutingOspfv3InterfaceTimer(t *testing.T) {
+	e, err := buildOspfv3InterfaceTimerProfile(Ospfv3InterfaceTimerProfileInput{
+		Name: "i1", HelloInterval: new(int64(10)), DeadCounts: new(int64(4)), TransitDelay: new(int64(1)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, ospfv3InterfaceTimerProfileSummary(e))
+	if m["hello_interval"] != int64(10) || m["dead_counts"] != int64(4) {
+		t.Fatalf("ospfv3 interface timer summary wrong: %v", m)
+	}
+	if err := overlayOspfv3InterfaceTimerProfile(e, Ospfv3InterfaceTimerProfileInput{Name: "i1", DeadCounts: new(int64(8))}); err != nil {
+		t.Fatal(err)
+	}
+	if asMap(t, ospfv3InterfaceTimerProfileSummary(e))["dead_counts"] != int64(8) {
+		t.Fatal("overlay must change dead_counts")
+	}
+}
+
+func testRoutingOspfv3SpfTimer(t *testing.T) {
+	e, err := buildOspfv3SpfTimerProfile(Ospfv3SpfTimerProfileInput{
+		Name: "s1", SpfCalculationDelay: new(int64(5)), LsaInterval: new(int64(5)), InitialHoldTime: new(int64(50)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, ospfv3SpfTimerProfileSummary(e))
+	if m["spf_calculation_delay"] != int64(5) || m["initial_hold_time"] != int64(50) {
+		t.Fatalf("ospfv3 spf timer summary wrong: %v", m)
+	}
+	if err := overlayOspfv3SpfTimerProfile(e, Ospfv3SpfTimerProfileInput{Name: "s1", LsaInterval: new(int64(9))}); err != nil {
+		t.Fatal(err)
+	}
+	if asMap(t, ospfv3SpfTimerProfileSummary(e))["lsa_interval"] != int64(9) {
+		t.Fatal("overlay must change lsa_interval")
+	}
+}
+
+func testRoutingBfd(t *testing.T) {
+	e, err := buildRoutingBfdProfile(RoutingBfdProfileInput{
+		Name: "b1", Mode: new("active"), MinTxInterval: new(int64(100)),
+		MinRxInterval: new(int64(200)), DetectionMultiplier: new(int64(3)), HoldTime: new(int64(500)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, routingBfdProfileSummary(e))
+	if m["mode"] != "active" || m["min_tx_interval"] != int64(100) || m["detection_multiplier"] != int64(3) {
+		t.Fatalf("routing bfd summary wrong: %v", m)
+	}
+	if err := overlayRoutingBfdProfile(e, RoutingBfdProfileInput{Name: "b1", Mode: new("passive")}); err != nil {
+		t.Fatal(err)
+	}
+	m = asMap(t, routingBfdProfileSummary(e))
+	if m["mode"] != "passive" || m["min_tx_interval"] != int64(100) {
+		t.Fatalf("overlay must change mode only: %v", m)
+	}
+}
+
+func testRoutingPimInterfaceTimer(t *testing.T) {
+	e, err := buildPimInterfaceTimerProfile(PimInterfaceTimerProfileInput{
+		Name: "p1", HelloInterval: new(int64(30)), AssertInterval: new(int64(177)), JoinPruneInterval: new(int64(60)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, pimInterfaceTimerProfileSummary(e))
+	if m["hello_interval"] != int64(30) || m["assert_interval"] != int64(177) || m["join_prune_interval"] != int64(60) {
+		t.Fatalf("pim interface timer summary wrong: %v", m)
+	}
+	if err := overlayPimInterfaceTimerProfile(e, PimInterfaceTimerProfileInput{Name: "p1", JoinPruneInterval: new(int64(90))}); err != nil {
+		t.Fatal(err)
+	}
+	if asMap(t, pimInterfaceTimerProfileSummary(e))["join_prune_interval"] != int64(90) {
+		t.Fatal("overlay must change join_prune_interval")
+	}
+}
+
+// testRoutingNameRequired checks every non-secret family rejects an empty name.
+func testRoutingNameRequired(t *testing.T) {
+	if _, err := buildBgpDampeningProfile(BgpDampeningProfileInput{}); err == nil {
+		t.Fatal("bgp dampening: empty name must be rejected")
+	}
+	if _, err := buildRoutingBfdProfile(RoutingBfdProfileInput{}); err == nil {
+		t.Fatal("routing bfd: empty name must be rejected")
+	}
+	if _, err := buildPimInterfaceTimerProfile(PimInterfaceTimerProfileInput{}); err == nil {
+		t.Fatal("pim interface timer: empty name must be rejected")
 	}
 }
 

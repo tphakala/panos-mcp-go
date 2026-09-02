@@ -220,6 +220,32 @@ func TestSystemServiceReadOnlyGating(t *testing.T) {
 	}
 }
 
+// TestSingletonGetReturnsEmptyWhenAbsent drives a *_settings_get tool against a
+// device with the setting unconfigured (the config get returns an empty result,
+// pango's "got 0"): systemGetHandler must report an empty config, NOT surface
+// the device error.
+// Sabotage: delete `cfg = new(C)` in systemGetHandler and the empty read panics
+// or surfaces an error instead of the empty summary.
+func TestSingletonGetReturnsEmptyWhenAbsent(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result/></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterGeneralSettingsTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_general_settings_get", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("an unconfigured singleton get must not be an error: %s", textContent(t, res))
+	}
+	text := textContent(t, res)
+	if !strings.Contains(text, `"hostname": ""`) {
+		t.Fatalf("absent config must summarize with empty fields, got: %s", text)
+	}
+}
+
 // TestSingletonUpdateCreatesWhenAbsent pins the upsert branch: when the seed
 // read finds no config node, the write goes through Create (a "set"), not
 // Update (which pango implements with an "edit" preceded by its own read that
