@@ -57,22 +57,33 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 		"administratorSecrets":   {},
 		"authProfileSecrets":     {},
 		"mfaProfileSecrets":      {},
+		"bgpAuthProfileSecrets":  {},
+		"ospfAuthProfileSecrets": {},
+		"proxySettingsSecrets":   {},
+	}
+
+	// updateOnlyExtractors are wired to an update handler but have no create
+	// counterpart because their family is a singleton system config
+	// (device/services/*): there is exactly one per device, so it exposes a get
+	// and an update but no create-by-name. Their extractor must still be wired to
+	// the update path; the create requirement below is waived only for these.
+	updateOnlyExtractors := map[string]struct{}{
+		"proxySettingsSecrets": {},
 	}
 
 	got := collectWithSecretsWirings(t)
 
-	// Every expected extractor must be wired to both a create and an update
-	// registration. A nil entry means the walk found no wiring at all, which also
-	// fails closed if parsing or the walk ever breaks (every wantExtractors entry
-	// then reports missing rather than the test passing vacuously).
+	// Every expected extractor must be wired to an update registration, and to a
+	// create registration unless it is update-only.
 	for name := range wantExtractors {
-		switch w := got[name]; {
-		case w == nil:
-			t.Errorf("secret extractor %s is never wired through withSecrets; a secret-bearing family must pass withSecrets(%s) on both its create and update registrations", name, name)
-		case !w.create:
-			t.Errorf("secret extractor %s is not wired into a create handler registration", name)
-		case !w.update:
-			t.Errorf("secret extractor %s is not wired into an update handler registration", name)
+		_, updateOnly := updateOnlyExtractors[name]
+		assertSecretWiring(t, name, got[name], updateOnly)
+	}
+	// Every update-only entry must be an expected extractor, so the carve-out
+	// cannot name an extractor that no longer exists.
+	for name := range updateOnlyExtractors {
+		if _, want := wantExtractors[name]; !want {
+			t.Errorf("updateOnlyExtractors lists %s but it is not in wantExtractors; remove it or add the extractor", name)
 		}
 	}
 	// No unexpected extractor: a new secret-bearing family must be added to
@@ -97,6 +108,25 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 		if _, ok := declared[name]; !ok {
 			t.Errorf("wantExtractors lists %s but redact.go declares no such extractor; remove it here or restore the extractor", name)
 		}
+	}
+}
+
+// assertSecretWiring checks one extractor's wiring. A nil wiring means the walk
+// found none at all, which also fails closed if parsing or the walk ever breaks
+// (the entry then reports missing rather than the test passing vacuously). An
+// update-only extractor (a singleton system config, which has no create tool) is
+// exempt from the create requirement but must not be wired to a create.
+func assertSecretWiring(t *testing.T, name string, w *secretWiring, updateOnly bool) {
+	t.Helper()
+	switch {
+	case w == nil:
+		t.Errorf("secret extractor %s is never wired through withSecrets; a secret-bearing family must pass withSecrets(%s) on its update registration (and its create registration unless it is a singleton)", name, name)
+	case !w.update:
+		t.Errorf("secret extractor %s is not wired into an update handler registration", name)
+	case !w.create && !updateOnly:
+		t.Errorf("secret extractor %s is not wired into a create handler registration; if its family is an update-only singleton, add it to updateOnlyExtractors", name)
+	case w.create && updateOnly:
+		t.Errorf("secret extractor %s is listed as update-only but is wired into a create handler; remove it from updateOnlyExtractors", name)
 	}
 }
 

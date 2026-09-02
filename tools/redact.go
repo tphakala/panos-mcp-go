@@ -308,3 +308,21 @@ func authProfileSecrets(in *AuthProfileInput) []string {
 func mfaProfileSecrets(in *MfaProfileInput) []string {
 	return collectSecrets(in.Config, func(c MfaVendorConfigInput) *string { return c.Value })
 }
+
+// Summary keys shared across the secret-bearing families' projections. A
+// get/list summary reports only whether write-only key material is set, never
+// the value; these name that boolean (goconst).
+const (
+	hasSecretKey   = "has_secret"
+	hasPasswordKey = "has_password"
+)
+
+func bgpAuthProfileSecrets(in *BgpAuthProfileInput) []string { return secretVals(in.Secret) }
+
+func ospfAuthProfileSecrets(in *OspfAuthProfileInput) []string {
+	out := secretVals(in.Password)
+	out = append(out, collectSecrets(in.Md5Keys, func(k OspfMd5KeyInput) *string { return k.Key })...)
+	return out
+}
+
+func proxySettingsSecrets(in *ProxySettingsInput) []string { return secretVals(in.SecureProxyPassword) }

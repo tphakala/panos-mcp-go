@@ -322,7 +322,7 @@ func tacacsServerSummaries(servers []tacacsplus.Server) []any {
 	out := make([]any, 0, len(servers))
 	for i := range servers {
 		s := &servers[i]
-		sm := map[string]any{tagNameKey: s.Name, "address": strVal(s.Address), "has_secret": s.Secret != nil}
+		sm := map[string]any{tagNameKey: s.Name, "address": strVal(s.Address), hasSecretKey: s.Secret != nil}
 		putInt(sm, "port", s.Port)
 		out = append(out, sm)
 	}
@@ -472,7 +472,7 @@ func radiusServerSummaries(servers []radius.Server) []any {
 	out := make([]any, 0, len(servers))
 	for i := range servers {
 		s := &servers[i]
-		sm := map[string]any{tagNameKey: s.Name, "ip_address": strVal(s.IpAddress), "has_secret": s.Secret != nil}
+		sm := map[string]any{tagNameKey: s.Name, "ip_address": strVal(s.IpAddress), hasSecretKey: s.Secret != nil}
 		putInt(sm, "port", s.Port)
 		out = append(out, sm)
 	}
@@ -1043,7 +1043,7 @@ func emailServerSummaries(servers []email.Server) []any {
 			"auth":                strVal(s.Auth),
 			"certificate_profile": strVal(s.CertificateProfile),
 			"username":            strVal(s.Username),
-			"has_password":        s.Password != nil,
+			hasPasswordKey:        s.Password != nil,
 		}
 		putInt(sm, "port", s.Port)
 		out = append(out, sm)

@@ -84,6 +84,7 @@ func TestSecretShapedInputFieldsHaveRedactionExtractor(t *testing.T) {
 	// a value that must be redacted. Keyed by "StructName.FieldName".
 	secretFieldAllowlist := map[string]string{
 		"AdministratorInput.PasswordProfile": "reference to a password-profile object by name (see panos_password_profile_list), not a secret; the get projection returns it verbatim",
+		"OspfMd5KeyInput.KeyID":              "MD5 key identifier (1-255), not key material; the matching secret is OspfMd5KeyInput.Key, collected by ospfAuthProfileSecrets. The get projection returns the ID verbatim",
 	}
 
 	found := secretShapedInputFields(t)

@@ -847,5 +847,23 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	// mgt-config, or Panorama's, or one pushed by a template or template stack.
 	RegisterPasswordProfileTools(s, d)
 	RegisterAdministratorTools(s, d)
+	// Advanced-routing protocol profiles (net-scoped: firewall, template, or
+	// template stack). Referenced by a logical router's per-VRF protocol config.
+	RegisterBgpAuthProfileTools(s, d)
+	RegisterBgpDampeningProfileTools(s, d)
+	RegisterBgpTimerProfileTools(s, d)
+	RegisterOspfAuthProfileTools(s, d)
+	RegisterOspfInterfaceTimerProfileTools(s, d)
+	RegisterOspfSpfTimerProfileTools(s, d)
+	RegisterOspfv3InterfaceTimerProfileTools(s, d)
+	RegisterOspfv3SpfTimerProfileTools(s, d)
+	RegisterRoutingBfdProfileTools(s, d)
+	RegisterPimInterfaceTimerProfileTools(s, d)
+	// Device system services (system-scoped singletons: firewall system scope, or
+	// a Panorama template or template stack).
+	RegisterDnsSettingsTools(s, d)
+	RegisterNtpSettingsTools(s, d)
+	RegisterGeneralSettingsTools(s, d)
+	RegisterProxySettingsTools(s, d)
 	RegisterOpTools(s, d)
 }
