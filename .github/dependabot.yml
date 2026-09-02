@@ -17,6 +17,13 @@ updates:
     labels:
       - dependencies
       - ci
+    groups:
+      # codeql-action/init and codeql-action/analyze must move together: the
+      # analyze step rejects a config written by a different init version. Group
+      # them so a release arrives as one PR instead of a skewed pair.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: docker
     directory: /
