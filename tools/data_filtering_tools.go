@@ -22,9 +22,11 @@ import (
 // family carries a secret, so no withSecrets extractor is wired; that absence is
 // intentional, not an omission.
 
-// Summary keys shared by the data-filtering rule and data-pattern projections,
-// factored out because each appears often enough across the two summaries to
-// trip goconst.
+// Summary keys factored into constants to stay under goconst's package-wide
+// threshold: fileTypeKey is used in both this file's summaries (the rule
+// summary and the pattern-type detail), and directionKey combines this file's
+// single use with the existing "direction" literals in profile_tools.go to
+// reach the count.
 const (
 	directionKey = "direction"
 	fileTypeKey  = "file_type"
@@ -285,8 +287,8 @@ type DataPatternInput struct {
 	Description     string                          `json:"description,omitempty"`
 	DisableOverride *string                         `json:"disable_override,omitzero" jsonschema:"Panorama only: 'yes' disallows overriding this object in a child device group"`
 	FileProperties  *DataPatternFilePropertiesInput `json:"file_properties,omitzero" jsonschema:"Match on file properties; at most one pattern-type branch may be set. Send {} to select without changing entries"`
-	Predefined      *DataPatternPredefinedListInput `json:"predefined,omitzero" jsonschema:"Match on predefined data patterns; at most one pattern-type branch may be set"`
-	Regex           *DataPatternRegexListInput      `json:"regex,omitzero" jsonschema:"Match on regular expressions; at most one pattern-type branch may be set"`
+	Predefined      *DataPatternPredefinedListInput `json:"predefined,omitzero" jsonschema:"Match on predefined data patterns; at most one pattern-type branch may be set. Send {} to select without changing entries"`
+	Regex           *DataPatternRegexListInput      `json:"regex,omitzero" jsonschema:"Match on regular expressions; at most one pattern-type branch may be set. Send {} to select without changing entries"`
 }
 
 // dataPatternBranchNames lists the pattern-type input fields in the order the

@@ -151,10 +151,68 @@ func TestBuildDataPatternRejects(t *testing.T) {
 		Predefined: &DataPatternPredefinedListInput{}, Regex: &DataPatternRegexListInput{}}); err == nil {
 		t.Error("two pattern-type branches must fail")
 	}
-	// a pattern entry without a name is rejected.
+	// a pattern entry without a name is rejected, in every branch (each branch
+	// has its own name guard, so each is checked).
 	if _, err := buildDataPattern(DataPatternInput{Name: "dp",
 		Regex: &DataPatternRegexListInput{Patterns: []DataPatternRegexInput{{Regex: new("x")}}}}); err == nil {
 		t.Error("a regex pattern without a name must fail")
+	}
+	if _, err := buildDataPattern(DataPatternInput{Name: "dp",
+		FileProperties: &DataPatternFilePropertiesInput{Patterns: []DataPatternFilePropertyInput{{FileProperty: new("pdf-title")}}}}); err == nil {
+		t.Error("a file_properties pattern without a name must fail")
+	}
+	if _, err := buildDataPattern(DataPatternInput{Name: "dp",
+		Predefined: &DataPatternPredefinedListInput{Patterns: []DataPatternPredefinedInput{{FileType: []string{"any"}}}}}); err == nil {
+		t.Error("a predefined pattern without a name must fail")
+	}
+}
+
+// TestDataPatternSummaryFilePropertiesAndPredefined pins the two summary arms
+// TestDataPatternSummary does not (it covers regex): a key rename or a
+// strVal/strList swap in the file_properties or predefined arm of
+// dataPatternTypeDetail, or a wrong slug in dataPatternTypeString, reddens here.
+func TestDataPatternSummaryFilePropertiesAndPredefined(t *testing.T) {
+	fp := &dataobjects.Entry{Name: "dp1", PatternType: &dataobjects.PatternType{
+		FileProperties: &dataobjects.PatternTypeFileProperties{Pattern: []dataobjects.PatternTypeFilePropertiesPattern{
+			{Name: "p1", FileType: new("pdf"), FileProperty: new("pdf-title"), PropertyValue: new("secret")}}}}}
+	m := mustMap(t, dataPatternSummary(fp))
+	if m["pattern_type"] != "file-properties" {
+		t.Errorf("file_properties pattern_type: %v", m["pattern_type"])
+	}
+	p0 := mustMap(t, mustAnySlice(t, m["patterns"])[0])
+	if p0[tagNameKey] != "p1" || p0["file_type"] != "pdf" || p0["file_property"] != "pdf-title" || p0["property_value"] != "secret" {
+		t.Errorf("file_properties pattern summary: %+v", p0)
+	}
+
+	pd := &dataobjects.Entry{Name: "dp2", PatternType: &dataobjects.PatternType{
+		Predefined: &dataobjects.PatternTypePredefined{Pattern: []dataobjects.PatternTypePredefinedPattern{
+			{Name: "Credit Card Numbers", FileType: []string{"any"}}}}}}
+	m = mustMap(t, dataPatternSummary(pd))
+	if m["pattern_type"] != "predefined" {
+		t.Errorf("predefined pattern_type: %v", m["pattern_type"])
+	}
+	q0 := mustMap(t, mustAnySlice(t, m["patterns"])[0])
+	if q0[tagNameKey] != "Credit Card Numbers" {
+		t.Errorf("predefined pattern summary: %+v", q0)
+	}
+	if got := mustStrSlice(t, q0["file_type"]); len(got) != 1 || got[0] != "any" {
+		t.Errorf("predefined file_type: %+v", got)
+	}
+}
+
+// TestOverlayDataPatternClearPatterns pins the empty-patterns-clears path: a
+// same-branch update with an explicit empty patterns list replaces the branch's
+// stored entries with an empty set (the data-pattern analogue of the
+// empty-rules-clears case in TestOverlayDataFiltering).
+func TestOverlayDataPatternClearPatterns(t *testing.T) {
+	e := &dataobjects.Entry{Name: "dp1", PatternType: &dataobjects.PatternType{
+		Regex: &dataobjects.PatternTypeRegex{Pattern: []dataobjects.PatternTypeRegexPattern{{Name: "old", Regex: new("x")}}}}}
+	if err := overlayDataPattern(e, DataPatternInput{Name: "dp1",
+		Regex: &DataPatternRegexListInput{Patterns: []DataPatternRegexInput{}}}); err != nil {
+		t.Fatal(err)
+	}
+	if e.PatternType.Regex == nil || len(e.PatternType.Regex.Pattern) != 0 {
+		t.Errorf("an explicit empty patterns list must clear the branch entries: %+v", e.PatternType.Regex)
 	}
 }
 
