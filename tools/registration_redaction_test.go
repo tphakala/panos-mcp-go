@@ -4,8 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,12 +100,10 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 	}
 }
 
-// collectWithSecretsWirings parses every non-test source file in the tools package
-// and returns, per extractor, whether it was passed to withSecrets on a create
-// and/or an update handler registration. It uses parser.ParseFile per file rather
-// than the deprecated parser.ParseDir; build-tag-accurate package association is
-// irrelevant here, since a withSecrets(...) wiring is worth checking whatever file
-// it lives in.
+// collectWithSecretsWirings parses every non-test source file in the tools
+// package (via parseToolsPackage, which fails closed on an empty package) and
+// returns, per extractor, whether it was passed to withSecrets on a create
+// and/or an update handler registration.
 //
 // It matches withSecrets(<ident>) only where it sits as a direct argument to a
 // create- or update-handler builder call (a package-level identifier ending in
@@ -116,33 +112,14 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 // this shape. A withSecrets wired through some other shape (a closure argument, a
 // builder invoked as a method or through a package qualifier) would not be seen; no
 // registration uses such a shape today, and a change to that convention should
-// update this walk.
+// update visitCallForSecrets.
 func collectWithSecretsWirings(t *testing.T) map[string]*secretWiring {
 	t.Helper()
-	fset := token.NewFileSet()
 	got := map[string]*secretWiring{}
-	parsed := 0
-
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading tools package dir: %v", err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, perr := parser.ParseFile(fset, filepath.Clean(name), nil, 0)
-		if perr != nil {
-			t.Fatalf("parsing %s: %v", name, perr)
-		}
-		parsed++
+	for _, f := range parseToolsPackage(t) {
 		ast.Inspect(f, func(n ast.Node) bool {
 			return visitCallForSecrets(n, got)
 		})
-	}
-	if parsed == 0 {
-		t.Fatal("no non-test .go files parsed in the tools package; the walk would vacuously pass")
 	}
 	return got
 }
