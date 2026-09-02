@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 368 tools on Panorama and 352 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 147 on Panorama, 144 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 426 tools on Panorama and 410 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 171 on Panorama, 168 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -550,6 +550,78 @@ Administrators and password profiles live under `mgt-config`, which is device-wi
 | `panos_administrator_create` | write | Create an administrator in the candidate config with a write-only password hash. |
 | `panos_administrator_update` | write | Update an administrator: read-modify-write; an omitted password hash keeps the stored value. |
 | `panos_administrator_delete` | write | Delete an administrator from the candidate config. |
+
+### Advanced-routing protocol profiles
+
+These are the advanced routing engine's reusable protocol profiles, referenced by name from a logical router's per-VRF BGP, OSPF, OSPFv3, BFD and multicast configuration. They are net-scoped (on a firewall they act on the local device; on Panorama a `template` or `template_stack` is required) and standalone: each is created, listed and deleted independently of any VRF that uses it. Authentication passwords and keys are write-only and never returned. The advanced-routing BFD profile (`panos_routing_bfd_profile_*`) is a different object from the legacy BFD profile (`panos_bfd_profile_*`) and sits at a different xpath.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_bgp_auth_profile_list` | read-only | List BGP authentication profiles; the MD5 key is never returned. |
+| `panos_bgp_auth_profile_get` | read-only | Get one BGP authentication profile; reports only whether a key is set. |
+| `panos_bgp_auth_profile_create` | write | Create a BGP authentication profile with a write-only MD5 key. |
+| `panos_bgp_auth_profile_update` | write | Update a BGP authentication profile: read-modify-write; provide secret to replace the key. |
+| `panos_bgp_auth_profile_delete` | write | Delete a BGP authentication profile from the candidate config. |
+| `panos_bgp_dampening_profile_list` | read-only | List BGP route-flap dampening profiles. |
+| `panos_bgp_dampening_profile_get` | read-only | Get one BGP dampening profile (half-life, suppress and reuse limits). |
+| `panos_bgp_dampening_profile_create` | write | Create a BGP dampening profile in the candidate config. |
+| `panos_bgp_dampening_profile_update` | write | Update a BGP dampening profile: read-modify-write; only provided fields change. |
+| `panos_bgp_dampening_profile_delete` | write | Delete a BGP dampening profile from the candidate config. |
+| `panos_bgp_timer_profile_list` | read-only | List BGP timer profiles. |
+| `panos_bgp_timer_profile_get` | read-only | Get one BGP timer profile (hold, keep-alive and the advertisement/retry intervals). |
+| `panos_bgp_timer_profile_create` | write | Create a BGP timer profile in the candidate config. |
+| `panos_bgp_timer_profile_update` | write | Update a BGP timer profile: read-modify-write; only provided fields change. |
+| `panos_bgp_timer_profile_delete` | write | Delete a BGP timer profile from the candidate config. |
+| `panos_ospf_auth_profile_list` | read-only | List OSPF authentication profiles; passwords and MD5 keys are never returned. |
+| `panos_ospf_auth_profile_get` | read-only | Get one OSPF authentication profile; lists MD5 key IDs and whether a password is set. |
+| `panos_ospf_auth_profile_create` | write | Create an OSPF authentication profile with a write-only password or MD5 keys. |
+| `panos_ospf_auth_profile_update` | write | Update an OSPF authentication profile: read-modify-write; a provided md5_keys list replaces the set. |
+| `panos_ospf_auth_profile_delete` | write | Delete an OSPF authentication profile from the candidate config. |
+| `panos_ospf_interface_timer_profile_list` | read-only | List OSPF interface timer profiles. |
+| `panos_ospf_interface_timer_profile_get` | read-only | Get one OSPF interface timer profile (hello, dead, retransmit and transit timers). |
+| `panos_ospf_interface_timer_profile_create` | write | Create an OSPF interface timer profile in the candidate config. |
+| `panos_ospf_interface_timer_profile_update` | write | Update an OSPF interface timer profile: read-modify-write; only provided fields change. |
+| `panos_ospf_interface_timer_profile_delete` | write | Delete an OSPF interface timer profile from the candidate config. |
+| `panos_ospf_spf_timer_profile_list` | read-only | List OSPF SPF timer profiles. |
+| `panos_ospf_spf_timer_profile_get` | read-only | Get one OSPF SPF timer profile (SPF calculation delay, LSA interval and hold times). |
+| `panos_ospf_spf_timer_profile_create` | write | Create an OSPF SPF timer profile in the candidate config. |
+| `panos_ospf_spf_timer_profile_update` | write | Update an OSPF SPF timer profile: read-modify-write; only provided fields change. |
+| `panos_ospf_spf_timer_profile_delete` | write | Delete an OSPF SPF timer profile from the candidate config. |
+| `panos_ospfv3_interface_timer_profile_list` | read-only | List OSPFv3 interface timer profiles. |
+| `panos_ospfv3_interface_timer_profile_get` | read-only | Get one OSPFv3 interface timer profile (hello, dead, retransmit and transit timers). |
+| `panos_ospfv3_interface_timer_profile_create` | write | Create an OSPFv3 interface timer profile in the candidate config. |
+| `panos_ospfv3_interface_timer_profile_update` | write | Update an OSPFv3 interface timer profile: read-modify-write; only provided fields change. |
+| `panos_ospfv3_interface_timer_profile_delete` | write | Delete an OSPFv3 interface timer profile from the candidate config. |
+| `panos_ospfv3_spf_timer_profile_list` | read-only | List OSPFv3 SPF timer profiles. |
+| `panos_ospfv3_spf_timer_profile_get` | read-only | Get one OSPFv3 SPF timer profile (SPF calculation delay, LSA interval and hold times). |
+| `panos_ospfv3_spf_timer_profile_create` | write | Create an OSPFv3 SPF timer profile in the candidate config. |
+| `panos_ospfv3_spf_timer_profile_update` | write | Update an OSPFv3 SPF timer profile: read-modify-write; only provided fields change. |
+| `panos_ospfv3_spf_timer_profile_delete` | write | Delete an OSPFv3 SPF timer profile from the candidate config. |
+| `panos_routing_bfd_profile_list` | read-only | List advanced-routing BFD profiles (distinct from the legacy `panos_bfd_profile_*`). |
+| `panos_routing_bfd_profile_get` | read-only | Get one advanced-routing BFD profile (mode and detection timers). |
+| `panos_routing_bfd_profile_create` | write | Create an advanced-routing BFD profile in the candidate config. |
+| `panos_routing_bfd_profile_update` | write | Update an advanced-routing BFD profile: read-modify-write; the multihop settings are preserved. |
+| `panos_routing_bfd_profile_delete` | write | Delete an advanced-routing BFD profile from the candidate config. |
+| `panos_pim_interface_timer_profile_list` | read-only | List PIM interface timer profiles (IPv4 multicast). |
+| `panos_pim_interface_timer_profile_get` | read-only | Get one PIM interface timer profile (hello, assert and join/prune intervals). |
+| `panos_pim_interface_timer_profile_create` | write | Create a PIM interface timer profile in the candidate config. |
+| `panos_pim_interface_timer_profile_update` | write | Update a PIM interface timer profile: read-modify-write; only provided fields change. |
+| `panos_pim_interface_timer_profile_delete` | write | Delete a PIM interface timer profile from the candidate config. |
+
+### Device system services
+
+These are the device's own management-plane system settings, each a singleton (one per device, so there is a get and an update but no list, create or delete). They are system-scoped: on a firewall they act on the local device, on Panorama a `template` or `template_stack` is required. Only the common scalar settings are modeled; anything not modeled (a DNS-proxy object reference, NTP authentication keys, and so on) is read first and preserved across an update. The proxy password is write-only and never returned, and NTP authentication keys are never returned.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_dns_settings_get` | read-only | Get the device DNS settings (primary/secondary servers, FQDN refresh interval). |
+| `panos_dns_settings_update` | write | Update the device DNS settings: read-modify-write; only provided fields change. |
+| `panos_ntp_settings_get` | read-only | Get the device NTP settings (server addresses and whether authentication is configured). |
+| `panos_ntp_settings_update` | write | Update the device NTP settings: read-modify-write; existing authentication is preserved. |
+| `panos_general_settings_get` | read-only | Get the device general settings (hostname, domain, banner, timezone, SSL/TLS profile, geo-location). |
+| `panos_general_settings_update` | write | Update the device general settings: read-modify-write; only provided fields change. |
+| `panos_proxy_settings_get` | read-only | Get the device update-proxy settings; the password is never returned. |
+| `panos_proxy_settings_update` | write | Update the device update-proxy settings: read-modify-write; only provided fields change. |
 
 ## Example MCP client configuration
 
