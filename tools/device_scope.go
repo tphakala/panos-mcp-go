@@ -74,7 +74,7 @@ const noPanoramaScopeFamilies = "local database users and MFA server profiles"
 type DeviceScopeInput struct {
 	Shared        bool   `json:"shared,omitzero" jsonschema:"Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for snmp-trap, email and authentication profiles."`
 	Panorama      bool   `json:"panorama,omitzero" jsonschema:"Use the Panorama management-plane scope (Panorama only). Not available for local database users and MFA server profiles."`
-	Vsys          string `json:"vsys,omitzero" jsonschema:"Firewall vsys name (firewall only; default vsys1)"`
+	Vsys          string `json:"vsys,omitzero" jsonschema:"Firewall vsys name (firewall only; default vsys1). On Panorama use template_vsys instead; a vsys here is rejected."`
 	Template      string `json:"template,omitzero" jsonschema:"Panorama template name (Panorama only; mutually exclusive with template_stack)"`
 	TemplateStack string `json:"template_stack,omitzero" jsonschema:"Panorama template-stack name (Panorama only; mutually exclusive with template)"`
 	TemplateVsys  string `json:"template_vsys,omitzero" jsonschema:"vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope"`
@@ -126,9 +126,11 @@ func validateDeviceScopeExclusivity(in DeviceScopeInput) error {
 // shared scope when shared is set and the resource supports it); Panorama requires
 // an explicit template, template_stack, shared, or panorama selection.
 //
-// vsys is ignored on a Panorama connection rather than rejected. That is
-// pre-existing behaviour no test pins; tightening it would change the error
-// surface of every device-scoped tool and belongs in its own change.
+// vsys is the firewall-only scope: it selects a vsys on a firewall, while a
+// Panorama connection rejects it (see resolvePanoramaDeviceScope) rather than
+// silently dropping it and resolving to the wrong location. This mirrors the
+// firewall branch below, which rejects the Panorama-connection fields (panorama,
+// template, template_stack).
 func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
 	if err := validateDeviceScopeExclusivity(in); err != nil {
@@ -156,8 +158,19 @@ func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[
 // scope, or the panorama management-plane scope is required. The template tier is
 // tried first, so the template+shared divergence noted on
 // validateDeviceScopeExclusivity keeps resolving to the template.
+//
+// A firewall vsys is rejected here. vsys is the firewall-only scope, and the way
+// to narrow within a Panorama template is template_vsys, so a vsys on a Panorama
+// connection is a client error. It used to be dropped silently, which resolved a
+// request naming both a template and a vsys to the broader template-shared node
+// the caller did not ask for; rejecting it surfaces the mistake instead of
+// guessing (#117).
 func resolvePanoramaDeviceScope[L any](in DeviceScopeInput, p deviceScopeParts[L]) (L, error) {
 	var zero L
+	if in.Vsys != "" {
+		return zero, errors.New("vsys is a firewall-only scope and is not valid on a Panorama connection; " +
+			"use template_vsys to narrow within a template or template_stack")
+	}
 	loc, ok, err := resolveTemplateTier(in.Template, in.TemplateStack, in.TemplateVsys, p.templateScopeParts)
 	if err != nil {
 		return zero, err

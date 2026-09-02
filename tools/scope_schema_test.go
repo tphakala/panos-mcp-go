@@ -123,6 +123,7 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 			"retry_interval", "servers", "ssl", "timelimit", "verify_server_certificate"},
 		[]string{"name"})
 	assertDescriptions(t, tool, got, map[string]string{
+		"vsys":           "Firewall vsys name (firewall only; default vsys1). On Panorama use template_vsys instead; a vsys here is rejected.",
 		"shared":         "Use the shared scope (firewall shared, or Panorama shared pushed to all device groups). Not available for snmp-trap, email and authentication profiles.",
 		"panorama":       "Use the Panorama management-plane scope (Panorama only). Not available for local database users and MFA server profiles.",
 		"template":       "Panorama template name (Panorama only; mutually exclusive with template_stack)",
