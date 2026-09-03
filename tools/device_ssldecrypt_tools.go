@@ -83,8 +83,8 @@ func sslExcludeCertSummaries(certs []ssldecrypt.SslExcludeCert) []any {
 	for i := range certs {
 		c := &certs[i]
 		m := map[string]any{
-			tagNameKey:    c.Name,
-			"description": strVal(c.Description),
+			tagNameKey:     c.Name,
+			descriptionKey: strVal(c.Description),
 		}
 		putBool(m, "exclude", c.Exclude)
 		out = append(out, m)

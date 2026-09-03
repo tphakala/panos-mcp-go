@@ -321,8 +321,8 @@ func overlayVlanMac(e *vlanmac.Entry, in VlanMacInput) error {
 
 func vlanMacSummary(e *vlanmac.Entry) any {
 	return map[string]any{
-		tagNameKey:  e.Name,
-		"interface": strVal(e.Interface),
+		tagNameKey:   e.Name,
+		interfaceKey: strVal(e.Interface),
 	}
 }
 
