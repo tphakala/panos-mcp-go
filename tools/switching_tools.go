@@ -5,6 +5,7 @@ import (
 
 	"github.com/PaloAltoNetworks/pango/network/virtualwire"
 	"github.com/PaloAltoNetworks/pango/network/vlan"
+	vlanmac "github.com/PaloAltoNetworks/pango/network/vlan/mac"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -234,4 +235,137 @@ func RegisterVlanTools(s *mcp.Server, d *Deps) {
 		Description: "Delete a VLAN object from the candidate config. Fails while interfaces still reference it. Run panos_commit to apply.",
 		Annotations: deleteTool("Delete VLAN object"),
 	}, netDeleteHandler(d, "panos_vlan_delete", svc, parts))
+}
+
+// ---------------------------------------------------------------------------
+// VLAN MAC table entry (network/vlan/mac)
+// ---------------------------------------------------------------------------
+//
+// A static MAC entry maps a MAC address to a member interface within a VLAN
+// object, so it lives under a parent VLAN: its pango xpath is two-component
+// (the VLAN name, then the MAC name). That is the same shape the static-route
+// and subinterface families use, so it registers through parentFixAdapter and
+// the parent*Handler wrappers rather than the plain net handlers. The net scope
+// itself is identical to the VLAN object's: {Ngfw | Template | TemplateStack}.
+
+func newVlanMacService(d *Deps) parentFixAdapter[vlanmac.Location, vlanmac.Entry] {
+	return parentFixAdapter[vlanmac.Location, vlanmac.Entry]{
+		svc:    vlanmac.NewService(d.Client),
+		client: d.Client,
+		name:   func(e *vlanmac.Entry) string { return e.Name },
+	}
+}
+
+func vlanMacParts() netScopeParts[vlanmac.Location] {
+	return netScopeParts[vlanmac.Location]{
+		ngfw: func() vlanmac.Location {
+			return vlanmac.Location{Ngfw: &vlanmac.NgfwLocation{NgfwDevice: defaultNgfwDevice}}
+		},
+		template: func(tmpl string) vlanmac.Location {
+			return vlanmac.Location{Template: &vlanmac.TemplateLocation{
+				NgfwDevice: defaultNgfwDevice, PanoramaDevice: defaultPanoramaDevice, Template: tmpl,
+			}}
+		},
+		templateStack: func(stack string) vlanmac.Location {
+			return vlanmac.Location{TemplateStack: &vlanmac.TemplateStackLocation{
+				NgfwDevice: defaultNgfwDevice, PanoramaDevice: defaultPanoramaDevice, TemplateStack: stack,
+			}}
+		},
+	}
+}
+
+// VlanMacListInput lists the MAC entries under one VLAN.
+type VlanMacListInput struct {
+	NetScopeInput
+	Vlan   string `json:"vlan" jsonschema:"Parent VLAN object name"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Max results (default 50, max 200)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Skip this many results"`
+	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
+}
+
+// VlanMacNameInput names one MAC entry under one VLAN, for get and delete.
+type VlanMacNameInput struct {
+	NetScopeInput
+	Vlan string `json:"vlan" jsonschema:"Parent VLAN object name"`
+	Name string `json:"name" jsonschema:"MAC address (the entry name), e.g. 00:1b:17:00:01:02"`
+}
+
+// VlanMacInput is the create/update input for one MAC entry under one VLAN.
+type VlanMacInput struct {
+	NetScopeInput
+	Vlan      string  `json:"vlan" jsonschema:"Parent VLAN object name"`
+	Name      string  `json:"name" jsonschema:"MAC address (the entry name), e.g. 00:1b:17:00:01:02"`
+	Interface *string `json:"interface,omitzero" jsonschema:"Member interface this MAC is reachable on"`
+}
+
+//nolint:gocritic // hugeParam: in is by value to match the build/overlay contract.
+func applyVlanMac(e *vlanmac.Entry, in VlanMacInput) {
+	setPtr(&e.Interface, in.Interface)
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic builder contract.
+func buildVlanMac(in VlanMacInput) (*vlanmac.Entry, error) {
+	if in.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	e := &vlanmac.Entry{Name: in.Name}
+	applyVlanMac(e, in)
+	return e, nil
+}
+
+//nolint:gocritic // hugeParam: in is by value to satisfy the generic overlay contract.
+func overlayVlanMac(e *vlanmac.Entry, in VlanMacInput) error {
+	applyVlanMac(e, in)
+	return nil
+}
+
+func vlanMacSummary(e *vlanmac.Entry) any {
+	return map[string]any{
+		tagNameKey:   e.Name,
+		interfaceKey: strVal(e.Interface),
+	}
+}
+
+// RegisterVlanMacTools registers the VLAN MAC table entry tools. Mutating tools
+// are skipped entirely in read-only mode.
+func RegisterVlanMacTools(s *mcp.Server, d *Deps) {
+	svc := newVlanMacService(d)
+	parts := vlanMacParts()
+	listParent := func(in VlanMacListInput) string { return in.Vlan }
+	nameParent := func(in VlanMacNameInput) string { return in.Vlan }
+	parent := func(in VlanMacInput) string { return in.Vlan }
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_vlan_mac_list",
+		Description: "List static MAC table entries under a VLAN object. vlan (the parent VLAN name) is required. Firewall: device scope; Panorama requires template or template_stack. Read-only.",
+		Annotations: readOnlyTool("List VLAN MAC entries"),
+	}, parentListHandler(d, "panos_vlan_mac_list", svc, parts, listParent,
+		func(in VlanMacListInput) (int, int, string) { return in.Limit, in.Offset, in.Filter },
+		svc.name, vlanMacSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_vlan_mac_get",
+		Description: "Get one static MAC table entry (the member interface it maps to) under a VLAN object. vlan and name are required. Read-only.",
+		Annotations: readOnlyTool("Get VLAN MAC entry"),
+	}, parentGetHandler(d, "panos_vlan_mac_get", svc, parts, nameParent,
+		func(in VlanMacNameInput) string { return in.Name }, vlanMacSummary))
+	if d.ReadOnly {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_vlan_mac_create",
+		Description: "Create a static MAC table entry under a VLAN object. vlan and name (the MAC address) are required; interface names the member interface it is reachable on. Run panos_commit to apply.",
+		Annotations: createTool("Create VLAN MAC entry"),
+	}, parentCreateHandler(d, "panos_vlan_mac_create", svc, parts, parent, buildVlanMac, vlanMacSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_vlan_mac_update",
+		Description: "Update a static MAC table entry: read-modify-write, only provided fields change. vlan and name are required. Run panos_commit to apply.",
+		Annotations: updateTool("Update VLAN MAC entry"),
+	}, parentUpdateHandler(d, "panos_vlan_mac_update", svc, parts, parent,
+		func(in VlanMacInput) string { return in.Name }, overlayVlanMac, vlanMacSummary))
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "panos_vlan_mac_delete",
+		Description: "Delete a static MAC table entry from the candidate config. vlan and name are required. Run panos_commit to apply.",
+		Annotations: deleteTool("Delete VLAN MAC entry"),
+	}, parentDeleteHandler(d, "panos_vlan_mac_delete", svc, parts, nameParent,
+		func(in VlanMacNameInput) string { return in.Name }))
 }

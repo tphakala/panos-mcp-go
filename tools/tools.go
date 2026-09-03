@@ -825,6 +825,7 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterZoneProtectionTools(s, d)
 	RegisterVirtualWireTools(s, d)
 	RegisterVlanTools(s, d)
+	RegisterVlanMacTools(s, d)
 	RegisterDhcpTools(s, d)
 	RegisterDnsProxyTools(s, d)
 	// Tier 5: device server profiles (device-scoped: firewall vsys/shared or Panorama template/stack/shared).
@@ -865,5 +866,10 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	RegisterNtpSettingsTools(s, d)
 	RegisterGeneralSettingsTools(s, d)
 	RegisterProxySettingsTools(s, d)
+	// Device SSL decrypt trust settings (system-scoped singleton: firewall shared
+	// scope, or a Panorama template or template stack) and the read-only
+	// certificate inventory (firewall vsys, or a Panorama template or stack).
+	RegisterSslDecryptTools(s, d)
+	RegisterCertificateTools(s, d)
 	RegisterOpTools(s, d)
 }

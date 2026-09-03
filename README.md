@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 426 tools on Panorama and 410 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 171 on Panorama, 168 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 435 tools on Panorama and 419 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 176 on Panorama, 173 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -435,6 +435,11 @@ These network profiles and the two Layer 2 switching objects are net-scoped: on 
 | `panos_vlan_create` | write | Create a VLAN object in the candidate config. |
 | `panos_vlan_update` | write | Update a VLAN object: read-modify-write; a provided interfaces list replaces the members fully. |
 | `panos_vlan_delete` | write | Delete a VLAN object from the candidate config. |
+| `panos_vlan_mac_list` | read-only | List static MAC table entries under a VLAN object. |
+| `panos_vlan_mac_get` | read-only | Get one static MAC table entry (the member interface it maps to). |
+| `panos_vlan_mac_create` | write | Create a static MAC table entry under a VLAN object. |
+| `panos_vlan_mac_update` | write | Update a static MAC table entry: read-modify-write; only provided fields change. |
+| `panos_vlan_mac_delete` | write | Delete a static MAC table entry from the candidate config. |
 
 ### DHCP and DNS proxy
 
@@ -622,6 +627,15 @@ These are the device's own management-plane system settings, each a singleton (o
 | `panos_general_settings_update` | write | Update the device general settings: read-modify-write; only provided fields change. |
 | `panos_proxy_settings_get` | read-only | Get the device update-proxy settings; the password is never returned. |
 | `panos_proxy_settings_update` | write | Update the device update-proxy settings: read-modify-write; only provided fields change. |
+
+### SSL decrypt and certificates
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_ssl_decrypt_settings_get` | read-only | Get the device SSL decrypt trust settings (forward trust/untrust certificate names, trusted root CA list, exclude lists). |
+| `panos_ssl_decrypt_settings_update` | write | Update the device SSL decrypt trust settings: read-modify-write; a provided list replaces the whole list. |
+| `panos_certificate_list` | read-only | List certificates (subject, issuer, validity window, expiry) for inventory and expiry auditing. |
+| `panos_certificate_get` | read-only | Get one certificate's inventory and expiry metadata; key material is never returned. |
 
 ## Example MCP client configuration
 
