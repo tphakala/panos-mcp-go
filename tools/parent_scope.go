@@ -146,7 +146,11 @@ func (a parentFixAdapter[L, E]) List(ctx context.Context, ps parentScopeLoc[L], 
 // xpath is never built with a missing parent component.
 func resolveParentNetScope[L xpathLocation](d *Deps, in NetScopeInput, parent string, p netScopeParts[L]) (parentScopeLoc[L], error) {
 	if parent == "" {
-		return parentScopeLoc[L]{}, errors.New("a parent entry name is required (virtual_router or parent_interface)")
+		// The message names no specific field because this resolver is shared by
+		// every parent-scoped family (virtual_router for static routes,
+		// parent_interface for subinterfaces, vlan for the MAC table); each tool's
+		// schema already names its own required parent field.
+		return parentScopeLoc[L]{}, errors.New("a parent entry name is required")
 	}
 	loc, err := resolveNetScope(d, in, p)
 	if err != nil {

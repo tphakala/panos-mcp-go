@@ -337,26 +337,54 @@ func TestVlanMacCreateXpath(t *testing.T) {
 
 // --- parent requirement -------------------------------------------------------
 
-// TestVlanMacMissingParentErrors pins that a MAC tool without its parent vlan
-// errors. The vlan field is schema-required, so the call is rejected at input
-// validation before it can resolve to a one-component xpath. Sabotage: making
-// vlan optional (json:"vlan,omitempty") lets the call through to build an
-// invalid xpath instead of failing here.
+// TestVlanMacMissingParentErrors pins that a MAC tool without a usable parent
+// vlan errors, both when the field is omitted (schema-required) and when it is
+// an explicit empty string (schema-valid, but caught by the shared parent
+// resolver).
 func TestVlanMacMissingParentErrors(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterVlanMacTools(srv, d)
 	cs := connectInMemory(t, srv)
-	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_vlan_mac_list", Arguments: map[string]any{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Fatal("a MAC list without a vlan must error")
-	}
-	if msg := textContent(t, res); !strings.Contains(msg, "vlan") {
-		t.Fatalf("the missing-vlan error should name the vlan field: %s", msg)
-	}
+
+	// An omitted vlan is rejected at input validation (schema-required).
+	// Sabotage: making vlan optional (json:"vlan,omitempty") lets the call
+	// through instead of failing here.
+	t.Run("omitted vlan", func(t *testing.T) {
+		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "panos_vlan_mac_list", Arguments: map[string]any{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Fatal("a MAC list without a vlan must error")
+		}
+		if msg := textContent(t, res); !strings.Contains(msg, "vlan") {
+			t.Fatalf("the missing-vlan error should name the vlan field: %s", msg)
+		}
+	})
+
+	// An explicit empty-string vlan satisfies the schema but reaches the shared
+	// parent resolver, which must error without naming another family's parent
+	// field. Sabotage: reinstating the "(virtual_router or parent_interface)"
+	// enumeration in resolveParentNetScope reddens the NotContains checks.
+	t.Run("empty-string vlan", func(t *testing.T) {
+		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+			Name: "panos_vlan_mac_list", Arguments: map[string]any{"vlan": ""},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Fatal("an empty-string vlan must error")
+		}
+		msg := textContent(t, res)
+		if !strings.Contains(msg, "a parent entry name is required") {
+			t.Fatalf("empty vlan should give the generic parent-required error: %s", msg)
+		}
+		if strings.Contains(msg, "virtual_router") || strings.Contains(msg, "parent_interface") {
+			t.Fatalf("the vlan/mac error must not name another family's parent field: %s", msg)
+		}
+	})
 }
 
 // --- no-op update -------------------------------------------------------------
