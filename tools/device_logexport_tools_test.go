@@ -153,6 +153,38 @@ func TestLogExportScheduleSummaryBare(t *testing.T) {
 	}
 }
 
+// TestLogExportScheduleSummaryScpOmitsPassword mirrors the FTP omission guard for
+// the SCP transport branch, which the FTP-only summary test did not exercise.
+// Sabotage: change the scp "password_set" to strVal(s.Password) and the leak
+// assertion reddens.
+func TestLogExportScheduleSummaryScpOmitsPassword(t *testing.T) {
+	e := &logexport.Entry{
+		Name: "sched1",
+		Protocol: &logexport.Protocol{Scp: &logexport.ProtocolScp{
+			Hostname: new("scp.example.com"),
+			Username: new("scpuser"),
+			Password: new("SCPPWLEAK"),
+			Path:     new("/logs"),
+			Port:     new(int64(22)),
+		}},
+	}
+	m := asMap(t, logExportScheduleSummary(e))
+	if m["protocol"] != "scp" {
+		t.Fatalf("protocol must be scp, got %v", m["protocol"])
+	}
+	scp := asMap(t, m["scp"])
+	if scp["hostname"] != "scp.example.com" || scp["username"] != "scpuser" {
+		t.Fatalf("scp summary scalars wrong: %v", scp)
+	}
+	if scp["password_set"] != true {
+		t.Fatalf("password_set must be true when a password is stored, got %v", scp["password_set"])
+	}
+	if scp["port"] != int64(22) {
+		t.Fatalf("scp port wrong: %v", scp["port"])
+	}
+	assertNoLeak(t, m, "SCPPWLEAK")
+}
+
 // TestLogExportScheduleReadOnlyGating pins that the read tools survive read-only
 // mode and the write tools are withheld. Sabotage: move the create/update/delete
 // registrations above the `if d.ReadOnly { return }` guard.

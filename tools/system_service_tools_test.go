@@ -346,6 +346,55 @@ func TestNtpSettingsBadAlgorithmNoLeak(t *testing.T) {
 	}
 }
 
+// TestNtpSettingsSummaryReportsSecondarySymmetricKey mirrors the primary-server
+// summary guard for the SECONDARY server's symmetric-key projection (a distinct
+// pango type tree, so it needs its own coverage). Sabotage: emit the key in
+// ntpSecondaryAuthSummary.
+func TestNtpSettingsSummaryReportsSecondarySymmetricKey(t *testing.T) {
+	c := &ntpcfg.Config{}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		SecondaryNtpServer:    new("10.0.0.2"),
+		SecondarySymmetricKey: &NtpSymmetricKeyInput{KeyId: new(int64(6)), Algorithm: new("sha1"), AuthenticationKey: new("SECSUMMARYLEAK")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, ntpSettingsSummary(c))
+	if m["secondary_auth_configured"] != true {
+		t.Fatalf("secondary_auth_configured must be true, got %v", m["secondary_auth_configured"])
+	}
+	auth := asMap(t, m["secondary_auth"])
+	if auth["type"] != "symmetric-key" || auth["algorithm"] != "sha1" {
+		t.Fatalf("secondary_auth type/algorithm wrong: %v", auth)
+	}
+	if auth["key_id"] != int64(6) {
+		t.Fatalf("secondary_auth key_id wrong: %v", auth["key_id"])
+	}
+	assertNoLeak(t, m, "SECSUMMARYLEAK")
+}
+
+// TestNtpSettingsUpdateRedactsSecondaryAuthKeyOnError pins that the SECONDARY
+// server's auth key is scrubbed from a device error too: ntpSettingsSecrets
+// appends both servers' keys. Sabotage: drop the SecondarySymmetricKey append in
+// ntpSettingsSecrets and this key leaks through the device error.
+func TestNtpSettingsUpdateRedactsSecondaryAuthKeyOnError(t *testing.T) {
+	const key = "NTP-SECONDARY-KEY-xyz789"
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><ntp-servers/></result></response>`},
+		fakeRoute{Match: configAction("edit"), Body: `<response status="error"><msg><line>validation error for key ` + key + `</line></msg></response>`},
+		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for key ` + key + `</line></msg></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterNtpSettingsTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "panos_ntp_settings_update", Arguments: map[string]any{
+			"secondary_ntp_server":    "10.0.0.2",
+			"secondary_symmetric_key": map[string]any{"algorithm": "sha1", "authentication_key": key},
+		},
+	})
+	assertRedactsSecret(t, res, err, key)
+}
+
 // --- proxy settings: password omission ---------------------------------------
 
 func TestProxySettingsSummaryOmitsPassword(t *testing.T) {

@@ -328,10 +328,12 @@ func ospfAuthProfileSecrets(in *OspfAuthProfileInput) []string {
 func proxySettingsSecrets(in *ProxySettingsInput) []string { return secretVals(in.SecureProxyPassword) }
 
 // logExportScheduleSecrets returns the FTP/SCP transport passwords a scheduled
-// log-export write submitted. The transport is a one-of, so at most one block is
-// set; collectSecrets over the (0-or-1)-element sub-input lists both reads the
-// password off the correct sub-input type and lets the secret-field scan credit
-// LogExportFtpInput.Password / LogExportScpInput.Password through the getter.
+// log-export write submitted. It reads whichever transport blocks are present:
+// this runs at the redaction sink on the raw input, before the overlay rejects a
+// both-transports payload, so a caller could have submitted both. collectSecrets
+// over the (0-or-1)-element sub-input lists reads the password off the correct
+// sub-input type and lets the secret-field scan credit LogExportFtpInput.Password
+// / LogExportScpInput.Password through the getter.
 func logExportScheduleSecrets(in *LogExportScheduleInput) []string {
 	var ftp []*LogExportFtpInput
 	if in.Ftp != nil {

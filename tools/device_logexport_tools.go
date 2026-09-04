@@ -155,13 +155,13 @@ func logExportScheduleSummary(e *logexport.Entry) any {
 		descriptionKey: strVal(e.Description),
 		"log_type":     strVal(e.LogType),
 		"start_time":   strVal(e.StartTime),
-		"protocol":     "",
+		protocolKey:    "",
 	}
 	putBool(m, "enable", e.Enable)
 	if p := e.Protocol; p != nil {
 		switch {
 		case p.Ftp != nil:
-			m["protocol"] = "ftp"
+			m[protocolKey] = "ftp"
 			f := p.Ftp
 			fm := map[string]any{
 				hostnameKey:    strVal(f.Hostname),
@@ -173,7 +173,7 @@ func logExportScheduleSummary(e *logexport.Entry) any {
 			putBool(fm, "passive_mode", f.PassiveMode)
 			m["ftp"] = fm
 		case p.Scp != nil:
-			m["protocol"] = "scp"
+			m[protocolKey] = "scp"
 			s := p.Scp
 			sm := map[string]any{
 				hostnameKey:    strVal(s.Hostname),

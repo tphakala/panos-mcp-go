@@ -35,8 +35,8 @@ const (
 )
 
 // hostnameKey and usernameKey are shared summary keys for a server hostname and
-// username, used by the general settings and scheduled log-export summaries
-// (goconst).
+// username. hostnameKey is used by the general settings and scheduled log-export
+// summaries; usernameKey by the log-export summary (goconst).
 const (
 	hostnameKey = "hostname"
 	usernameKey = "username"
