@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 435 tools on Panorama and 419 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 176 on Panorama, 173 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 440 tools on Panorama and 424 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 178 on Panorama, 175 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -615,14 +615,14 @@ These are the advanced routing engine's reusable protocol profiles, referenced b
 
 ### Device system services
 
-These are the device's own management-plane system settings, each a singleton (one per device, so there is a get and an update but no list, create or delete). They are system-scoped: on a firewall they act on the local device, on Panorama a `template` or `template_stack` is required. Only the common scalar settings are modeled; anything not modeled (a DNS-proxy object reference, NTP authentication keys, and so on) is read first and preserved across an update. The proxy password is write-only and never returned, and NTP authentication keys are never returned.
+These are the device's own management-plane system settings, each a singleton (one per device, so there is a get and an update but no list, create or delete). They are system-scoped: on a firewall they act on the local device, on Panorama a `template` or `template_stack` is required. The common scalar settings are modeled, plus per-server NTP symmetric-key authentication; anything not modeled (a DNS-proxy object reference, NTP autokey authentication, and so on) is read first and preserved across an update. The proxy password and the NTP symmetric authentication keys are write-only and never returned.
 
 | Tool | Mode | Description |
 | --- | --- | --- |
 | `panos_dns_settings_get` | read-only | Get the device DNS settings (primary/secondary servers, FQDN refresh interval). |
 | `panos_dns_settings_update` | write | Update the device DNS settings: read-modify-write; only provided fields change. |
-| `panos_ntp_settings_get` | read-only | Get the device NTP settings (server addresses and whether authentication is configured). |
-| `panos_ntp_settings_update` | write | Update the device NTP settings: read-modify-write; existing authentication is preserved. |
+| `panos_ntp_settings_get` | read-only | Get the device NTP settings (server addresses; per-server auth type, and for a symmetric key its algorithm and key_id). Keys are never returned. |
+| `panos_ntp_settings_update` | write | Update the device NTP settings: read-modify-write; sets server addresses and per-server symmetric-key authentication (algorithm required; omit the key to keep the stored one). |
 | `panos_general_settings_get` | read-only | Get the device general settings (hostname, domain, banner, timezone, SSL/TLS profile, geo-location). |
 | `panos_general_settings_update` | write | Update the device general settings: read-modify-write; only provided fields change. |
 | `panos_proxy_settings_get` | read-only | Get the device update-proxy settings; the password is never returned. |
@@ -636,6 +636,18 @@ These are the device's own management-plane system settings, each a singleton (o
 | `panos_ssl_decrypt_settings_update` | write | Update the device SSL decrypt trust settings: read-modify-write; a provided list replaces the whole list. |
 | `panos_certificate_list` | read-only | List certificates (subject, issuer, validity window, expiry) for inventory and expiry auditing. |
 | `panos_certificate_get` | read-only | Get one certificate's inventory and expiry metadata; key material is never returned. |
+
+### Scheduled log export
+
+Scheduled log-export profiles push device logs to an FTP or SCP server on a schedule. They are named-entry lists at the system scope (firewall local device, or a Panorama `template` / `template_stack`). The transport is either FTP or SCP, never both: providing one on a write switches the transport and clears the other. The transport password is write-only, so it is never returned by a get (the get reports only whether one is set) and omitting it on an update keeps the stored password.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_log_export_schedule_list` | read-only | List scheduled log-export profiles at the system scope. |
+| `panos_log_export_schedule_get` | read-only | Get one scheduled log-export profile (transport, server, log type, schedule, and whether a password is set). |
+| `panos_log_export_schedule_create` | write | Create a scheduled log-export profile; provide either ftp or scp for the transport. |
+| `panos_log_export_schedule_update` | write | Update a scheduled log-export profile: read-modify-write; setting ftp or scp switches the transport, and omitting a password keeps the stored one. |
+| `panos_log_export_schedule_delete` | write | Delete a scheduled log-export profile from the candidate config. |
 
 ## Example MCP client configuration
 

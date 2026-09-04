@@ -326,3 +326,36 @@ func ospfAuthProfileSecrets(in *OspfAuthProfileInput) []string {
 }
 
 func proxySettingsSecrets(in *ProxySettingsInput) []string { return secretVals(in.SecureProxyPassword) }
+
+// logExportScheduleSecrets returns the FTP/SCP transport passwords a scheduled
+// log-export write submitted. The transport is a one-of, so at most one block is
+// set; collectSecrets over the (0-or-1)-element sub-input lists both reads the
+// password off the correct sub-input type and lets the secret-field scan credit
+// LogExportFtpInput.Password / LogExportScpInput.Password through the getter.
+func logExportScheduleSecrets(in *LogExportScheduleInput) []string {
+	var ftp []*LogExportFtpInput
+	if in.Ftp != nil {
+		ftp = []*LogExportFtpInput{in.Ftp}
+	}
+	var scp []*LogExportScpInput
+	if in.Scp != nil {
+		scp = []*LogExportScpInput{in.Scp}
+	}
+	out := collectSecrets(ftp, func(f *LogExportFtpInput) *string { return f.Password })
+	return append(out, collectSecrets(scp, func(s *LogExportScpInput) *string { return s.Password })...)
+}
+
+// ntpSettingsSecrets returns the per-server symmetric-key authentication keys an
+// NTP settings write submitted. Each server carries at most one symmetric-key
+// block; collectSecrets over the present blocks reads AuthenticationKey off the
+// shared sub-input type so the secret-field scan credits it.
+func ntpSettingsSecrets(in *NtpSettingsInput) []string {
+	var keys []*NtpSymmetricKeyInput
+	if in.PrimarySymmetricKey != nil {
+		keys = append(keys, in.PrimarySymmetricKey)
+	}
+	if in.SecondarySymmetricKey != nil {
+		keys = append(keys, in.SecondarySymmetricKey)
+	}
+	return collectSecrets(keys, func(k *NtpSymmetricKeyInput) *string { return k.AuthenticationKey })
+}

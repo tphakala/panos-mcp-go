@@ -6,20 +6,40 @@ package tools
 // These are the device's own management-plane system settings, each a singleton
 // (one per device, no name). They share the {System | Template | TemplateStack}
 // scope and the get/update singleton handlers in system_scope.go. Only the
-// common scalar settings are modeled; anything not modeled (a DNS proxy object
-// reference, NTP authentication keys, and so on) is read first and preserved by
-// the read-modify-write update.
+// common scalar settings (plus NTP symmetric-key authentication) are modeled;
+// anything not modeled (a DNS proxy object reference, NTP autokey authentication,
+// and so on) is read first and preserved by the read-modify-write update.
 //
-// Secret handling: the proxy password and any NTP authentication key are
-// write-only. The get summaries never return them, and the proxy update passes
-// its password through withSecrets so a failed write cannot echo it.
+// Secret handling: the proxy password and the NTP symmetric authentication keys
+// are write-only. The get summaries never return them, and both updates pass
+// their secrets through withSecrets so a failed write cannot echo them.
 
 import (
+	"fmt"
+
 	dnscfg "github.com/PaloAltoNetworks/pango/device/services/dns"
 	generalcfg "github.com/PaloAltoNetworks/pango/device/services/general"
 	ntpcfg "github.com/PaloAltoNetworks/pango/device/services/ntp"
 	proxycfg "github.com/PaloAltoNetworks/pango/device/services/proxy"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// NTP symmetric-key algorithm and authentication-type values, shared across the
+// overlay, validation and summary (goconst).
+const (
+	ntpAlgoMd5              = "md5"
+	ntpAlgoSha1             = "sha1"
+	ntpAuthTypeSymmetricKey = "symmetric-key"
+	ntpAuthTypeAutokey      = "autokey"
+	ntpAuthTypeNone         = "none"
+)
+
+// hostnameKey and usernameKey are shared summary keys for a server hostname and
+// username, used by the general settings and scheduled log-export summaries
+// (goconst).
+const (
+	hostnameKey = "hostname"
+	usernameKey = "username"
 )
 
 // --- DNS settings (device/services/dns) -------------------------------------
@@ -123,40 +143,167 @@ func ntpSettingsParts() systemScopeParts[ntpcfg.Location] {
 	}
 }
 
+// NtpSymmetricKeyInput configures a server's NTP symmetric-key authentication.
+// Providing it sets that server's authentication type to a symmetric key:
+// algorithm is required (md5 or sha1); key_id and authentication_key are set when
+// provided. authentication_key is write-only, so omit it on update to keep the
+// stored key. Setting a symmetric key replaces any autokey or no-auth setting on
+// that server; leaving the block absent preserves whatever was configured.
+type NtpSymmetricKeyInput struct {
+	KeyId             *int64  `json:"key_id,omitzero" jsonschema:"Symmetric key ID"`
+	Algorithm         *string `json:"algorithm,omitzero" jsonschema:"Authentication algorithm: md5 or sha1"`
+	AuthenticationKey *string `json:"authentication_key,omitzero" jsonschema:"Symmetric authentication key (write-only; never returned by a get, omit on update to keep the stored key)"`
+}
+
 // NtpSettingsInput is the input for the NTP settings update tool. It models the
-// primary and secondary server addresses; per-server authentication (symmetric
-// key or autokey) is not modeled and is preserved unchanged across updates.
+// primary and secondary server addresses and each server's symmetric-key
+// authentication; autokey authentication is not modeled and is preserved
+// unchanged across updates when its symmetric-key block is absent.
 type NtpSettingsInput struct {
 	SystemScopeInput
-	PrimaryNtpServer   *string `json:"primary_ntp_server,omitzero" jsonschema:"Primary NTP server address (IP or FQDN)"`
-	SecondaryNtpServer *string `json:"secondary_ntp_server,omitzero" jsonschema:"Secondary NTP server address (IP or FQDN)"`
+	PrimaryNtpServer      *string               `json:"primary_ntp_server,omitzero" jsonschema:"Primary NTP server address (IP or FQDN)"`
+	SecondaryNtpServer    *string               `json:"secondary_ntp_server,omitzero" jsonschema:"Secondary NTP server address (IP or FQDN)"`
+	PrimarySymmetricKey   *NtpSymmetricKeyInput `json:"primary_symmetric_key,omitzero" jsonschema:"Primary server symmetric-key authentication"`
+	SecondarySymmetricKey *NtpSymmetricKeyInput `json:"secondary_symmetric_key,omitzero" jsonschema:"Secondary server symmetric-key authentication"`
 }
 
 //nolint:gocritic // hugeParam: in is by value to satisfy the singleton overlay contract.
 func overlayNtpSettings(c *ntpcfg.Config, in NtpSettingsInput) error {
-	if in.PrimaryNtpServer != nil {
-		if c.NtpServers == nil {
-			c.NtpServers = &ntpcfg.NtpServers{}
-		}
-		if c.NtpServers.PrimaryNtpServer == nil {
-			c.NtpServers.PrimaryNtpServer = &ntpcfg.NtpServersPrimaryNtpServer{}
-		}
-		setPtr(&c.NtpServers.PrimaryNtpServer.NtpServerAddress, in.PrimaryNtpServer)
+	if err := validateNtpSymmetricKey("primary_symmetric_key", in.PrimarySymmetricKey); err != nil {
+		return err
 	}
-	if in.SecondaryNtpServer != nil {
-		if c.NtpServers == nil {
-			c.NtpServers = &ntpcfg.NtpServers{}
+	if err := validateNtpSymmetricKey("secondary_symmetric_key", in.SecondarySymmetricKey); err != nil {
+		return err
+	}
+	if in.PrimaryNtpServer != nil || in.PrimarySymmetricKey != nil {
+		p := ensureNtpPrimary(c)
+		setPtr(&p.NtpServerAddress, in.PrimaryNtpServer)
+		if in.PrimarySymmetricKey != nil {
+			applyNtpPrimaryAuth(p, in.PrimarySymmetricKey)
 		}
-		if c.NtpServers.SecondaryNtpServer == nil {
-			c.NtpServers.SecondaryNtpServer = &ntpcfg.NtpServersSecondaryNtpServer{}
+	}
+	if in.SecondaryNtpServer != nil || in.SecondarySymmetricKey != nil {
+		s := ensureNtpSecondary(c)
+		setPtr(&s.NtpServerAddress, in.SecondaryNtpServer)
+		if in.SecondarySymmetricKey != nil {
+			applyNtpSecondaryAuth(s, in.SecondarySymmetricKey)
 		}
-		setPtr(&c.NtpServers.SecondaryNtpServer.NtpServerAddress, in.SecondaryNtpServer)
 	}
 	return nil
 }
 
-// ntpSettingsSummary reports the server addresses and whether each server has
-// authentication configured, but never the authentication key material.
+// validateNtpSymmetricKey rejects a symmetric-key block without a valid
+// algorithm; the algorithm selects the md5-vs-sha1 pango node the key and key_id
+// hang under, so applyNtp*Auth cannot proceed without it.
+func validateNtpSymmetricKey(field string, in *NtpSymmetricKeyInput) error {
+	if in == nil {
+		return nil
+	}
+	if in.Algorithm == nil {
+		return fmt.Errorf("%s: algorithm is required (md5 or sha1)", field)
+	}
+	switch *in.Algorithm {
+	case ntpAlgoMd5, ntpAlgoSha1:
+		return nil
+	default:
+		return fmt.Errorf("%s: algorithm must be md5 or sha1, got %q", field, *in.Algorithm)
+	}
+}
+
+func ensureNtpPrimary(c *ntpcfg.Config) *ntpcfg.NtpServersPrimaryNtpServer {
+	if c.NtpServers == nil {
+		c.NtpServers = &ntpcfg.NtpServers{}
+	}
+	if c.NtpServers.PrimaryNtpServer == nil {
+		c.NtpServers.PrimaryNtpServer = &ntpcfg.NtpServersPrimaryNtpServer{}
+	}
+	return c.NtpServers.PrimaryNtpServer
+}
+
+func ensureNtpSecondary(c *ntpcfg.Config) *ntpcfg.NtpServersSecondaryNtpServer {
+	if c.NtpServers == nil {
+		c.NtpServers = &ntpcfg.NtpServers{}
+	}
+	if c.NtpServers.SecondaryNtpServer == nil {
+		c.NtpServers.SecondaryNtpServer = &ntpcfg.NtpServersSecondaryNtpServer{}
+	}
+	return c.NtpServers.SecondaryNtpServer
+}
+
+// applyNtpPrimaryAuth sets the primary server's symmetric-key authentication. The
+// caller has validated Algorithm is md5 or sha1. It replaces any autokey/no-auth
+// setting (the authentication type is a one-of) and, within the symmetric key,
+// clears the sibling algorithm node so a switch never leaves both md5 and sha1
+// present. The key is a read-modify-write: omitting authentication_key keeps the
+// stored key for the same algorithm; switching algorithm starts a fresh node with
+// no stored key.
+func applyNtpPrimaryAuth(p *ntpcfg.NtpServersPrimaryNtpServer, in *NtpSymmetricKeyInput) {
+	if p.AuthenticationType == nil {
+		p.AuthenticationType = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationType{}
+	}
+	at := p.AuthenticationType
+	at.Autokey = nil
+	at.None = nil
+	if at.SymmetricKey == nil {
+		at.SymmetricKey = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeSymmetricKey{}
+	}
+	sk := at.SymmetricKey
+	setPtr(&sk.KeyId, in.KeyId)
+	if sk.Algorithm == nil {
+		sk.Algorithm = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeSymmetricKeyAlgorithm{}
+	}
+	alg := sk.Algorithm
+	if *in.Algorithm == ntpAlgoMd5 {
+		alg.Sha1 = nil
+		if alg.Md5 == nil {
+			alg.Md5 = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmMd5{}
+		}
+		setPtr(&alg.Md5.AuthenticationKey, in.AuthenticationKey)
+	} else {
+		alg.Md5 = nil
+		if alg.Sha1 == nil {
+			alg.Sha1 = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmSha1{}
+		}
+		setPtr(&alg.Sha1.AuthenticationKey, in.AuthenticationKey)
+	}
+}
+
+// applyNtpSecondaryAuth mirrors applyNtpPrimaryAuth for the secondary server,
+// whose pango authentication types are a distinct type tree.
+func applyNtpSecondaryAuth(s *ntpcfg.NtpServersSecondaryNtpServer, in *NtpSymmetricKeyInput) {
+	if s.AuthenticationType == nil {
+		s.AuthenticationType = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationType{}
+	}
+	at := s.AuthenticationType
+	at.Autokey = nil
+	at.None = nil
+	if at.SymmetricKey == nil {
+		at.SymmetricKey = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationTypeSymmetricKey{}
+	}
+	sk := at.SymmetricKey
+	setPtr(&sk.KeyId, in.KeyId)
+	if sk.Algorithm == nil {
+		sk.Algorithm = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationTypeSymmetricKeyAlgorithm{}
+	}
+	alg := sk.Algorithm
+	if *in.Algorithm == ntpAlgoMd5 {
+		alg.Sha1 = nil
+		if alg.Md5 == nil {
+			alg.Md5 = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmMd5{}
+		}
+		setPtr(&alg.Md5.AuthenticationKey, in.AuthenticationKey)
+	} else {
+		alg.Md5 = nil
+		if alg.Sha1 == nil {
+			alg.Sha1 = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmSha1{}
+		}
+		setPtr(&alg.Sha1.AuthenticationKey, in.AuthenticationKey)
+	}
+}
+
+// ntpSettingsSummary reports the server addresses, whether each server has
+// authentication configured, and for a symmetric key its algorithm and key_id,
+// but never the authentication key material.
 func ntpSettingsSummary(c *ntpcfg.Config) any {
 	m := map[string]any{
 		"primary_ntp_server":        "",
@@ -170,10 +317,78 @@ func ntpSettingsSummary(c *ntpcfg.Config) any {
 	if p := c.NtpServers.PrimaryNtpServer; p != nil {
 		m["primary_ntp_server"] = strVal(p.NtpServerAddress)
 		m["primary_auth_configured"] = p.AuthenticationType != nil
+		if a := ntpPrimaryAuthSummary(p.AuthenticationType); a != nil {
+			m["primary_auth"] = a
+		}
 	}
 	if sec := c.NtpServers.SecondaryNtpServer; sec != nil {
 		m["secondary_ntp_server"] = strVal(sec.NtpServerAddress)
 		m["secondary_auth_configured"] = sec.AuthenticationType != nil
+		if a := ntpSecondaryAuthSummary(sec.AuthenticationType); a != nil {
+			m["secondary_auth"] = a
+		}
+	}
+	return m
+}
+
+// ntpPrimaryAuthSummary projects the primary server's authentication type to a
+// map naming the type and, for a symmetric key, its algorithm and key_id. It
+// never emits the authentication key.
+func ntpPrimaryAuthSummary(at *ntpcfg.NtpServersPrimaryNtpServerAuthenticationType) map[string]any {
+	if at == nil {
+		return nil
+	}
+	m := map[string]any{}
+	switch {
+	case at.SymmetricKey != nil:
+		m["type"] = ntpAuthTypeSymmetricKey
+		sk := at.SymmetricKey
+		putInt(m, "key_id", sk.KeyId)
+		if alg := sk.Algorithm; alg != nil {
+			switch {
+			case alg.Md5 != nil:
+				m["algorithm"] = ntpAlgoMd5
+			case alg.Sha1 != nil:
+				m["algorithm"] = ntpAlgoSha1
+			}
+		}
+	case at.Autokey != nil:
+		m["type"] = ntpAuthTypeAutokey
+	case at.None != nil:
+		m["type"] = ntpAuthTypeNone
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// ntpSecondaryAuthSummary mirrors ntpPrimaryAuthSummary for the secondary server.
+func ntpSecondaryAuthSummary(at *ntpcfg.NtpServersSecondaryNtpServerAuthenticationType) map[string]any {
+	if at == nil {
+		return nil
+	}
+	m := map[string]any{}
+	switch {
+	case at.SymmetricKey != nil:
+		m["type"] = ntpAuthTypeSymmetricKey
+		sk := at.SymmetricKey
+		putInt(m, "key_id", sk.KeyId)
+		if alg := sk.Algorithm; alg != nil {
+			switch {
+			case alg.Md5 != nil:
+				m["algorithm"] = ntpAlgoMd5
+			case alg.Sha1 != nil:
+				m["algorithm"] = ntpAlgoSha1
+			}
+		}
+	case at.Autokey != nil:
+		m["type"] = ntpAuthTypeAutokey
+	case at.None != nil:
+		m["type"] = ntpAuthTypeNone
+	}
+	if len(m) == 0 {
+		return nil
 	}
 	return m
 }
@@ -186,7 +401,7 @@ func RegisterNtpSettingsTools(s *mcp.Server, d *Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ntp_settings_get",
-		Description: "Get the device NTP settings (primary and secondary server addresses, and whether each has authentication configured). Authentication keys are never returned. Firewall: local system scope; Panorama: a template or template_stack is required. Read-only.",
+		Description: "Get the device NTP settings (primary and secondary server addresses; whether each has authentication configured, and for a symmetric key its algorithm and key_id). Authentication keys are never returned. Firewall: local system scope; Panorama: a template or template_stack is required. Read-only.",
 		Annotations: readOnlyTool("Get NTP settings"),
 	}, systemGetHandler(d, "panos_ntp_settings_get", svc, parts, ntpSettingsSummary))
 	if d.ReadOnly {
@@ -194,9 +409,10 @@ func RegisterNtpSettingsTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ntp_settings_update",
-		Description: "Update the device NTP settings: read-modify-write, only provided fields change. Sets the primary/secondary server addresses; existing per-server authentication is preserved. Panorama: a template or template_stack is required. Run panos_commit to apply.",
+		Description: "Update the device NTP settings: read-modify-write, only provided fields change. Sets the primary/secondary server addresses and, when a symmetric-key block is provided, that server's symmetric-key authentication (algorithm required; omit authentication_key to keep the stored key). Autokey authentication is preserved when its block is absent. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: updateTool("Update NTP settings"),
-	}, systemUpdateHandler(d, "panos_ntp_settings_update", svc, parts, overlayNtpSettings, ntpSettingsSummary))
+	}, systemUpdateHandler(d, "panos_ntp_settings_update", svc, parts, overlayNtpSettings, ntpSettingsSummary,
+		withSecrets(ntpSettingsSecrets)))
 }
 
 // --- General/host settings (device/services/general) ------------------------
@@ -250,7 +466,7 @@ func overlayGeneralSettings(c *generalcfg.Config, in GeneralSettingsInput) error
 
 func generalSettingsSummary(c *generalcfg.Config) any {
 	m := map[string]any{
-		"hostname":                strVal(c.Hostname),
+		hostnameKey:               strVal(c.Hostname),
 		"domain":                  strVal(c.Domain),
 		"login_banner":            strVal(c.LoginBanner),
 		"timezone":                strVal(c.Timezone),

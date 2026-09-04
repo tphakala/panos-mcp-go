@@ -871,5 +871,8 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	// certificate inventory (firewall vsys, or a Panorama template or stack).
 	RegisterSslDecryptTools(s, d)
 	RegisterCertificateTools(s, d)
+	// Scheduled log export (system-scoped named entries: firewall system scope, or
+	// a Panorama template or template stack).
+	RegisterLogExportScheduleTools(s, d)
 	RegisterOpTools(s, d)
 }

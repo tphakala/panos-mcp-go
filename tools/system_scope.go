@@ -183,3 +183,99 @@ func systemUpdateHandler[L, C any, In systemScoped](
 		return res, v, nil
 	}
 }
+
+// System-scope named-entry handlers
+// ---------------------------------------------------------------------------
+//
+// Not every device config at the {System | Template | TemplateStack} scope is a
+// singleton. A device/services resource such as the scheduled log-export profile
+// is a named-entry list living at that same scope. These handlers give that
+// shape the generic list/get/create/update/delete surface, exactly as
+// net_scope.go does for the Ngfw scope: SystemScopeInput and NetScopeInput are
+// structurally identical, but they are distinct types with distinct firewall
+// fallbacks (System vs Ngfw), so a device/services entry family reads left to
+// right when it stays in the system-scope namespace rather than borrowing the
+// net scope's Ngfw resolver.
+
+// SystemNameInput is the common input for single-entry system-scoped tools (get
+// and delete): an entry name plus the system scope.
+type SystemNameInput struct {
+	Name string `json:"name" jsonschema:"Entry name"`
+	SystemScopeInput
+}
+
+// entryName exposes the entry name to the shared get and delete handlers.
+//
+//nolint:gocritic // hugeParam: the value receiver satisfies the nameInput constraint.
+func (in SystemNameInput) entryName() string { return in.Name }
+
+// SystemListInput is the common input for system-scoped list tools.
+type SystemListInput struct {
+	SystemScopeInput
+	Limit  int    `json:"limit,omitempty" jsonschema:"Max results (default 50, max 200)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Skip this many results"`
+	Filter string `json:"filter,omitempty" jsonschema:"Case-insensitive name substring filter"`
+}
+
+// page exposes the paging triplet to the shared list handler.
+//
+//nolint:gocritic // hugeParam: the value receiver satisfies the listInput constraint.
+func (in SystemListInput) page() (limit, offset int, filter string) {
+	return in.Limit, in.Offset, in.Filter
+}
+
+// systemEntryListHandler mirrors netListHandler for the system-scope resolver:
+// fetch all entries at the resolved location, filter by name substring, clamp,
+// summarize.
+func systemEntryListHandler[L, E any](
+	d *Deps, tool string, svc crudService[L, E], p systemScopeParts[L],
+	name func(*E) string, summarize func(*E) any,
+) func(context.Context, *mcp.CallToolRequest, SystemListInput) (*mcp.CallToolResult, any, error) {
+	return scopedListHandler(d, tool, svc,
+		func(in SystemListInput) (L, error) { return resolveSystemScope(d, in.systemScope(), p) },
+		name, summarize)
+}
+
+// systemEntryGetHandler mirrors netGetHandler for the system-scope resolver.
+func systemEntryGetHandler[L, E any](
+	d *Deps, tool string, svc crudService[L, E], p systemScopeParts[L],
+	summarize func(*E) any,
+) func(context.Context, *mcp.CallToolRequest, SystemNameInput) (*mcp.CallToolResult, any, error) {
+	return scopedGetHandler(d, tool, svc,
+		func(in SystemNameInput) (L, error) { return resolveSystemScope(d, in.systemScope(), p) },
+		summarize)
+}
+
+// systemEntryDeleteHandler mirrors netDeleteHandler for the system-scope resolver.
+func systemEntryDeleteHandler[L, E any](
+	d *Deps, tool string, svc crudService[L, E], p systemScopeParts[L],
+) func(context.Context, *mcp.CallToolRequest, SystemNameInput) (*mcp.CallToolResult, any, error) {
+	return scopedDeleteHandler(d, tool, svc,
+		func(in SystemNameInput) (L, error) { return resolveSystemScope(d, in.systemScope(), p) })
+}
+
+// systemEntryCreateHandler mirrors netCreateHandler for the system-scope resolver.
+func systemEntryCreateHandler[L, E any, In systemScoped](
+	d *Deps, tool string, svc crudService[L, E], p systemScopeParts[L],
+	build func(In) (*E, error),
+	summarize func(*E) any,
+	opts ...writeOption[In],
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return createCore(d, tool, svc,
+		func(in In) (L, error) { return resolveSystemScope(d, in.systemScope(), p) },
+		build, summarize, opts...)
+}
+
+// systemEntryUpdateHandler mirrors netUpdateHandler for the system-scope
+// resolver: a read-modify-write overlay applying only the caller-provided fields.
+func systemEntryUpdateHandler[L, E any, In systemScoped](
+	d *Deps, tool string, svc crudService[L, E], p systemScopeParts[L],
+	name func(In) string,
+	overlay func(*E, In) error,
+	summarize func(*E) any,
+	opts ...writeOption[In],
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return updateCore(d, tool, svc,
+		func(in In) (L, error) { return resolveSystemScope(d, in.systemScope(), p) },
+		name, overlay, summarize, opts...)
+}

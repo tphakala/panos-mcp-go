@@ -155,6 +155,197 @@ func TestNtpSettingsSummaryOmitsKeys(t *testing.T) {
 	}
 }
 
+// TestNtpSettingsSymmetricKeyOverlay pins the nested symmetric-key tree the
+// overlay builds for each server: the primary as md5, the secondary as sha1, with
+// key_id and the write-only key set on the correct algorithm node. Sabotage:
+// write in.AuthenticationKey to the wrong algorithm node in applyNtpPrimaryAuth.
+func TestNtpSettingsSymmetricKeyOverlay(t *testing.T) {
+	c := &ntpcfg.Config{}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimaryNtpServer:      new("10.0.0.1"),
+		PrimarySymmetricKey:   &NtpSymmetricKeyInput{KeyId: new(int64(7)), Algorithm: new("md5"), AuthenticationKey: new("PRIMKEY")},
+		SecondaryNtpServer:    new("10.0.0.2"),
+		SecondarySymmetricKey: &NtpSymmetricKeyInput{KeyId: new(int64(9)), Algorithm: new("sha1"), AuthenticationKey: new("SECKEY")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := c.NtpServers.PrimaryNtpServer.AuthenticationType
+	if p == nil || p.SymmetricKey == nil || p.SymmetricKey.Algorithm == nil || p.SymmetricKey.Algorithm.Md5 == nil {
+		t.Fatalf("primary must build the md5 symmetric-key tree, got %+v", p)
+	}
+	if p.SymmetricKey.Algorithm.Sha1 != nil {
+		t.Fatal("primary md5 must leave the sha1 node nil")
+	}
+	mustInt64(t, p.SymmetricKey.KeyId, 7, "primary key_id")
+	mustStrPtr(t, p.SymmetricKey.Algorithm.Md5.AuthenticationKey, "PRIMKEY", "primary md5 key")
+
+	sec := c.NtpServers.SecondaryNtpServer.AuthenticationType
+	if sec == nil || sec.SymmetricKey == nil || sec.SymmetricKey.Algorithm == nil || sec.SymmetricKey.Algorithm.Sha1 == nil {
+		t.Fatalf("secondary must build the sha1 symmetric-key tree, got %+v", sec)
+	}
+	mustStrPtr(t, sec.SymmetricKey.Algorithm.Sha1.AuthenticationKey, "SECKEY", "secondary sha1 key")
+}
+
+// TestNtpSettingsAuthTypeMutualExclusion pins that setting a symmetric key clears
+// a previously-configured autokey/none on that server: AuthenticationType is a
+// one-of, so leaving both marshals invalid XML the device rejects. Sabotage:
+// remove `at.Autokey = nil` from applyNtpPrimaryAuth.
+func TestNtpSettingsAuthTypeMutualExclusion(t *testing.T) {
+	c := &ntpcfg.Config{NtpServers: &ntpcfg.NtpServers{
+		PrimaryNtpServer: &ntpcfg.NtpServersPrimaryNtpServer{
+			AuthenticationType: &ntpcfg.NtpServersPrimaryNtpServerAuthenticationType{
+				Autokey: &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeAutokey{},
+			},
+		},
+	}}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5"), AuthenticationKey: new("K")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	at := c.NtpServers.PrimaryNtpServer.AuthenticationType
+	if at.Autokey != nil {
+		t.Fatal("setting a symmetric key must clear the previous autokey")
+	}
+	if at.SymmetricKey == nil {
+		t.Fatal("symmetric key must be set")
+	}
+}
+
+// TestNtpSettingsAlgorithmSwitchClearsSibling pins that switching md5 -> sha1
+// clears the md5 node so the config never carries both algorithms. Sabotage:
+// remove `alg.Md5 = nil` from the sha1 branch of applyNtpPrimaryAuth.
+func TestNtpSettingsAlgorithmSwitchClearsSibling(t *testing.T) {
+	c := &ntpcfg.Config{}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5"), AuthenticationKey: new("MD5KEY")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("sha1"), AuthenticationKey: new("SHA1KEY")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	alg := c.NtpServers.PrimaryNtpServer.AuthenticationType.SymmetricKey.Algorithm
+	if alg.Md5 != nil {
+		t.Fatal("switching to sha1 must clear the md5 node")
+	}
+	mustStrPtr(t, alg.Sha1.AuthenticationKey, "SHA1KEY", "sha1 key after switch")
+}
+
+// TestNtpSettingsAuthKeyPreservedOnUpdate pins the read-modify-write on the auth
+// key: a same-algorithm update that omits authentication_key keeps the stored
+// key. Sabotage: assign in.AuthenticationKey unconditionally instead of setPtr.
+func TestNtpSettingsAuthKeyPreservedOnUpdate(t *testing.T) {
+	c := &ntpcfg.Config{}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{KeyId: new(int64(1)), Algorithm: new("md5"), AuthenticationKey: new("STOREDKEY")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Update the key_id only, omitting the key.
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{KeyId: new(int64(2)), Algorithm: new("md5")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sk := c.NtpServers.PrimaryNtpServer.AuthenticationType.SymmetricKey
+	mustInt64(t, sk.KeyId, 2, "updated key_id")
+	mustStrPtr(t, sk.Algorithm.Md5.AuthenticationKey, "STOREDKEY", "stored key preserved")
+}
+
+// TestNtpSettingsAlgorithmValidation pins that a symmetric-key block needs a valid
+// algorithm. Sabotage: delete the validate calls in overlayNtpSettings.
+func TestNtpSettingsAlgorithmValidation(t *testing.T) {
+	if err := overlayNtpSettings(&ntpcfg.Config{}, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{AuthenticationKey: new("K")},
+	}); err == nil {
+		t.Fatal("a symmetric key without an algorithm must be rejected")
+	}
+	if err := overlayNtpSettings(&ntpcfg.Config{}, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("sha256"), AuthenticationKey: new("K")},
+	}); err == nil {
+		t.Fatal("an unsupported algorithm must be rejected")
+	}
+}
+
+// TestNtpSettingsSummaryReportsSymmetricKey pins that the summary reports the
+// symmetric-key algorithm and key_id but never the key material. Sabotage: emit
+// the AuthenticationKey in ntpPrimaryAuthSummary.
+func TestNtpSettingsSummaryReportsSymmetricKey(t *testing.T) {
+	c := &ntpcfg.Config{}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimaryNtpServer:    new("10.0.0.1"),
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{KeyId: new(int64(5)), Algorithm: new("md5"), AuthenticationKey: new("SUMMARYKEYLEAK")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := asMap(t, ntpSettingsSummary(c))
+	if m["primary_auth_configured"] != true {
+		t.Fatalf("primary_auth_configured must be true, got %v", m["primary_auth_configured"])
+	}
+	auth := asMap(t, m["primary_auth"])
+	if auth["type"] != "symmetric-key" || auth["algorithm"] != "md5" {
+		t.Fatalf("primary_auth type/algorithm wrong: %v", auth)
+	}
+	if auth["key_id"] != int64(5) {
+		t.Fatalf("primary_auth key_id wrong: %v", auth["key_id"])
+	}
+	assertNoLeak(t, m, "SUMMARYKEYLEAK")
+}
+
+// TestNtpSettingsUpdateRedactsAuthKeyOnError drives panos_ntp_settings_update
+// through the registered handler: the device rejects the write with an error
+// echoing the submitted authentication key, and the tool result must not carry
+// it. Sabotage: remove withSecrets(ntpSettingsSecrets) from the
+// panos_ntp_settings_update registration; this test turns red.
+func TestNtpSettingsUpdateRedactsAuthKeyOnError(t *testing.T) {
+	const key = "NTP-AUTH-KEY-abc123"
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><ntp-servers/></result></response>`},
+		fakeRoute{Match: configAction("edit"), Body: `<response status="error"><msg><line>validation error for key ` + key + `</line></msg></response>`},
+		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for key ` + key + `</line></msg></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterNtpSettingsTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "panos_ntp_settings_update", Arguments: map[string]any{
+			"primary_ntp_server":    "10.0.0.1",
+			"primary_symmetric_key": map[string]any{"algorithm": "md5", "authentication_key": key},
+		},
+	})
+	assertRedactsSecret(t, res, err, key)
+}
+
+// TestNtpSettingsBadAlgorithmNoLeak pins that the client-side algorithm-validation
+// error (returned from the overlay, bypassing the device-error redactor) does not
+// echo the submitted key. Sabotage: interpolate in.AuthenticationKey into the
+// validateNtpSymmetricKey error message.
+func TestNtpSettingsBadAlgorithmNoLeak(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM",
+		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><ntp-servers/></result></response>`},
+	)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	RegisterNtpSettingsTools(srv, d)
+	cs := connectInMemory(t, srv)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
+		Name: "panos_ntp_settings_update", Arguments: map[string]any{
+			"primary_symmetric_key": map[string]any{"algorithm": "bogus", "authentication_key": "NTPKEYLEAK"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("a bad algorithm must surface as a tool error")
+	}
+	if out := textContent(t, res); strings.Contains(out, "NTPKEYLEAK") {
+		t.Fatalf("a validation error must not echo the submitted key: %q", out)
+	}
+}
+
 // --- proxy settings: password omission ---------------------------------------
 
 func TestProxySettingsSummaryOmitsPassword(t *testing.T) {
