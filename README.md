@@ -622,7 +622,7 @@ These are the device's own management-plane system settings, each a singleton (o
 | `panos_dns_settings_get` | read-only | Get the device DNS settings (primary/secondary servers, FQDN refresh interval). |
 | `panos_dns_settings_update` | write | Update the device DNS settings: read-modify-write; only provided fields change. |
 | `panos_ntp_settings_get` | read-only | Get the device NTP settings (server addresses; per-server auth type, and for a symmetric key its algorithm and key_id). Keys are never returned. |
-| `panos_ntp_settings_update` | write | Update the device NTP settings: read-modify-write; sets server addresses and per-server symmetric-key authentication (algorithm required; omit the key to keep the stored one). |
+| `panos_ntp_settings_update` | write | Update the device NTP settings: read-modify-write; sets server addresses and per-server symmetric-key authentication (algorithm required; the key is required when first set or when the algorithm changes, and omitting it keeps the stored key only for an unchanged algorithm). |
 | `panos_general_settings_get` | read-only | Get the device general settings (hostname, domain, banner, timezone, SSL/TLS profile, geo-location). |
 | `panos_general_settings_update` | write | Update the device general settings: read-modify-write; only provided fields change. |
 | `panos_proxy_settings_get` | read-only | Get the device update-proxy settings; the password is never returned. |

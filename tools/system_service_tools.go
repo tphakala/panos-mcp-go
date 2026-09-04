@@ -15,6 +15,7 @@ package tools
 // their secrets through withSecrets so a failed write cannot echo them.
 
 import (
+	"errors"
 	"fmt"
 
 	dnscfg "github.com/PaloAltoNetworks/pango/device/services/dns"
@@ -33,6 +34,13 @@ const (
 	ntpAuthTypeAutokey      = "autokey"
 	ntpAuthTypeNone         = "none"
 )
+
+// errNtpAuthKeyRequired is returned when a symmetric-key set or algorithm change
+// would leave the authentication node without a key. The stored key is preserved
+// (read-modify-write) only when the algorithm is unchanged, so first-setting a
+// key or switching md5<->sha1 must supply authentication_key; a fresh algorithm
+// node has no stored key, and PAN-OS rejects symmetric-key auth with no key.
+var errNtpAuthKeyRequired = errors.New("authentication_key is required when setting a symmetric key for the first time or changing its algorithm; the stored key is preserved only when the algorithm is unchanged")
 
 // hostnameKey and usernameKey are shared summary keys for a server hostname and
 // username. hostnameKey is used by the general settings and scheduled log-export
@@ -145,14 +153,16 @@ func ntpSettingsParts() systemScopeParts[ntpcfg.Location] {
 
 // NtpSymmetricKeyInput configures a server's NTP symmetric-key authentication.
 // Providing it sets that server's authentication type to a symmetric key:
-// algorithm is required (md5 or sha1); key_id and authentication_key are set when
-// provided. authentication_key is write-only, so omit it on update to keep the
-// stored key. Setting a symmetric key replaces any autokey or no-auth setting on
-// that server; leaving the block absent preserves whatever was configured.
+// algorithm is required (md5 or sha1); key_id is set when provided.
+// authentication_key is write-only; it is required when first setting a symmetric
+// key or changing the algorithm (a fresh algorithm node has no stored key), and
+// omitting it keeps the stored key only when the algorithm is unchanged. Setting
+// a symmetric key replaces any autokey or no-auth setting on that server; leaving
+// the block absent preserves whatever was configured.
 type NtpSymmetricKeyInput struct {
 	KeyId             *int64  `json:"key_id,omitzero" jsonschema:"Symmetric key ID"`
 	Algorithm         *string `json:"algorithm,omitzero" jsonschema:"Authentication algorithm: md5 or sha1"`
-	AuthenticationKey *string `json:"authentication_key,omitzero" jsonschema:"Symmetric authentication key (write-only; never returned by a get, omit on update to keep the stored key)"`
+	AuthenticationKey *string `json:"authentication_key,omitzero" jsonschema:"Symmetric authentication key (write-only; never returned by a get). Required when first setting a symmetric key or changing the algorithm; omit on update to keep the stored key only when the algorithm is unchanged"`
 }
 
 // NtpSettingsInput is the input for the NTP settings update tool. It models the
@@ -179,14 +189,18 @@ func overlayNtpSettings(c *ntpcfg.Config, in NtpSettingsInput) error {
 		p := ensureNtpPrimary(c)
 		setPtr(&p.NtpServerAddress, in.PrimaryNtpServer)
 		if in.PrimarySymmetricKey != nil {
-			applyNtpPrimaryAuth(p, in.PrimarySymmetricKey)
+			if err := applyNtpPrimaryAuth(p, in.PrimarySymmetricKey); err != nil {
+				return fmt.Errorf("primary_symmetric_key: %w", err)
+			}
 		}
 	}
 	if in.SecondaryNtpServer != nil || in.SecondarySymmetricKey != nil {
 		s := ensureNtpSecondary(c)
 		setPtr(&s.NtpServerAddress, in.SecondaryNtpServer)
 		if in.SecondarySymmetricKey != nil {
-			applyNtpSecondaryAuth(s, in.SecondarySymmetricKey)
+			if err := applyNtpSecondaryAuth(s, in.SecondarySymmetricKey); err != nil {
+				return fmt.Errorf("secondary_symmetric_key: %w", err)
+			}
 		}
 	}
 	return nil
@@ -235,9 +249,12 @@ func ensureNtpSecondary(c *ntpcfg.Config) *ntpcfg.NtpServersSecondaryNtpServer {
 // setting (the authentication type is a one-of) and, within the symmetric key,
 // clears the sibling algorithm node so a switch never leaves both md5 and sha1
 // present. The key is a read-modify-write: omitting authentication_key keeps the
-// stored key for the same algorithm; switching algorithm starts a fresh node with
-// no stored key.
-func applyNtpPrimaryAuth(p *ntpcfg.NtpServersPrimaryNtpServer, in *NtpSymmetricKeyInput) {
+// stored key for an unchanged algorithm. Setting the algorithm for the first time
+// or switching it starts a fresh node with no stored key, so a key is required in
+// that case (errNtpAuthKeyRequired); PAN-OS rejects symmetric-key auth with no
+// key. "Fresh" is judged by whether the target algorithm node already existed in
+// the seed-read config, independent of whether the device echoes the key value.
+func applyNtpPrimaryAuth(p *ntpcfg.NtpServersPrimaryNtpServer, in *NtpSymmetricKeyInput) error {
 	if p.AuthenticationType == nil {
 		p.AuthenticationType = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationType{}
 	}
@@ -255,22 +272,32 @@ func applyNtpPrimaryAuth(p *ntpcfg.NtpServersPrimaryNtpServer, in *NtpSymmetricK
 	alg := sk.Algorithm
 	if *in.Algorithm == ntpAlgoMd5 {
 		alg.Sha1 = nil
+		fresh := alg.Md5 == nil
 		if alg.Md5 == nil {
 			alg.Md5 = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmMd5{}
 		}
 		setPtr(&alg.Md5.AuthenticationKey, in.AuthenticationKey)
+		if fresh && in.AuthenticationKey == nil {
+			return errNtpAuthKeyRequired
+		}
 	} else {
 		alg.Md5 = nil
+		fresh := alg.Sha1 == nil
 		if alg.Sha1 == nil {
 			alg.Sha1 = &ntpcfg.NtpServersPrimaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmSha1{}
 		}
 		setPtr(&alg.Sha1.AuthenticationKey, in.AuthenticationKey)
+		if fresh && in.AuthenticationKey == nil {
+			return errNtpAuthKeyRequired
+		}
 	}
+	return nil
 }
 
 // applyNtpSecondaryAuth mirrors applyNtpPrimaryAuth for the secondary server,
-// whose pango authentication types are a distinct type tree.
-func applyNtpSecondaryAuth(s *ntpcfg.NtpServersSecondaryNtpServer, in *NtpSymmetricKeyInput) {
+// whose pango authentication types are a distinct type tree; the key-required
+// guard is the same.
+func applyNtpSecondaryAuth(s *ntpcfg.NtpServersSecondaryNtpServer, in *NtpSymmetricKeyInput) error {
 	if s.AuthenticationType == nil {
 		s.AuthenticationType = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationType{}
 	}
@@ -288,17 +315,26 @@ func applyNtpSecondaryAuth(s *ntpcfg.NtpServersSecondaryNtpServer, in *NtpSymmet
 	alg := sk.Algorithm
 	if *in.Algorithm == ntpAlgoMd5 {
 		alg.Sha1 = nil
+		fresh := alg.Md5 == nil
 		if alg.Md5 == nil {
 			alg.Md5 = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmMd5{}
 		}
 		setPtr(&alg.Md5.AuthenticationKey, in.AuthenticationKey)
+		if fresh && in.AuthenticationKey == nil {
+			return errNtpAuthKeyRequired
+		}
 	} else {
 		alg.Md5 = nil
+		fresh := alg.Sha1 == nil
 		if alg.Sha1 == nil {
 			alg.Sha1 = &ntpcfg.NtpServersSecondaryNtpServerAuthenticationTypeSymmetricKeyAlgorithmSha1{}
 		}
 		setPtr(&alg.Sha1.AuthenticationKey, in.AuthenticationKey)
+		if fresh && in.AuthenticationKey == nil {
+			return errNtpAuthKeyRequired
+		}
 	}
+	return nil
 }
 
 // ntpSettingsSummary reports the server addresses, whether each server has
@@ -409,7 +445,7 @@ func RegisterNtpSettingsTools(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "panos_ntp_settings_update",
-		Description: "Update the device NTP settings: read-modify-write, only provided fields change. Sets the primary/secondary server addresses and, when a symmetric-key block is provided, that server's symmetric-key authentication (algorithm required; omit authentication_key to keep the stored key). Autokey authentication is preserved when its block is absent. Panorama: a template or template_stack is required. Run panos_commit to apply.",
+		Description: "Update the device NTP settings: read-modify-write, only provided fields change. Sets the primary/secondary server addresses and, when a symmetric-key block is provided, that server's symmetric-key authentication (algorithm required; authentication_key is required when first setting a key or changing the algorithm, and omitting it keeps the stored key only when the algorithm is unchanged). Autokey authentication is preserved when its block is absent. Panorama: a template or template_stack is required. Run panos_commit to apply.",
 		Annotations: updateTool("Update NTP settings"),
 	}, systemUpdateHandler(d, "panos_ntp_settings_update", svc, parts, overlayNtpSettings, ntpSettingsSummary,
 		withSecrets(ntpSettingsSecrets)))

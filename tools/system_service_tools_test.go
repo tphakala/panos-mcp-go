@@ -270,6 +270,59 @@ func TestNtpSettingsAlgorithmValidation(t *testing.T) {
 	}
 }
 
+// TestNtpSettingsAuthKeyRequiredOnSetAndChange pins that a symmetric key set for
+// the first time, or an algorithm switch, must supply authentication_key: a fresh
+// algorithm node has no stored key and PAN-OS rejects keyless symmetric auth. An
+// omitted key is allowed only when the algorithm is unchanged (the stored key is
+// preserved). Sabotage: drop the `fresh && in.AuthenticationKey == nil` guard in
+// applyNtpPrimaryAuth/applyNtpSecondaryAuth and the reject subtests turn green.
+func TestNtpSettingsAuthKeyRequiredOnSetAndChange(t *testing.T) {
+	// First-time set with no key: rejected.
+	if err := overlayNtpSettings(&ntpcfg.Config{}, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5")},
+	}); err == nil {
+		t.Fatal("setting a symmetric key for the first time without authentication_key must be rejected")
+	}
+	// Algorithm switch (md5 -> sha1) with no key: rejected, on the primary server.
+	c := &ntpcfg.Config{}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5"), AuthenticationKey: new("MD5KEY")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := overlayNtpSettings(c, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("sha1")}, // no key on the switch
+	}); err == nil {
+		t.Fatal("switching the primary algorithm without authentication_key must be rejected")
+	}
+	// Same for the secondary server's distinct type tree.
+	sc := &ntpcfg.Config{}
+	if err := overlayNtpSettings(sc, NtpSettingsInput{
+		SecondarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("sha1"), AuthenticationKey: new("SHA1KEY")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := overlayNtpSettings(sc, NtpSettingsInput{
+		SecondarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5")}, // no key on the switch
+	}); err == nil {
+		t.Fatal("switching the secondary algorithm without authentication_key must be rejected")
+	}
+	// Same-algorithm update with the key omitted is allowed (key preserved).
+	pc := &ntpcfg.Config{}
+	if err := overlayNtpSettings(pc, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5"), AuthenticationKey: new("STORED")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := overlayNtpSettings(pc, NtpSettingsInput{
+		PrimarySymmetricKey: &NtpSymmetricKeyInput{Algorithm: new("md5"), KeyId: new(int64(3))},
+	}); err != nil {
+		t.Fatalf("a same-algorithm update omitting the key must be allowed: %v", err)
+	}
+	mustStrPtr(t, pc.NtpServers.PrimaryNtpServer.AuthenticationType.SymmetricKey.Algorithm.Md5.AuthenticationKey,
+		"STORED", "same-algorithm update preserves the stored key")
+}
+
 // TestNtpSettingsSummaryReportsSymmetricKey pins that the summary reports the
 // symmetric-key algorithm and key_id but never the key material. Sabotage: emit
 // the AuthenticationKey in ntpPrimaryAuthSummary.
