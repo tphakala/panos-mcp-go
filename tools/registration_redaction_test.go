@@ -2,8 +2,6 @@ package tools
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"strings"
 	"testing"
 )
@@ -46,20 +44,22 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 	// so it cannot silently drift: adding an extractor there without adding it here
 	// (or vice versa) fails the test.
 	wantExtractors := map[string]struct{}{
-		"deviceGroupSecrets":     {},
-		"ldapProfileSecrets":     {},
-		"tacacsProfileSecrets":   {},
-		"radiusProfileSecrets":   {},
-		"emailProfileSecrets":    {},
-		"snmpTrapProfileSecrets": {},
-		"ikeGatewaySecrets":      {},
-		"localUserSecrets":       {},
-		"administratorSecrets":   {},
-		"authProfileSecrets":     {},
-		"mfaProfileSecrets":      {},
-		"bgpAuthProfileSecrets":  {},
-		"ospfAuthProfileSecrets": {},
-		"proxySettingsSecrets":   {},
+		"deviceGroupSecrets":       {},
+		"ldapProfileSecrets":       {},
+		"tacacsProfileSecrets":     {},
+		"radiusProfileSecrets":     {},
+		"emailProfileSecrets":      {},
+		"snmpTrapProfileSecrets":   {},
+		"ikeGatewaySecrets":        {},
+		"localUserSecrets":         {},
+		"administratorSecrets":     {},
+		"authProfileSecrets":       {},
+		"mfaProfileSecrets":        {},
+		"bgpAuthProfileSecrets":    {},
+		"ospfAuthProfileSecrets":   {},
+		"proxySettingsSecrets":     {},
+		"ntpSettingsSecrets":       {},
+		"logExportScheduleSecrets": {},
 	}
 
 	// updateOnlyExtractors are wired to an update handler but have no create
@@ -69,6 +69,7 @@ func TestSecretExtractorsWiredToCreateAndUpdate(t *testing.T) {
 	// the update path; the create requirement below is waived only for these.
 	updateOnlyExtractors := map[string]struct{}{
 		"proxySettingsSecrets": {},
+		"ntpSettingsSecrets":   {},
 	}
 
 	got := collectWithSecretsWirings(t)
@@ -257,11 +258,7 @@ func withSecretsExtractor(arg ast.Expr) string {
 // parsing that one file is enough.
 func declaredSecretExtractors(t *testing.T) map[string]struct{} {
 	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "redact.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parsing redact.go: %v", err)
-	}
+	f := parseRedactGo(t)
 	out := map[string]struct{}{}
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)

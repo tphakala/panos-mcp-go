@@ -197,11 +197,7 @@ func secretFieldsInStruct(structName string, st *ast.StructType) []secretField {
 // live there by convention (see its "per-family secret extractors" section).
 func extractorCoveredFields(t *testing.T) map[string]bool {
 	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "redact.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parsing redact.go: %v", err)
-	}
+	f := parseRedactGo(t)
 	covered := coveredFieldsFromExtractors(f)
 	if len(covered) == 0 {
 		t.Fatal("no fields read by any extractor in redact.go; the coverage walk is broken and every field would report uncovered")
