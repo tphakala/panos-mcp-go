@@ -658,7 +658,7 @@ Scheduled log-export profiles push device logs to an FTP or SCP server on a sche
 
 ### Device log settings
 
-Device log settings are the log-forwarding match lists PAN-OS keeps per log type (Device > Log Settings). Each of the seven families matches a slice of one log type by a filter and forwards matching logs to email, HTTP, SNMP-trap and syslog server profiles; most families can additionally forward to Panorama or quarantine the source device (the exact toggles vary by log type). pango models these only under Panorama (a `template`, `template_stack`, or the `panorama` scope) with no firewall-local location, so every tool below is Panorama-only. Each family's integration and auto-tagging action tree is preserved across an update but not otherwise modeled.
+Device log settings are the log-forwarding match lists PAN-OS keeps per log type (Device > Log Settings). Each of the seven families matches a slice of one log type by a filter and forwards matching logs to email, HTTP, SNMP-trap and syslog server profiles; most families can additionally forward to Panorama or quarantine the source device (the exact toggles vary by log type). pango models these only under Panorama (a `template` or `template_stack`, optionally narrowed to a `template_vsys`, or the `panorama` scope) with no firewall-local location, so every tool below is Panorama-only. Each family's integration and auto-tagging action tree is preserved across an update but not otherwise modeled.
 
 | Tool | Mode | Description |
 | --- | --- | --- |

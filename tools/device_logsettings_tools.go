@@ -152,7 +152,7 @@ func registerLogSettingsFamily[L, E any, In deviceScoped](
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        prefix + "_list",
-		Description: "List " + human + " log-settings match-list entries. Panorama only: set a template, template_stack, or the panorama scope (list templates with panos_template_list). Read-only.",
+		Description: "List " + human + " log-settings match-list entries. Panorama only: set a template or template_stack (optionally narrowed to a template_vsys), or the panorama scope (list templates with panos_template_list). Read-only.",
 		Annotations: readOnlyTool("List " + human + " log settings"),
 	}, deviceListHandler(d, prefix+"_list", svc, parts, nameFn, summarize))
 	mcp.AddTool(s, &mcp.Tool{
