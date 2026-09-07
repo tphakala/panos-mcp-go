@@ -874,5 +874,10 @@ func RegisterAll(s *mcp.Server, d *Deps) {
 	// Scheduled log export (system-scoped named entries: firewall system scope, or
 	// a Panorama template or template stack).
 	RegisterLogExportScheduleTools(s, d)
+	// Device log settings match lists and virtual-system entries (Panorama only:
+	// pango models both under a template or template stack, with no firewall-local
+	// location; log settings additionally support the panorama scope).
+	RegisterLogSettingsTools(s, d)
+	RegisterVsysTools(s, d)
 	RegisterOpTools(s, d)
 }

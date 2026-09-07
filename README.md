@@ -63,9 +63,16 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 440 tools on Panorama and 424 on a firewall (the 21 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 178 on Panorama, 175 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 478 tools on Panorama and 424 on a firewall (the 59 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 194 on Panorama, 175 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
+
+### Response shape
+
+Read tools (`_list`, `_get`) and the success result of a write tool return a curated summary of each entry rather than the raw PAN-OS structure, so the field set stays stable regardless of the underlying SDK. Two conventions are worth knowing when consuming a summary:
+
+- **Optional toggles are omitted when unset, not returned as `false` or `null`.** A PAN-OS boolean is tri-state: explicitly on, explicitly off, or absent so the device default applies. A summary emits the key only when the value is configured, because coercing an absent toggle to `false` would misreport the device default. Treat a missing toggle (or optional numeric setting) as "not configured, inherits the default", not as off. Scalar strings and list fields, by contrast, always appear, defaulting to `""` and `[]` when unset.
+- **Write-only secrets are never returned.** A value the device stores encrypted (a password, shared secret, or key) is accepted on create and update but never echoed back by a get or list; the summary reports only a presence boolean such as `has_bind_password` or `password_set`.
 
 ### Address, service, and tag objects
 
@@ -648,6 +655,58 @@ Scheduled log-export profiles push device logs to an FTP or SCP server on a sche
 | `panos_log_export_schedule_create` | write | Create a scheduled log-export profile; provide either ftp or scp for the transport. |
 | `panos_log_export_schedule_update` | write | Update a scheduled log-export profile: read-modify-write; setting ftp or scp switches the transport, and omitting a password keeps the stored one. |
 | `panos_log_export_schedule_delete` | write | Delete a scheduled log-export profile from the candidate config. |
+
+### Device log settings
+
+Device log settings are the log-forwarding match lists PAN-OS keeps per log type (Device > Log Settings). Each of the seven families matches a slice of one log type by a filter and forwards matching logs to email, HTTP, SNMP-trap and syslog server profiles; most families can additionally forward to Panorama or quarantine the source device (the exact toggles vary by log type). pango models these only under Panorama (a `template` or `template_stack`, optionally narrowed to a `template_vsys`, or the `panorama` scope) with no firewall-local location, so every tool below is Panorama-only. Each family's integration and auto-tagging action tree is preserved across an update but not otherwise modeled.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_log_settings_config_list` *(Panorama only)* | read-only | List config-log match-list entries. |
+| `panos_log_settings_config_get` *(Panorama only)* | read-only | Get one config-log match-list entry. |
+| `panos_log_settings_config_create` *(Panorama only)* | write | Create a config-log match-list entry. |
+| `panos_log_settings_config_update` *(Panorama only)* | write | Update a config-log match-list entry (read-modify-write). |
+| `panos_log_settings_config_delete` *(Panorama only)* | write | Delete a config-log match-list entry. |
+| `panos_log_settings_system_list` *(Panorama only)* | read-only | List system-log match-list entries. |
+| `panos_log_settings_system_get` *(Panorama only)* | read-only | Get one system-log match-list entry. |
+| `panos_log_settings_system_create` *(Panorama only)* | write | Create a system-log match-list entry. |
+| `panos_log_settings_system_update` *(Panorama only)* | write | Update a system-log match-list entry (read-modify-write). |
+| `panos_log_settings_system_delete` *(Panorama only)* | write | Delete a system-log match-list entry. |
+| `panos_log_settings_correlation_list` *(Panorama only)* | read-only | List correlation-log match-list entries. |
+| `panos_log_settings_correlation_get` *(Panorama only)* | read-only | Get one correlation-log match-list entry. |
+| `panos_log_settings_correlation_create` *(Panorama only)* | write | Create a correlation-log match-list entry. |
+| `panos_log_settings_correlation_update` *(Panorama only)* | write | Update a correlation-log match-list entry (read-modify-write). |
+| `panos_log_settings_correlation_delete` *(Panorama only)* | write | Delete a correlation-log match-list entry. |
+| `panos_log_settings_globalprotect_list` *(Panorama only)* | read-only | List GlobalProtect-log match-list entries. |
+| `panos_log_settings_globalprotect_get` *(Panorama only)* | read-only | Get one GlobalProtect-log match-list entry. |
+| `panos_log_settings_globalprotect_create` *(Panorama only)* | write | Create a GlobalProtect-log match-list entry. |
+| `panos_log_settings_globalprotect_update` *(Panorama only)* | write | Update a GlobalProtect-log match-list entry (read-modify-write). |
+| `panos_log_settings_globalprotect_delete` *(Panorama only)* | write | Delete a GlobalProtect-log match-list entry. |
+| `panos_log_settings_hip_match_list` *(Panorama only)* | read-only | List HIP-match-log match-list entries. |
+| `panos_log_settings_hip_match_get` *(Panorama only)* | read-only | Get one HIP-match-log match-list entry. |
+| `panos_log_settings_hip_match_create` *(Panorama only)* | write | Create a HIP-match-log match-list entry. |
+| `panos_log_settings_hip_match_update` *(Panorama only)* | write | Update a HIP-match-log match-list entry (read-modify-write). |
+| `panos_log_settings_hip_match_delete` *(Panorama only)* | write | Delete a HIP-match-log match-list entry. |
+| `panos_log_settings_ip_tag_list` *(Panorama only)* | read-only | List IP-tag-log match-list entries. |
+| `panos_log_settings_ip_tag_get` *(Panorama only)* | read-only | Get one IP-tag-log match-list entry. |
+| `panos_log_settings_ip_tag_create` *(Panorama only)* | write | Create an IP-tag-log match-list entry. |
+| `panos_log_settings_ip_tag_update` *(Panorama only)* | write | Update an IP-tag-log match-list entry (read-modify-write). |
+| `panos_log_settings_ip_tag_delete` *(Panorama only)* | write | Delete an IP-tag-log match-list entry. |
+| `panos_log_settings_user_id_list` *(Panorama only)* | read-only | List User-ID-log match-list entries. |
+| `panos_log_settings_user_id_get` *(Panorama only)* | read-only | Get one User-ID-log match-list entry. |
+| `panos_log_settings_user_id_create` *(Panorama only)* | write | Create a User-ID-log match-list entry. |
+| `panos_log_settings_user_id_update` *(Panorama only)* | write | Update a User-ID-log match-list entry (read-modify-write). |
+| `panos_log_settings_user_id_delete` *(Panorama only)* | write | Delete a User-ID-log match-list entry. |
+
+### Virtual systems
+
+A virtual system (vsys) is an administrative partition of a firewall. pango models the vsys list only under a Panorama `template` or `template_stack`, so these tools are Panorama-only. The entry carries only a name; the vsys's actual configuration lives under the other scoped tools. There is no update (nothing on the entry to change) and no delete (removing a vsys entry drops its whole config subtree, a deliberate separate workflow).
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_vsys_list` *(Panorama only)* | read-only | List virtual systems in a template or template_stack. |
+| `panos_vsys_get` *(Panorama only)* | read-only | Get one virtual system entry by name. |
+| `panos_vsys_create` *(Panorama only)* | write | Create a virtual system entry in a template or template_stack. |
 
 ## Example MCP client configuration
 

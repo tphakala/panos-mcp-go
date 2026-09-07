@@ -54,9 +54,9 @@ const noSharedScopeProfiles = "snmp-trap, email and authentication profiles"
 // this const's contents before changing it.
 const noPanoramaScopeFamilies = "local database users and MFA server profiles"
 
-// DeviceScopeInput selects where a device-scoped object lives. The ten families
-// that embed it (LDAP, RADIUS, TACACS+, syslog, SNMP-trap, email, SAML IdP, MFA,
-// local database users and authentication profiles)
+// DeviceScopeInput selects where a device-scoped object lives. The families that
+// embed it (the device server profiles, the identity and authentication
+// profiles, and the log-settings match lists)
 // model their location more richly than either LocationInput (the object
 // shared/vsys/device_group model) or NetScopeInput (the {Ngfw|Template|
 // TemplateStack} model): a firewall vsys or shared scope, a Panorama template or
@@ -86,12 +86,15 @@ type DeviceScopeInput struct {
 func (in DeviceScopeInput) deviceScope() DeviceScopeInput { return in }
 
 // deviceScopeParts supplies the per-resource pango location constructors for
-// resolveDeviceScope. Two of the constructors may be nil, which makes a request
+// resolveDeviceScope. Three of the constructors may be nil, which makes a request
 // for that tier an error rather than a silently invalid location: shared for the
 // SNMP-trap and email log-settings profiles and the authentication profile (see
-// noSharedScopeProfiles), and panorama for local database users and MFA server
-// profiles (see noPanoramaScopeFamilies). pango models no location at all for
-// those combinations, so there is nothing to construct.
+// noSharedScopeProfiles), panorama for local database users and MFA server
+// profiles (see noPanoramaScopeFamilies), and vsys for a family pango models only
+// under Panorama (the device log-settings match lists have no firewall-local
+// location; multi-vsys entries are likewise Panorama-only but route through the
+// net scope, not this one). pango models no location at all for those
+// combinations, so there is nothing to construct.
 type deviceScopeParts[L any] struct {
 	shared   func() L
 	panorama func() L
@@ -149,6 +152,9 @@ func resolveDeviceScope[L any](d *Deps, in DeviceScopeInput, p deviceScopeParts[
 			return zero, errors.New("the shared scope is not available for this profile type; on a firewall it is stored per-vsys")
 		}
 		return p.shared(), nil
+	}
+	if p.vsys == nil {
+		return zero, errors.New("this configuration has no firewall-local scope; it is available only on a Panorama connection (a template, template_stack, or panorama)")
 	}
 	return p.vsys(defaultNgfwDevice, cmp.Or(in.Vsys, defaultVsys)), nil
 }

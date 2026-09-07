@@ -131,8 +131,8 @@ func TestDeviceScopeSchemaUnchanged(t *testing.T) {
 		"template_vsys":  "vsys within the chosen template or template-stack (Panorama only); omit for the template's shared scope",
 	})
 	// The shared description is now pinned literally above, because an edit to it
-	// changes the published schema of 50 tools (ten device-scoped families times
-	// five tools) and nothing used to fail when it did. TestProfileScopeSchemaUnchanged
+	// changes the published schema of 85 tools (seventeen device-scoped families
+	// times five tools) and nothing used to fail when it did. TestProfileScopeSchemaUnchanged
 	// already pins its equivalent; this closes the same gap on the device scope.
 	//
 	// The Contains check below is complementary, not redundant. The literal pin
@@ -303,13 +303,15 @@ func TestDeviceScopeSchemaUniformAcrossTools(t *testing.T) {
 	}
 	slices.Sort(deviceTools)
 
-	// The device scope has ten families of five CRUD tools each. Asserting the exact
+	// The device scope has seventeen families of five CRUD tools each: the original
+	// ten (six server profiles plus local users, SAML-IdP, MFA and authentication
+	// profiles) and the seven log-settings match-list families. Asserting the exact
 	// count guards against a signature change that silently narrowed the selection
 	// (which would make the per-tool loop below vacuous) and makes an added family a
 	// deliberate update here, matching the "prove a refactor changed nothing" intent
 	// of the pins above.
-	if len(deviceTools) != 50 {
-		t.Errorf("expected 50 device-scoped tools (ten families x five CRUD tools), got %d: %v", len(deviceTools), deviceTools)
+	if len(deviceTools) != 85 {
+		t.Errorf("expected 85 device-scoped tools (seventeen families x five CRUD tools), got %d: %v", len(deviceTools), deviceTools)
 	}
 
 	for _, name := range deviceTools {
