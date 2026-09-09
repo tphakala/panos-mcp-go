@@ -63,7 +63,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 478 tools on Panorama and 424 on a firewall (the 59 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 194 on Panorama, 175 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 480 tools on Panorama and 426 on a firewall (the 59 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 195 on Panorama, 176 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -643,6 +643,15 @@ These are the device's own management-plane system settings, each a singleton (o
 | `panos_ssl_decrypt_settings_update` | write | Update the device SSL decrypt trust settings: read-modify-write; a provided list replaces the whole list. |
 | `panos_certificate_list` | read-only | List certificates (subject, issuer, validity window, expiry) for inventory and expiry auditing. |
 | `panos_certificate_get` | read-only | Get one certificate's inventory and expiry metadata; key material is never returned. |
+
+### Dynamic update schedules
+
+The dynamic-update schedule is a device singleton (a get and an update, no list, create or delete) that controls when PAN-OS downloads and installs content updates: antivirus, applications-only, applications and threats, WildFire, WildFire private cloud, and the GlobalProtect data file and clientless VPN feeds, plus a set of telemetry statistics-service toggles. It is system-scoped (firewall local device, or a Panorama `template` / `template_stack`). Each content feed is a recurrence choice: providing a feed's recurrence replaces its cadence, a same-cadence edit keeps the stored fields it does not override, and a cadence switch needs the action and time. The statistics-service is a set of on/off toggles rather than a schedule. There are no secrets in this config.
+
+| Tool | Mode | Description |
+| --- | --- | --- |
+| `panos_dynamic_updates_get` | read-only | Get the device dynamic-update schedules (per feature: recurrence, action, time, day, sync-to-peer, thresholds) and the statistics-service toggles. |
+| `panos_dynamic_updates_update` | write | Update the device dynamic-update schedules: read-modify-write, at least one feature required; providing a feature's recurrence replaces that feature's cadence, a same-cadence edit keeps stored fields, and a cadence switch needs action and at. |
 
 ### Scheduled log export
 
