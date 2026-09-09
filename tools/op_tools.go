@@ -70,6 +70,45 @@ func rawResultFallback(tool, inner string) (res *mcp.CallToolResult, anyVal any,
 	return nil, nil, false
 }
 
+// innerHasRecognizedShape reports whether an op <result> inner XML has a direct
+// child element (a child of <result>, since inner is its content) whose local name
+// is one of the given names. It tells a legitimately empty response from an
+// unrecognized one: PAN-OS emits container or legend elements even when there is
+// nothing to list (<hw/> and <ifnet/> for "show interface all", the <flags> legend
+// for "show routing route"), and those carry a non-empty inner XML. Without this
+// the handlers fall to rawResultFallback and surface a bogus "unrecognized
+// response" on a device with no interfaces or an empty routing table (issue #135).
+// A genuinely unrecognized shape has no such direct child and still falls back, so
+// the #42 safety net keeps firing.
+//
+// It matches on the parsed element name only, so it is exact (name "hw" matches
+// <hw> but not <hwaddr>) and only at depth 0, so a recognized name nested inside an
+// unrecognized element does not count. Text, comments, and CDATA never match, and
+// malformed XML reads as no match (falls back to raw).
+func innerHasRecognizedShape(inner string, names ...string) bool {
+	dec := xml.NewDecoder(strings.NewReader(inner))
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				for _, name := range names {
+					if t.Name.Local == name {
+						return true
+					}
+				}
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		}
+	}
+}
+
 // SessionListInput filters the firewall session table. Every field is optional;
 // with none set the tool lists all sessions.
 type SessionListInput struct {
@@ -309,7 +348,9 @@ func interfaceStatusHandler(d *Deps) func(context.Context, *mcp.CallToolRequest,
 			return res, v, nil
 		}
 		ifaces := joinInterfaces(resp.Result.HW, resp.Result.Ifnet)
-		if len(ifaces) == 0 {
+		// <hw/><ifnet/> is a valid empty interface list; only an inner without
+		// either container is an unrecognized shape worth surfacing raw.
+		if len(ifaces) == 0 && !innerHasRecognizedShape(resp.Result.Inner, "hw", "ifnet") {
 			if res, v, ok := rawResultFallback("panos_interface_status", resp.Result.Inner); ok {
 				return res, v, nil
 			}
@@ -380,7 +421,9 @@ func routeListHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Route
 			return res, v, nil
 		}
 		entries := resp.Result.Entries
-		if len(entries) == 0 {
+		// An empty routing table still carries the <flags> legend PAN-OS always
+		// emits; that is a valid empty result, not an unrecognized shape.
+		if len(entries) == 0 && !innerHasRecognizedShape(resp.Result.Inner, "flags") {
 			if res, v, ok := rawResultFallback("panos_route_list", resp.Result.Inner); ok {
 				return res, v, nil
 			}
