@@ -225,6 +225,40 @@ func TestInterfaceStatusNameFilter(t *testing.T) {
 	}
 }
 
+// TestInterfaceStatusEmptyContainers covers a firewall with no interfaces: PAN-OS
+// returns empty <hw/> and <ifnet/> containers (a non-empty inner, unlike the bare
+// <result></result> in TestInterfaceStatusEmpty). That is a valid empty list and
+// must read as total 0, not surface as an "unrecognized response" (issue #135).
+// The hw-only and ifnet-only cases pin the two container markers independently:
+// dropping either name from innerHasRecognizedShape turns exactly one subtest red.
+func TestInterfaceStatusEmptyContainers(t *testing.T) {
+	cases := []struct{ name, inner string }{
+		{"both containers", `<hw/><ifnet/>`},
+		{"hw container only", `<hw/>`},
+		{"ifnet container only", `<ifnet/>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `<response status="success"><result>` + tc.inner + `</result></response>`
+			d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(interfaceAllCmd), Body: body})
+			res, _, _ := interfaceStatusHandler(d)(t.Context(), nil, InterfaceStatusInput{})
+			if res.IsError {
+				t.Fatalf("empty interface list must not error: %s", textContent(t, res))
+			}
+			if out := textContent(t, res); strings.Contains(out, "unrecognized") {
+				t.Fatalf("empty interface list surfaced as unrecognized: %s", out)
+			}
+			m := opDecodeJSON(t, res)
+			if m["total"] != float64(0) {
+				t.Fatalf("total = %v, want 0", m["total"])
+			}
+			if ifaces := jsonArray(t, m, "interfaces"); len(ifaces) != 0 {
+				t.Fatalf("interfaces = %v, want empty", ifaces)
+			}
+		})
+	}
+}
+
 const routeListBody = `<response status="success"><result>` +
 	// flags are padded with surrounding spaces, as PAN-OS emits them.
 	`<entry><virtual-router>default</virtual-router><destination>0.0.0.0/0</destination>` +
@@ -267,6 +301,63 @@ func TestRouteListVR(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("route list with VR errored: %s", textContent(t, res))
 	}
+}
+
+// TestRouteListEmptyFlagsOnly covers an empty legacy routing table: PAN-OS still
+// emits the <flags> legend (a non-empty inner, unlike the bare <result></result>
+// in TestRouteListVR). That is a valid empty result and must read as total 0, not
+// surface as an "unrecognized response" (issue #135).
+func TestRouteListEmptyFlagsOnly(t *testing.T) {
+	body := `<response status="success"><result>` +
+		`<flags>flags: A:active, C:connect, S:static</flags>` +
+		`</result></response>`
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(routeListAllCmd), Body: body})
+	res, _, _ := routeListHandler(d)(t.Context(), nil, RouteListInput{})
+	if res.IsError {
+		t.Fatalf("empty route list must not error: %s", textContent(t, res))
+	}
+	if out := textContent(t, res); strings.Contains(out, "unrecognized") {
+		t.Fatalf("empty route list surfaced as unrecognized: %s", out)
+	}
+	m := opDecodeJSON(t, res)
+	if m["total"] != float64(0) {
+		t.Fatalf("total = %v, want 0", m["total"])
+	}
+	if routes := jsonArray(t, m, "routes"); len(routes) != 0 {
+		t.Fatalf("routes = %v, want empty", routes)
+	}
+}
+
+// TestOpUnrecognizedPrefixTag proves the recognized-shape check is anchored to a
+// tag boundary: an unrecognized element whose name merely shares a prefix with a
+// container or legend tag (<hwaddr> vs <hw>, <flagstate> vs <flags>) must still
+// fall to the #42 raw fallback, not be swallowed as a valid empty result. This
+// pins the tag-boundary anchoring in innerHasRecognizedShape (issue #135).
+func TestOpUnrecognizedPrefixTag(t *testing.T) {
+	t.Run("interface_status hw prefix", func(t *testing.T) {
+		body := `<response status="success"><result><hwaddr>00:11</hwaddr></result></response>`
+		d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(interfaceAllCmd), Body: body})
+		res, _, _ := interfaceStatusHandler(d)(t.Context(), nil, InterfaceStatusInput{})
+		if out := textContent(t, res); !strings.Contains(out, "unrecognized panos_interface_status") {
+			t.Fatalf("<hwaddr> (shares the <hw> prefix) must still surface raw, got: %s", out)
+		}
+	})
+	t.Run("interface_status ifnet prefix", func(t *testing.T) {
+		body := `<response status="success"><result><ifnetwork>x</ifnetwork></result></response>`
+		d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(interfaceAllCmd), Body: body})
+		res, _, _ := interfaceStatusHandler(d)(t.Context(), nil, InterfaceStatusInput{})
+		if out := textContent(t, res); !strings.Contains(out, "unrecognized panos_interface_status") {
+			t.Fatalf("<ifnetwork> (shares the <ifnet> prefix) must still surface raw, got: %s", out)
+		}
+	})
+	t.Run("route_list", func(t *testing.T) {
+		body := `<response status="success"><result><flagstate>x</flagstate></result></response>`
+		d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(routeListAllCmd), Body: body})
+		res, _, _ := routeListHandler(d)(t.Context(), nil, RouteListInput{})
+		if out := textContent(t, res); !strings.Contains(out, "unrecognized panos_route_list") {
+			t.Fatalf("<flagstate> (shares the <flags> prefix) must still surface raw, got: %s", out)
+		}
+	})
 }
 
 func TestSystemResources(t *testing.T) {
