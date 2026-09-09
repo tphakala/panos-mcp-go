@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,6 +20,14 @@ func main() {
 }
 
 func runMain() error {
+	// A --version request must succeed without a firewall connection or any
+	// PANOS_* configuration, so answer it before LoadConfig and before the
+	// logger is wired up: print to stdout and exit 0. This also gives packaging
+	// a side-effect-free smoke command (issue #82).
+	if handleVersion(os.Args[1:], os.Stdout) {
+		return nil
+	}
+
 	// Install a JSON handler before anything can log, so a configuration error
 	// has the same shape as every later line, and set it as the slog default so
 	// that libraries logging through the package-level functions are covered
@@ -63,4 +73,20 @@ func runMain() error {
 		return err
 	}
 	return nil
+}
+
+// handleVersion reports whether args request the build version and, when they
+// do, writes it to w. It recognizes the -version and --version spellings. The
+// server takes no other flags, so a plain scan is enough and leaves any unknown
+// argument as harmless as it was before this flag existed.
+func handleVersion(args []string, w io.Writer) bool {
+	for _, a := range args {
+		if a == "-version" || a == "--version" {
+			// A failed stdout write here (a closed pipe, say) leaves nothing to
+			// recover, so the version request is still considered handled.
+			_, _ = fmt.Fprintln(w, version)
+			return true
+		}
+	}
+	return false
 }
