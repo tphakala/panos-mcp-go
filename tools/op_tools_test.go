@@ -328,11 +328,11 @@ func TestRouteListEmptyFlagsOnly(t *testing.T) {
 	}
 }
 
-// TestOpUnrecognizedPrefixTag proves the recognized-shape check is anchored to a
-// tag boundary: an unrecognized element whose name merely shares a prefix with a
+// TestOpUnrecognizedPrefixTag proves the recognized-shape check matches an exact
+// element name: an unrecognized element whose name merely shares a prefix with a
 // container or legend tag (<hwaddr> vs <hw>, <flagstate> vs <flags>) must still
 // fall to the #42 raw fallback, not be swallowed as a valid empty result. This
-// pins the tag-boundary anchoring in innerHasRecognizedShape (issue #135).
+// pins the exact-name matching in innerHasRecognizedShape (issue #135).
 func TestOpUnrecognizedPrefixTag(t *testing.T) {
 	t.Run("interface_status hw prefix", func(t *testing.T) {
 		body := `<response status="success"><result><hwaddr>00:11</hwaddr></result></response>`
@@ -356,6 +356,29 @@ func TestOpUnrecognizedPrefixTag(t *testing.T) {
 		res, _, _ := routeListHandler(d)(t.Context(), nil, RouteListInput{})
 		if out := textContent(t, res); !strings.Contains(out, "unrecognized panos_route_list") {
 			t.Fatalf("<flagstate> (shares the <flags> prefix) must still surface raw, got: %s", out)
+		}
+	})
+}
+
+// TestOpNestedRecognizedTag proves the recognized-shape check only counts a direct
+// child of <result>: a recognized element nested inside some other, unrecognized
+// element must NOT suppress the raw fallback, so an unexpected response is surfaced
+// rather than misreported as a clean empty list (issue #135).
+func TestOpNestedRecognizedTag(t *testing.T) {
+	t.Run("interface_status", func(t *testing.T) {
+		body := `<response status="success"><result><unexpected><hw/></unexpected></result></response>`
+		d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(interfaceAllCmd), Body: body})
+		res, _, _ := interfaceStatusHandler(d)(t.Context(), nil, InterfaceStatusInput{})
+		if out := textContent(t, res); !strings.Contains(out, "unrecognized panos_interface_status") {
+			t.Fatalf("a nested <hw/> must still surface raw, got: %s", out)
+		}
+	})
+	t.Run("route_list", func(t *testing.T) {
+		body := `<response status="success"><result><unexpected><flags>x</flags></unexpected></result></response>`
+		d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: opExact(routeListAllCmd), Body: body})
+		res, _, _ := routeListHandler(d)(t.Context(), nil, RouteListInput{})
+		if out := textContent(t, res); !strings.Contains(out, "unrecognized panos_route_list") {
+			t.Fatalf("a nested <flags> must still surface raw, got: %s", out)
 		}
 	})
 }

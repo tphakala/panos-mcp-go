@@ -70,39 +70,43 @@ func rawResultFallback(tool, inner string) (res *mcp.CallToolResult, anyVal any,
 	return nil, nil, false
 }
 
-// innerHasRecognizedShape reports whether an op <result> inner XML contains a
-// start or self-closing element with one of the given names. It tells a
-// legitimately empty response from an unrecognized one: PAN-OS emits container or
-// legend elements even when there is nothing to list (<hw/> and <ifnet/> for
-// "show interface all", the <flags> legend for "show routing route"), and those
-// carry a non-empty inner XML. Without this the handlers fall to rawResultFallback
-// and surface a bogus "unrecognized response" on a device with no interfaces or an
-// empty routing table (issue #135). A genuinely unrecognized shape has none of the
-// names and still falls back, so the #42 safety net keeps firing.
+// innerHasRecognizedShape reports whether an op <result> inner XML has a direct
+// child element (a child of <result>, since inner is its content) whose local name
+// is one of the given names. It tells a legitimately empty response from an
+// unrecognized one: PAN-OS emits container or legend elements even when there is
+// nothing to list (<hw/> and <ifnet/> for "show interface all", the <flags> legend
+// for "show routing route"), and those carry a non-empty inner XML. Without this
+// the handlers fall to rawResultFallback and surface a bogus "unrecognized
+// response" on a device with no interfaces or an empty routing table (issue #135).
+// A genuinely unrecognized shape has no such direct child and still falls back, so
+// the #42 safety net keeps firing.
 //
-// The name is anchored to a tag boundary (the next byte is '>', '/', or XML
-// whitespace), so "hw" matches <hw> and <hw/> but not a longer tag like <hwaddr>.
-// Data cannot false-match a name because encoding/xml escapes '<' inside text and
-// attribute values, so a bare '<' in the inner is always an element tag.
+// It matches on the parsed element name only, so it is exact (name "hw" matches
+// <hw> but not <hwaddr>) and only at depth 0, so a recognized name nested inside an
+// unrecognized element does not count. Text, comments, and CDATA never match, and
+// malformed XML reads as no match (falls back to raw).
 func innerHasRecognizedShape(inner string, names ...string) bool {
-	for _, name := range names {
-		open := "<" + name
-		for rest := inner; ; {
-			i := strings.Index(rest, open)
-			if i < 0 {
-				break
+	dec := xml.NewDecoder(strings.NewReader(inner))
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				for _, name := range names {
+					if t.Name.Local == name {
+						return true
+					}
+				}
 			}
-			rest = rest[i+len(open):]
-			if rest == "" {
-				break
-			}
-			switch rest[0] {
-			case '>', '/', ' ', '\t', '\n', '\r':
-				return true
-			}
+			depth++
+		case xml.EndElement:
+			depth--
 		}
 	}
-	return false
 }
 
 // SessionListInput filters the firewall session table. Every field is optional;
