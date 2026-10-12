@@ -172,7 +172,7 @@ func requireBearer(token string, next http.Handler) http.Handler {
 // mux is wrapped in cross-origin protection (Go 1.25+), which blocks cross-site
 // browser requests via Sec-Fetch-Site while allowing non-browser clients (no
 // Sec-Fetch-Site) and same-origin requests; the go-sdk applies none by default in
-// v1.7.0 (StreamableHTTPOptions.CrossOriginProtection is left nil), so without
+// v1.8.0 (StreamableHTTPOptions.CrossOriginProtection is left nil), so without
 // this a browser page could drive /mcp on a tokenless loopback bind (issue #5).
 func newHTTPHandler(cfg *Config, s *mcp.Server, logger *slog.Logger) http.Handler {
 	var mcpHandler http.Handler = mcp.NewStreamableHTTPHandler(
@@ -216,7 +216,7 @@ func serveHTTP(ctx context.Context, cfg *Config, s *mcp.Server, logger *slog.Log
 // port-0 listener and observe the real address. WriteTimeout is deliberately
 // unset (0): the streamable transport serves long-lived text/event-stream
 // responses and never overrides the server write deadline, so any non-zero
-// WriteTimeout would sever active streams (verified go-sdk v1.7.0
+// WriteTimeout would sever active streams (verified go-sdk v1.8.0
 // mcp/streamable.go). ReadTimeout and IdleTimeout still bound slow and idle
 // connections.
 func serveHTTPOnListener(ctx context.Context, ln net.Listener, cfg *Config, s *mcp.Server, logger *slog.Logger) error {
