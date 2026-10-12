@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/PaloAltoNetworks/pango v0.10.3-0.20260731153743-efa43570c367
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/quasilyte/go-ruleguard/dsl v0.3.23
 )
 

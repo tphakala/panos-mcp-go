@@ -32,12 +32,12 @@ type Deps struct {
 	// during a commit, push, validate or revert waits until that job completes;
 	// that is intended, since its result would otherwise describe a moving target.
 	//
-	// The lock is required, not precautionary: go-sdk v1.7.0 dispatches every
-	// call except initialize asynchronously (mcp/server.go:1913 calls
-	// jsonrpc2.Async, and internal/jsonrpc2/conn.go runs each handler in its own
-	// goroutine), so handlers run concurrently even within one stdio session, and
-	// the streamable HTTP transport shares one *pango.Client across concurrent
-	// requests.
+	// The lock is required, not precautionary: go-sdk v1.8.0 dispatches every
+	// call except initialize asynchronously ((*ServerSession).handle calls
+	// jsonrpc2.Async at mcp/server.go:2004, and (*Connection).handleAsync runs
+	// each handler in its own goroutine at internal/jsonrpc2/conn.go:684), so
+	// handlers run concurrently even within one stdio session, and the streamable
+	// HTTP transport shares one *pango.Client across concurrent requests.
 	//
 	// Read handlers are also memory-safe on the shared *pango.Client: every
 	// shared client field is written only during startup (Setup, Initialize,
