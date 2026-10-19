@@ -18,13 +18,13 @@ concurrency:
 # Deliberate, manual tool pins. Dependabot cannot see these (no action ref, no
 # go.mod entry), so they are bumped by hand, exactly as the golangci-lint-action
 # version input was before. golangci-lint must stay on 2.x: .golangci.yaml is the
-# v2 config schema and Taskfile.yml's go:lint:selftest was verified against 2.14.0.
+# v2 config schema and Taskfile.yml's go:lint:selftest was verified against 2.15.0.
 env:
   TASK_VERSION: v3.50.0
-  GOLANGCI_LINT_VERSION: v2.14.0
-  # Commit the golangci-lint v2.14.0 tag points at; pins the install script
+  GOLANGCI_LINT_VERSION: v2.15.0
+  # Commit the golangci-lint v2.15.0 tag points at; pins the install script
   # itself, not just the binary it fetches. Bump with GOLANGCI_LINT_VERSION.
-  GOLANGCI_LINT_INSTALL_SHA: 114493f9b3e7257d29e4130f2b4a4aadefbb6845
+  GOLANGCI_LINT_INSTALL_SHA: 25c5369a93aacb8cccea0d46e1569ca4a194564d
 
 jobs:
   # One job runs `task ci`, so the Taskfile is the single source of truth for the
