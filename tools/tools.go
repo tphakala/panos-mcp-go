@@ -31,6 +31,9 @@ type Deps struct {
 	// mutation while independent reads still run concurrently. A read arriving
 	// during a commit, push, validate or revert waits until that job completes;
 	// that is intended, since its result would otherwise describe a moving target.
+	// panos_log_query is the exception: it reads the log database, not the
+	// candidate config, and a lock held across its poll (up to JobWait) would
+	// stall every writer (log_tools.go).
 	//
 	// The lock is required, not precautionary: go-sdk v1.8.0 dispatches every
 	// call except initialize asynchronously ((*ServerSession).handle calls
@@ -64,7 +67,8 @@ type Deps struct {
 // at function exit, so the body would run unlocked and the lock would then be
 // taken and never released.
 //
-// Write handlers take this exclusive lock; read handlers take RLockReads.
+// Write handlers take this exclusive lock; read handlers take RLockReads, except
+// panos_log_query, which takes neither (see the writeMu doc).
 func (d *Deps) LockWrites() func() {
 	d.writeMu.Lock()
 	return d.writeMu.Unlock

@@ -869,8 +869,8 @@ func natPolicyMatchHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, 
 	}
 }
 
-// RegisterOpTools registers read-only operational-visibility and policy-match
-// test tools. All are read-only: no d.ReadOnly gate. The firewall-only tools
+// RegisterOpTools registers read-only operational-visibility, log query and
+// policy-match test tools. All are read-only: no d.ReadOnly gate. The firewall-only tools
 // (sessions, interfaces, routes, and the two policy-match tests) need a
 // dataplane or a running firewall policy that Panorama does not have, so they
 // are not registered on Panorama.
@@ -886,6 +886,17 @@ func RegisterOpTools(s *mcp.Server, d *Deps) {
 		Description: "Show high-availability state: whether HA is enabled, plus local and peer state, mode, peer connection status, and running-config sync. Read-only.",
 		Annotations: readOnlyTool("HA status"),
 	}, haStatusHandler(d))
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "panos_log_query",
+		Description: "Query device logs (traffic, threat, url, system or config) with a PAN-OS log filter such as (action eq allow). " +
+			"Returns up to nlogs entries (default 50, max 500), newest first unless direction is forward, with every field the device sends; " +
+			"fields keeps only the named ones. Page with skip using next_skip from the previous response; stable paging over a growing log needs a " +
+			"time-bounded filter such as (receive_time leq '2026/10/21 15:00:00'). A response is limited to 256 KiB of entry JSON; a longer page is " +
+			"cut at the tail and reports truncated and next_skip. On Panorama the logs collected from managed firewalls are included. " +
+			"Waits up to PANOS_JOB_WAIT for the query to finish. Read-only.",
+		InputSchema: logQueryInputSchema(),
+		Annotations: readOnlyTool("Query logs"),
+	}, logQueryHandler(d))
 	if d.IsPanorama {
 		return
 	}
