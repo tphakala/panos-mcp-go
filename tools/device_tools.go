@@ -19,7 +19,7 @@ import (
 )
 
 // jobPollInterval is the sleep between job status polls while waiting for a
-// commit or validate job.
+// commit, validate or log query job.
 const jobPollInterval = 2 * time.Second
 
 // CommitInput is the input for panos_commit.

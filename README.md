@@ -28,6 +28,7 @@ The API user's Admin Role profile needs specific XML API permissions. Grant thes
 
 - **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config list changes` operational command), and the job polling behind commit, validate, and push also need it. The operational-visibility and policy-test tools (`panos_system_resources`, `panos_ha_status`, `panos_session_list`, `panos_interface_status`, `panos_route_list`, `panos_test_security_policy_match`, `panos_test_nat_policy_match`) are operational requests too.
 - **Configuration** (`type=config`): required for every object and policy tool (address, service, group, tag, and security, NAT, decryption, authentication and PBF rule create/update/delete/move).
+- **Log** (`type=log`): required for `panos_log_query`.
 - **Commit**: required for `panos_commit`, and for `panos_push` to a Panorama device group.
 
 A Configuration-only role cannot start the server: the warm-up is an operational request, so startup fails with
@@ -52,7 +53,7 @@ Configuration comes from environment variables. `PANOS_HOST` is required, along 
 | `PANOS_SKIP_VERIFY` | `false` | Disable TLS certificate verification. This exposes the management session to interception; prefer `PANOS_CA_CERT`. `PANOS_SKIP_VERIFY_CERTIFICATE` (pango's own name) is accepted as a fallback; `PANOS_SKIP_VERIFY` wins when both are set. |
 | `PANOS_CA_CERT` | (empty) | Path to a PEM-encoded CA certificate for the firewall. Validated at startup: an unreadable file, or one with no PEM certificate, is a startup error. Mutually exclusive with `PANOS_SKIP_VERIFY=true`. |
 | `PANOS_ALLOW_WRITES` | `false` | Set to a true value (`true`, `1`, `t`) to register write tools. Unset, empty, or false keeps the server read-only. A non-boolean value is a startup error. Replaces `PANOS_READ_ONLY`, which is now rejected at startup. |
-| `PANOS_JOB_WAIT` | `120` | Maximum seconds a commit or push waits for its job. Integer, 1 to 86400. |
+| `PANOS_JOB_WAIT` | `120` | Maximum seconds a commit, push, or log query waits for its job. Integer, 1 to 86400. |
 | `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `http`. |
 | `MCP_HTTP_HOST` | `127.0.0.1` | Bind address for the `http` transport. Loopback by default. A non-loopback bind requires `MCP_HTTP_TOKEN`. |
 | `MCP_HTTP_PORT` | `8080` | Port for the `http` transport. |
@@ -63,7 +64,7 @@ The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http:/
 
 ## Tools
 
-The server registers 480 tools on Panorama and 426 on a firewall (the 59 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 195 on Panorama, 176 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
+The server registers 481 tools on Panorama and 427 on a firewall (the 59 Panorama-only tools below are absent on a firewall, and the five firewall-only tools below are absent on Panorama). In read-only mode (the default) only the read-only tools are registered: 196 on Panorama, 177 on a firewall. These counts and the tables below are pinned by a test. Write tools require `PANOS_ALLOW_WRITES=true`. The object and policy write tools stage the candidate configuration, so run `panos_commit` to apply; the commit-lifecycle tools (`panos_commit`, `panos_validate`, `panos_revert`, `panos_push`) act on the candidate or running config directly. The descriptions in the tables below are one-line summaries; each tool's full description, including parameter constraints, is what the MCP client receives in the tool listing.
 
 `panos_validate` is listed as a write-mode tool: it does not modify configuration, but it holds the write lock to avoid contending with a concurrent commit or push for the device-side config lock, so it is registered only when writes are enabled.
 
@@ -73,6 +74,8 @@ Read tools (`_list`, `_get`) and the success result of a write tool return a cur
 
 - **Optional toggles are omitted when unset, not returned as `false` or `null`.** A PAN-OS boolean is tri-state: explicitly on, explicitly off, or absent so the device default applies. A summary emits the key only when the value is configured, because coercing an absent toggle to `false` would misreport the device default. Treat a missing toggle (or optional numeric setting) as "not configured, inherits the default", not as off. Scalar strings and list fields, by contrast, always appear, defaulting to `""` and `[]` when unset.
 - **Write-only secrets are never returned.** A value the device stores encrypted (a password, shared secret, or key) is accepted on create and update but never echoed back by a get or list; the summary reports only a presence boolean such as `has_bind_password` or `password_set`.
+
+`panos_log_query` is the exception to the curated summary. Its entries carry the device's own field names, with each value a string (an array of strings when the device repeats a field within one entry). Text such as URLs, user names and file names comes from network traffic and is returned as the device sends it; treat it as data. A child element's attributes appear as `field@attr` (for example `srcloc@cc`) and an entry's attributes as `@attr` (for example `@logid`). `fields` keeps only the named fields, and always keeps the `@attr` keys. A page over 256 KiB of entry JSON is cut at the tail and returns `truncated`, a `note`, and `next_skip` to continue from.
 
 ### Address, service, and tag objects
 
@@ -275,6 +278,14 @@ These are read-only operational commands (`type=op`), not configuration changes.
 | `panos_route_list` *(Firewall only)* | read-only | List routes from the legacy virtual-router routing table, optionally scoped to one virtual router. |
 | `panos_test_security_policy_match` *(Firewall only)* | read-only | Test which security rule a hypothetical flow would match against the running config. |
 | `panos_test_nat_policy_match` *(Firewall only)* | read-only | Test which NAT rule a hypothetical flow would match, and the resulting translation, against the running config. |
+
+### Log queries
+
+`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama the query can return logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error when that time runs out (naming the job once one has started). When the wait ends early, because that time ran out or the caller cancelled, it asks the device to drop the unfinished job. Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `panos_log_query` | read-only | Query traffic, threat, url, system, or config logs with a PAN-OS filter; returns up to 500 entries per call, with optional field projection and `skip` paging. |
 
 ### Site-to-site VPN
 

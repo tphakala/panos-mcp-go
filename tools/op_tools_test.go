@@ -698,14 +698,15 @@ func TestRegisterOpToolsGates(t *testing.T) {
 		"panos_system_resources", "panos_ha_status", "panos_session_list",
 		"panos_interface_status", "panos_route_list",
 		"panos_test_security_policy_match", "panos_test_nat_policy_match",
+		"panos_log_query",
 	}
 	firewallOnly := []string{
 		"panos_session_list", "panos_interface_status", "panos_route_list",
 		"panos_test_security_policy_match", "panos_test_nat_policy_match",
 	}
-	both := []string{"panos_system_resources", "panos_ha_status"}
+	both := []string{"panos_system_resources", "panos_ha_status", "panos_log_query"}
 
-	// All seven tools are read-only, so mode must not change the surface.
+	// All eight tools are read-only, so mode must not change the surface.
 	for _, readOnly := range []bool{false, true} {
 		t.Run("firewall", func(t *testing.T) {
 			names := opToolNames(t, "PA-VM", readOnly)
@@ -770,6 +771,14 @@ func TestOpRawFallback(t *testing.T) {
 		in := NatPolicyMatchInput{Source: "10.0.0.5", Destination: "203.0.113.9"}
 		res, _, _ := natPolicyMatchHandler(d)(t.Context(), nil, in)
 		assertRaw(t, res, "panos_test_nat_policy_match")
+	})
+	t.Run("log_query", func(t *testing.T) {
+		// A finished job whose result carries no <log> element.
+		body := `<response status="success"><result><job><status>FIN</status><id>7</id></job>` + foo + `</result></response>`
+		d, _ := newTestDeps(t, "PA-VM",
+			fakeRoute{Match: logSubmit(), Body: logSubmitBody}, fakeRoute{Match: logGet(), Body: body})
+		res, _, _ := logQueryHandler(d)(t.Context(), nil, LogQueryInput{LogType: "traffic"})
+		assertRaw(t, res, "panos_log_query")
 	})
 }
 

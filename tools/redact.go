@@ -108,7 +108,8 @@ func redactWriteError[In any](err error, in *In, opts []writeOption[In]) string 
 // The read paths with hand-written handlers that bypass the cores now route
 // through this seam too (issue #108): the zone list, get and delete handlers via
 // deviceErrorResult, and the zone update and moveHandler seed reads via
-// deviceReadErrorResult, which wraps this seam for their "read %q" message shape.
+// deviceReadErrorResult, which wraps this seam for their "read %q" message shape,
+// and the log query's submit and poll errors via deviceErrorResult.
 // No bespoke read path is left echoing the raw body, and no
 // secret-bearing family has a bespoke handler, so nothing with a withSecrets
 // extractor sits outside this seam.
