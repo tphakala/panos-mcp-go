@@ -26,11 +26,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Hardcoded to match ci.yml and the go.mod version that
-      # repo_hygiene_test.go's TestGoVersionCoordinated keeps in lockstep.
+      # Same setup as ci.yml: the go.mod minor, newest patch on every run.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27"
+          go-version-file: go.mod
+          check-latest: true
 
       # Gate the release on the race suite, the same bar CI enforces.
       - name: Test before release

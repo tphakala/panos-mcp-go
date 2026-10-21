@@ -42,9 +42,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # go.mod names only the minor (go 1.27); check-latest resolves the newest
+      # patch on every run instead of a stale one from the runner's tool cache.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27"
+          go-version-file: go.mod
+          check-latest: true
 
       # go install pins task by version and verifies it against the Go checksum
       # database (sum.golang.org); it is a supported install path for task. The
