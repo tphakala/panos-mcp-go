@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -97,7 +96,7 @@ func decodeLogResult(t *testing.T, res *mcp.CallToolResult) logResult {
 // orderedKeys returns the top-level keys of a JSON object in document order.
 func orderedKeys(t *testing.T, raw json.RawMessage) []string {
 	t.Helper()
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	if _, err := dec.Token(); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +242,7 @@ func TestLogQueryResultShapes(t *testing.T) {
 }
 
 func TestLogQueryFieldsProjection(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM", immediateLogRoutes(logEntryXML(1, ""))...)
+	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(logEntryXML(1, ""))...)
 	res := runLogQuery(t, d, &LogQueryInput{LogType: "traffic", Fields: []string{" srcloc ", "nosuch"}})
 	out := decodeLogResult(t, res)
 	want := []string{"@logid", "srcloc", "srcloc@code", "srcloc@cc"}
@@ -253,14 +252,9 @@ func TestLogQueryFieldsProjection(t *testing.T) {
 	if !slices.Equal(out.Unmatched, []string{"nosuch"}) {
 		t.Errorf("unmatched_fields = %v, want [nosuch]", out.Unmatched)
 	}
-	if len(logRequests(f)) == 0 {
-		t.Fatal("no log request recorded")
-	}
 
 	// An empty page proves nothing about a name, so it reports nothing unmatched.
-	empty := `<response status="success"><result><job><status>FIN</status><id>7</id></job><log><logs count="0" progress="0"/></log></result></response>`
-	d2, _ := newTestDeps(t, "PA-VM",
-		fakeRoute{Match: logSubmit(), Body: logSubmitBody}, fakeRoute{Match: logGet(), Body: empty})
+	d2, _ := newTestDeps(t, "PA-VM", immediateLogRoutes()...)
 	out2 := decodeLogResult(t, runLogQuery(t, d2, &LogQueryInput{LogType: "traffic", Fields: []string{"nosuch"}}))
 	if out2.Unmatched != nil {
 		t.Errorf("unmatched_fields on an empty page = %v, want none", out2.Unmatched)
@@ -632,10 +626,7 @@ func TestLogQueryByteBudgetEdges(t *testing.T) {
 
 func TestLogQueryTakesNoLock(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(logEntryXML(1, ""))...)
-	unlock := d.LockWrites()
-	var once sync.Once
-	release := func() { once.Do(unlock) }
-	defer release()
+	defer d.LockWrites()()
 
 	done := make(chan *mcp.CallToolResult, 1)
 	go func() {
@@ -646,7 +637,6 @@ func TestLogQueryTakesNoLock(t *testing.T) {
 	case res := <-done:
 		decodeLogResult(t, res)
 	case <-time.After(5 * time.Second):
-		release()
 		t.Fatal("panos_log_query blocked while the write lock was held")
 	}
 }

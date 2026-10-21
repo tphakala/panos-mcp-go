@@ -253,9 +253,6 @@ func waitLogJob(ctx context.Context, d *Deps, id uint) ([]byte, error) {
 	}
 }
 
-// errNoLogJob reports a submit the device accepted without returning a job id.
-var errNoLogJob = errors.New("device returned no log job id")
-
 // runLogJob submits the query and waits for the job. It returns the job id
 // (0 when the submit failed) with any error, so the caller can name the job.
 func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body []byte, id uint, err error) {
@@ -272,7 +269,7 @@ func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body
 		return nil, 0, err
 	}
 	if id == 0 {
-		return nil, 0, errNoLogJob
+		return nil, 0, errors.New("device returned no log job id")
 	}
 	body, err = waitLogJob(ctx, d, id)
 	return body, id, err
