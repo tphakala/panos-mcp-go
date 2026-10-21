@@ -357,8 +357,20 @@ func TestLogQueryWaitBounds(t *testing.T) {
 		d.JobWait = 50 * time.Millisecond
 		res := runLogQuery(t, d, &LogQueryInput{LogType: "traffic"})
 		got := textContent(t, res)
-		if !res.IsError || !strings.Contains(got, "log job 7 did not finish") {
+		if !res.IsError || !strings.Contains(got, "log job 7 was not seen finished") {
 			t.Fatalf("want an error naming the unfinished job, got IsError=%v %q", res.IsError, got)
+		}
+	})
+	t.Run("a job finishing in the second half of a short budget is still collected", func(t *testing.T) {
+		shortLogPoll(t, time.Minute)
+		d, _ := newTestDeps(t, "PA-VM",
+			fakeRoute{Match: logSubmit(), Body: logSubmitBody},
+			fakeRoute{Match: pendingOnce(), Body: logRunningBody},
+			fakeRoute{Match: logGet(), Body: logFinBody(logEntryXML(1, ""))})
+		d.JobWait = 2 * time.Second
+		out := decodeLogResult(t, runLogQuery(t, d, &LogQueryInput{LogType: "traffic"}))
+		if out.Count != 1 {
+			t.Errorf("count = %d, want 1", out.Count)
 		}
 	})
 	t.Run("caller deadline is not reported as our budget", func(t *testing.T) {
@@ -368,7 +380,7 @@ func TestLogQueryWaitBounds(t *testing.T) {
 		defer cancel()
 		res, _, _ := logQueryHandler(d)(ctx, nil, LogQueryInput{LogType: "traffic"})
 		got := textContent(t, res)
-		if !res.IsError || strings.Contains(got, "did not finish") {
+		if !res.IsError || strings.Contains(got, "not seen finished") {
 			t.Fatalf("a caller deadline must be a plain error, got IsError=%v %q", res.IsError, got)
 		}
 	})
@@ -386,7 +398,7 @@ func TestLogQueryWaitBounds(t *testing.T) {
 			t.Fatalf("handler returned after %s, want prompt return on cancel", elapsed)
 		}
 		got := textContent(t, res)
-		if !res.IsError || strings.Contains(got, "did not finish") {
+		if !res.IsError || strings.Contains(got, "not seen finished") {
 			t.Fatalf("a caller cancel must be a plain error, got IsError=%v %q", res.IsError, got)
 		}
 	})

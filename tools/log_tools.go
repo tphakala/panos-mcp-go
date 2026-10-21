@@ -25,8 +25,10 @@ const (
 	// A page over the budget is cut at the tail and reports truncated/next_skip.
 	logResultBudget = 256 << 10
 	logBudgetKiB    = logResultBudget >> 10
-	logTypeKey      = "log_type"
-	logTypeURL      = "url"
+	// pollsPerBudget bounds the poll interval to JobWait/pollsPerBudget.
+	pollsPerBudget = 2
+	logTypeKey     = "log_type"
+	logTypeURL     = "url"
 )
 
 // logPollInterval is the wait between log job polls. It is a var only so tests
@@ -224,9 +226,13 @@ func projectLogFields(e *logEntry, want, matched map[string]bool) []logField {
 // body. It owns its loop rather than calling pango's WaitForLogs so that a
 // cancelled or expired ctx ends the wait at once instead of after the next
 // sleep, and so a poll response with no job status fails at once instead of
-// polling until the deadline.
+// polling until the deadline. Between polls it waits logPollInterval, or
+// JobWait/pollsPerBudget when that is shorter.
 func waitLogJob(ctx context.Context, d *Deps, id uint) ([]byte, error) {
 	cmd := &xmlapi.Log{Action: "get", JobId: id}
+	// A short JobWait still gets a second poll instead of one poll and a sleep
+	// that ends with the budget.
+	interval := min(logPollInterval, d.JobWait/pollsPerBudget)
 	for {
 		var job util.BasicJob
 		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
@@ -243,7 +249,7 @@ func waitLogJob(ctx context.Context, d *Deps, id uint) ([]byte, error) {
 		case "":
 			return nil, errors.New("log job poll response carries no job status")
 		}
-		timer := time.NewTimer(logPollInterval)
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -276,7 +282,7 @@ func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body
 }
 
 // logJobError maps a submit or poll error to a tool result. Our own JobWait
-// budget expiring (and not the caller's ctx) is reported as did-not-finish,
+// budget expiring (and not the caller's ctx) is reported as not seen finished,
 // because no other tool can collect a log job's result later.
 func logJobError(ctx context.Context, d *Deps, tool string, id uint, err error) (res *mcp.CallToolResult, anyVal any) {
 	label, name := "the log query", tool
@@ -285,7 +291,7 @@ func logJobError(ctx context.Context, d *Deps, tool string, id uint, err error) 
 	}
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		d.Logger.Error("failed: "+tool, "job", id, "error", err)
-		return errorResult("failed: %s: %s did not finish within %s (PANOS_JOB_WAIT); narrow the query or lower nlogs and retry", tool, label, d.JobWait)
+		return errorResult("failed: %s: %s was not seen finished within %s (PANOS_JOB_WAIT); narrow the query or lower nlogs and retry", tool, label, d.JobWait)
 	}
 	return deviceErrorResult(d, name, err)
 }
