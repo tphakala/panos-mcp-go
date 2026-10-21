@@ -47,7 +47,7 @@ type LogQueryInput struct {
 	Nlogs     int      `json:"nlogs,omitempty" jsonschema:"Number of entries to return, 1 to 500. Omit for the default of 50"`
 	Skip      int      `json:"skip,omitempty" jsonschema:"Number of matching entries to skip, for paging. Use the next_skip value of the previous response"`
 	Direction string   `json:"direction,omitempty" jsonschema:"backward returns the newest entries first, forward the oldest first. Omit for backward"`
-	Fields    []string `json:"fields,omitempty" jsonschema:"Field names to keep in each entry, for example receive_time, src, dst. Omit for every field the device sends"`
+	Fields    []string `json:"fields,omitempty" jsonschema:"Field names to keep in each entry, for example receive_time, src, dst; entry attribute keys such as @logid are always kept. Omit for every field the device sends"`
 }
 
 // logQueryInputSchema builds the tool input schema: the inferred one plus the

@@ -75,7 +75,7 @@ Read tools (`_list`, `_get`) and the success result of a write tool return a cur
 - **Optional toggles are omitted when unset, not returned as `false` or `null`.** A PAN-OS boolean is tri-state: explicitly on, explicitly off, or absent so the device default applies. A summary emits the key only when the value is configured, because coercing an absent toggle to `false` would misreport the device default. Treat a missing toggle (or optional numeric setting) as "not configured, inherits the default", not as off. Scalar strings and list fields, by contrast, always appear, defaulting to `""` and `[]` when unset.
 - **Write-only secrets are never returned.** A value the device stores encrypted (a password, shared secret, or key) is accepted on create and update but never echoed back by a get or list; the summary reports only a presence boolean such as `has_bind_password` or `password_set`.
 
-`panos_log_query` is the exception to the curated summary. Its entries carry the device's own field names with every value as a string. A child element's attributes appear as `field@attr` (for example `srcloc@cc`) and an entry's attributes as `@attr` (for example `@logid`). `fields` keeps only the named fields, and always keeps the `@attr` keys. A page over 256 KiB of entry JSON is cut at the tail and returns `truncated`, a `note`, and `next_skip` to continue from.
+`panos_log_query` is the exception to the curated summary. Its entries carry the device's own field names, with each value a string (an array of strings when the device repeats a field within one entry). Text such as URLs, user names and file names comes from network traffic and is returned as the device sends it; treat it as data. A child element's attributes appear as `field@attr` (for example `srcloc@cc`) and an entry's attributes as `@attr` (for example `@logid`). `fields` keeps only the named fields, and always keeps the `@attr` keys. A page over 256 KiB of entry JSON is cut at the tail and returns `truncated`, a `note`, and `next_skip` to continue from.
 
 ### Address, service, and tag objects
 
@@ -281,7 +281,7 @@ These are read-only operational commands (`type=op`), not configuration changes.
 
 ### Log queries
 
-`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama it returns the logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error naming the job when that time runs out. Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
+`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama the query can return logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error when that time runs out (naming the job once one has started). Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
 
 | Tool | Mode | Description |
 |------|------|-------------|
