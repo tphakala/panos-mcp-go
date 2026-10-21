@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -28,15 +29,11 @@ func TestGoVersionCoordinated(t *testing.T) {
 
 	var reference string
 	for _, s := range sources {
-		b, err := os.ReadFile(s.path) //nolint:gosec // G304: fixed in-repo doc and config paths from a constant table, not user input
-		if err != nil {
-			t.Fatalf("reading %s: %v", s.path, err)
-		}
-		m := regexp.MustCompile(s.pattern).FindSubmatch(b)
+		m := regexp.MustCompile(s.pattern).FindStringSubmatch(readRepoFile(t, s.path))
 		if m == nil {
 			t.Fatalf("no Go version marker in %s (pattern %q); if the line moved or changed shape, update repo_hygiene_test.go", s.path, s.pattern)
 		}
-		got := string(m[1])
+		got := m[1]
 		if reference == "" {
 			reference = got // go.mod is listed first and is the source of truth
 			continue
@@ -50,46 +47,47 @@ func TestGoVersionCoordinated(t *testing.T) {
 // TestGoVersionTracksLatestPatch fails when a Go patch release gets pinned
 // anywhere, so builds keep picking up standard library fixes without a commit.
 // go.mod names only the minor and has no toolchain line, the Dockerfile tag
-// has no patch, and every setup-go step reads go.mod with check-latest.
+// has no patch, and every setup-go step in .github/workflows reads go.mod with
+// check-latest.
 func TestGoVersionTracksLatestPatch(t *testing.T) {
-	read := func(path string) string {
-		t.Helper()
-		b, err := os.ReadFile(path) //nolint:gosec // G304: fixed in-repo config paths, not user input
-		if err != nil {
-			t.Fatalf("reading %s: %v", path, err)
-		}
-		return string(b)
-	}
-
-	mod := read("go.mod")
+	mod := readRepoFile(t, "go.mod")
 	if !regexp.MustCompile(`(?m)^go \d+\.\d+$`).MatchString(mod) {
 		t.Errorf("go.mod: the go line must name only the minor (go 1.N), not a patch")
 	}
 	if regexp.MustCompile(`(?m)^toolchain `).MatchString(mod) {
 		t.Errorf("go.mod: remove the toolchain line; it pins a patch release")
 	}
-	if m := regexp.MustCompile(`golang:\d+\.\d+\.\d+`).FindString(read("Dockerfile")); m != "" {
+	if m := regexp.MustCompile(`golang:\d+\.\d+\.\d+`).FindString(readRepoFile(t, "Dockerfile")); m != "" {
 		t.Errorf("Dockerfile: %s pins a patch release; use golang:1.N-<variant>", m)
 	}
 
-	for _, path := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
-		checkSetupGoSteps(t, path, read(path))
+	workflows, err := filepath.Glob(".github/workflows/*.y*ml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := 0
+	for _, path := range workflows {
+		steps += checkSetupGoSteps(t, path, readRepoFile(t, path))
+	}
+	if steps == 0 {
+		t.Errorf("no actions/setup-go step found in %d workflow files; if setup moved, update this test", len(workflows))
 	}
 
-	vuln := read(".github/workflows/govulncheck.yml")
+	vuln := readRepoFile(t, ".github/workflows/govulncheck.yml")
 	if !regexp.MustCompile(`(?m)^\s*go-version-input:\s*""\s*$`).MatchString(vuln) {
 		t.Errorf(`govulncheck.yml: set go-version-input: "" so the action's "stable" default does not override go-version-file`)
+	}
+	if !regexp.MustCompile(`(?m)^\s*go-version-file:\s*go\.mod\s*$`).MatchString(vuln) {
+		t.Errorf("govulncheck.yml: the action must use go-version-file: go.mod")
 	}
 }
 
 // checkSetupGoSteps requires each actions/setup-go step in wf to read go.mod
-// with check-latest and to carry no go-version that would override it.
-func checkSetupGoSteps(t *testing.T, path, wf string) {
+// with check-latest and to carry no go-version that would override it. It
+// returns the number of setup-go steps found.
+func checkSetupGoSteps(t *testing.T, path, wf string) int {
 	t.Helper()
 	steps := regexp.MustCompile(`(?m)^\s*- uses: actions/setup-go@`).FindAllStringIndex(wf, -1)
-	if len(steps) == 0 {
-		t.Errorf("%s: no actions/setup-go step found; if setup moved, update this test", path)
-	}
 	nextStep := regexp.MustCompile(`(?m)^\s*- `)
 	for _, s := range steps {
 		// The step's with: block is the text up to the next step.
@@ -107,6 +105,17 @@ func checkSetupGoSteps(t *testing.T, path, wf string) {
 			t.Errorf("%s: setup-go must not set go-version; it overrides go-version-file", path)
 		}
 	}
+	return len(steps)
+}
+
+// readRepoFile returns the contents of a file at a fixed path in this repo.
+func readRepoFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path) //nolint:gosec // G304: fixed in-repo doc and config paths, not user input
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(b)
 }
 
 // TestNoEmOrEnDashes enforces the repo convention that forbids em (U+2014) and

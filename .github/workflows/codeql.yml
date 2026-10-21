@@ -26,6 +26,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # Same Go setup as ci.yml, so autobuild gets the newest patch of go.mod's
+      # minor rather than the runner's preinstalled Go.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
       # SHA-pinned: this job holds security-events: write. Bump by hand; Dependabot
       # also updates the pin.
       - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
