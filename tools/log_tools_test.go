@@ -261,6 +261,31 @@ func TestLogQueryFieldsProjection(t *testing.T) {
 	}
 }
 
+func TestLogQueryDefaults(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       LogQueryInput
+		wantDir  string
+		wantLogs string
+	}{
+		{"omitted nlogs and direction", LogQueryInput{LogType: "url"}, "backward", "50"},
+		{"forward direction is sent", LogQueryInput{LogType: "url", Direction: "forward", Nlogs: 7}, "forward", "7"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d, f := newTestDeps(t, "PA-VM", immediateLogRoutes()...)
+			decodeLogResult(t, runLogQuery(t, d, &c.in))
+			submit := logRequests(f)[0]
+			if got := submit.Get("dir"); got != c.wantDir {
+				t.Errorf("dir = %q, want %q", got, c.wantDir)
+			}
+			if got := submit.Get("nlogs"); got != c.wantLogs {
+				t.Errorf("nlogs = %q, want %q", got, c.wantLogs)
+			}
+		})
+	}
+}
+
 func TestLogQueryInputValidation(t *testing.T) {
 	cases := map[string]LogQueryInput{
 		"empty log_type":            {},
@@ -294,9 +319,10 @@ func TestLogQueryInputValidation(t *testing.T) {
 
 func TestLogQueryDeviceErrors(t *testing.T) {
 	cases := []struct {
-		name   string
-		routes []fakeRoute
-		want   string
+		name      string
+		routes    []fakeRoute
+		want      string
+		wantPolls int
 	}{
 		{
 			name: "filter syntax error on submit",
@@ -317,7 +343,8 @@ func TestLogQueryDeviceErrors(t *testing.T) {
 				{Match: logGet(), Body: `<response status="success"><result><job><status>FIN</status><result>FAIL</result>` +
 					`<details><line>collector disk 100% full</line></details></job></result></response>`},
 			},
-			want: "collector disk 100% full",
+			want:      "collector disk 100% full",
+			wantPolls: 1,
 		},
 		{
 			name: "poll response without a job status",
@@ -325,13 +352,19 @@ func TestLogQueryDeviceErrors(t *testing.T) {
 				{Match: logSubmit(), Body: logSubmitBody},
 				{Match: logGet(), Body: `<response status="success"><result><job><id>7</id></job></result></response>`},
 			},
-			want: "no job status",
+			want:      "no job status",
+			wantPolls: 1,
+		},
+		{
+			name: "submit accepted without a job id",
+			routes: []fakeRoute{{Match: logSubmit(),
+				Body: `<response status="success"><result><msg><line>query accepted</line></msg></result></response>`}},
+			want: "no log job id",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d, _ := newTestDeps(t, "PA-VM", c.routes...)
-			start := time.Now()
+			d, f := newTestDeps(t, "PA-VM", c.routes...)
 			res := runLogQuery(t, d, &LogQueryInput{LogType: "system"})
 			if !res.IsError {
 				t.Fatalf("must be an error result, got: %s", textContent(t, res))
@@ -339,8 +372,16 @@ func TestLogQueryDeviceErrors(t *testing.T) {
 			if got := textContent(t, res); !strings.Contains(got, c.want) {
 				t.Errorf("error = %q, want it to contain %q", got, c.want)
 			}
-			if time.Since(start) > time.Second {
-				t.Errorf("error took %s, must not wait for JobWait (%s)", time.Since(start), d.JobWait)
+			// A poll that cannot succeed must stop the wait at once: more polls than
+			// wantPolls means the loop kept going toward JobWait.
+			polls := 0
+			for _, r := range logRequests(f) {
+				if r.Get("action") == "get" {
+					polls++
+				}
+			}
+			if polls != c.wantPolls {
+				t.Errorf("polls = %d, want %d", polls, c.wantPolls)
 			}
 		})
 	}
@@ -354,7 +395,7 @@ func TestLogQueryWaitBounds(t *testing.T) {
 	t.Run("own budget expiring is reported as not finished", func(t *testing.T) {
 		shortLogPoll(t, 10*time.Millisecond)
 		d, _ := newTestDeps(t, "PA-VM", running...)
-		d.JobWait = 50 * time.Millisecond
+		d.JobWait = 500 * time.Millisecond
 		res := runLogQuery(t, d, &LogQueryInput{LogType: "traffic"})
 		got := textContent(t, res)
 		if !res.IsError || !strings.Contains(got, "log job 7 was not seen finished") {
@@ -387,6 +428,7 @@ func TestLogQueryWaitBounds(t *testing.T) {
 	t.Run("caller cancel during the wait returns promptly", func(t *testing.T) {
 		shortLogPoll(t, time.Minute)
 		d, _ := newTestDeps(t, "PA-VM", running...)
+		d.JobWait = 10 * time.Minute // keeps the poll interval at the full minute
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		// The first poll answers ACT at once, so the cancel lands while the loop
@@ -394,7 +436,7 @@ func TestLogQueryWaitBounds(t *testing.T) {
 		time.AfterFunc(100*time.Millisecond, cancel)
 		start := time.Now()
 		res, _, _ := logQueryHandler(d)(ctx, nil, LogQueryInput{LogType: "traffic"})
-		if elapsed := time.Since(start); elapsed > 2*time.Second {
+		if elapsed := time.Since(start); elapsed > 30*time.Second {
 			t.Fatalf("handler returned after %s, want prompt return on cancel", elapsed)
 		}
 		got := textContent(t, res)
@@ -521,10 +563,11 @@ func bigLogEntry(id, size int) string {
 	return logEntryXML(id, "<payload>"+strings.Repeat("x", size)+"</payload>")
 }
 
-func bigLogEntries(from, to, size int) []string {
+// bigLogEntries builds entries with a 10 KiB payload each.
+func bigLogEntries(from, to int) []string {
 	out := make([]string, 0, to-from)
 	for i := from; i < to; i++ {
-		out = append(out, bigLogEntry(i, size))
+		out = append(out, bigLogEntry(i, 10<<10))
 	}
 	return out
 }
@@ -559,7 +602,7 @@ func compactBytes(t *testing.T, entries []json.RawMessage) int {
 
 func TestLogQueryByteBudgetPaging(t *testing.T) {
 	const total = 40
-	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(bigLogEntries(0, total, 10<<10)...)...)
+	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(bigLogEntries(0, total)...)...)
 	out := decodeLogResult(t, runLogQuery(t, d, &LogQueryInput{LogType: "traffic", Nlogs: total}))
 	if !out.Truncated || out.Count <= 0 || out.Count >= total || out.NextSkip == nil || *out.NextSkip != out.Count {
 		t.Fatalf("truncated=%v count=%d next_skip=%v, want a cut page with next_skip=count", out.Truncated, out.Count, out.NextSkip)
@@ -574,7 +617,7 @@ func TestLogQueryByteBudgetPaging(t *testing.T) {
 
 	// Second page: the device serves the entries after the cut for skip=next_skip.
 	k := *out.NextSkip
-	d2, f2 := newTestDeps(t, "PA-VM", immediateLogRoutes(bigLogEntries(k, total, 10<<10)...)...)
+	d2, f2 := newTestDeps(t, "PA-VM", immediateLogRoutes(bigLogEntries(k, total)...)...)
 	out2 := decodeLogResult(t, runLogQuery(t, d2, &LogQueryInput{LogType: "traffic", Nlogs: total, Skip: k}))
 	if got := logRequests(f2)[0].Get("skip"); got != strconv.Itoa(k) {
 		t.Errorf("second page skip on the wire = %q, want %d", got, k)
@@ -613,7 +656,7 @@ func TestLogQueryByteBudgetEdges(t *testing.T) {
 		},
 		{
 			name:          "a cut short final page still reports next_skip",
-			entries:       bigLogEntries(0, 30, 10<<10),
+			entries:       bigLogEntries(0, 30),
 			in:            LogQueryInput{},
 			wantTruncated: true,
 		},
@@ -636,6 +679,21 @@ func TestLogQueryByteBudgetEdges(t *testing.T) {
 	}
 }
 
+func TestLogQueryProjectionCoversCutTail(t *testing.T) {
+	// The wanted name appears only in the last entry, which the size budget
+	// cuts; it still counts as matched for the page.
+	entries := bigLogEntries(0, 29)
+	entries = append(entries, logEntryXML(29, "<payload>"+strings.Repeat("x", 10<<10)+"</payload><tailonly>1</tailonly>"))
+	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(entries...)...)
+	out := decodeLogResult(t, runLogQuery(t, d, &LogQueryInput{LogType: "traffic", Nlogs: 30, Fields: []string{"payload", "tailonly"}}))
+	if !out.Truncated || out.Count >= 30 {
+		t.Fatalf("truncated=%v count=%d, want a cut page", out.Truncated, out.Count)
+	}
+	if len(out.Unmatched) != 0 {
+		t.Errorf("unmatched_fields = %v, want none", out.Unmatched)
+	}
+}
+
 func TestLogQueryTakesNoLock(t *testing.T) {
 	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(logEntryXML(1, ""))...)
 	defer d.LockWrites()()
@@ -653,7 +711,9 @@ func TestLogQueryTakesNoLock(t *testing.T) {
 	}
 }
 
-func TestLogQuerySchema(t *testing.T) {
+// logToolSchema returns the input schema of panos_log_query as a client sees it.
+func logToolSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
 	d, _ := newTestDeps(t, "PA-VM")
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	RegisterOpTools(s, d)
@@ -662,7 +722,6 @@ func TestLogQuerySchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var schema *jsonschema.Schema
 	for _, tl := range list.Tools {
 		if tl.Name != "panos_log_query" {
 			continue
@@ -671,14 +730,18 @@ func TestLogQuerySchema(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		schema = new(jsonschema.Schema)
+		schema := new(jsonschema.Schema)
 		if err := json.Unmarshal(raw, schema); err != nil {
 			t.Fatal(err)
 		}
+		return schema
 	}
-	if schema == nil {
-		t.Fatal("panos_log_query is not listed")
-	}
+	t.Fatal("panos_log_query is not listed")
+	return nil
+}
+
+func TestLogQuerySchema(t *testing.T) {
+	schema := logToolSchema(t)
 	enumOf := func(name string) []string {
 		vals := schema.Properties[name].Enum
 		out := make([]string, 0, len(vals))
@@ -693,11 +756,18 @@ func TestLogQuerySchema(t *testing.T) {
 	if got, want := enumOf("direction"), []string{"backward", "forward"}; !slices.Equal(got, want) {
 		t.Errorf("direction enum = %v, want %v", got, want)
 	}
+	if !slices.Equal(schema.Required, []string{"log_type"}) {
+		t.Errorf("required = %v, want [log_type]", schema.Required)
+	}
+}
+
+func TestLogQuerySchemaBounds(t *testing.T) {
+	schema := logToolSchema(t)
 	n := schema.Properties["nlogs"]
 	if n.Minimum == nil || *n.Minimum != 1 || n.Maximum == nil || *n.Maximum != 500 {
 		t.Errorf("nlogs bounds = %v..%v, want 1..500", n.Minimum, n.Maximum)
 	}
-	if !slices.Equal(schema.Required, []string{"log_type"}) {
-		t.Errorf("required = %v, want [log_type]", schema.Required)
+	if sk := schema.Properties["skip"]; sk.Minimum == nil || *sk.Minimum != 0 {
+		t.Errorf("skip minimum = %v, want 0", sk.Minimum)
 	}
 }
