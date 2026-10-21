@@ -27,8 +27,10 @@ const (
 	logBudgetKiB    = logResultBudget >> 10
 	// pollsPerBudget bounds the poll interval to JobWait/pollsPerBudget.
 	pollsPerBudget = 2
-	logTypeKey     = "log_type"
-	logTypeURL     = "url"
+	// logFinishTimeout bounds the request that drops an abandoned log job.
+	logFinishTimeout = 5 * time.Second
+	logTypeKey       = "log_type"
+	logTypeURL       = "url"
 )
 
 // logPollInterval is the wait between log job polls. It is a var only so tests
@@ -259,8 +261,9 @@ func waitLogJob(ctx context.Context, d *Deps, id uint) ([]byte, error) {
 	}
 }
 
-// runLogJob submits the query and waits for the job. It returns the job id
-// (0 when the submit failed) with any error, so the caller can name the job.
+// runLogJob submits the query and waits for the job, dropping the job on the
+// device when the wait ends because ctx is done. It returns the job id (0 when
+// the submit failed) with any error, so the caller can name the job.
 func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body []byte, id uint, err error) {
 	// pango's sendRequest drains and closes the response body before it
 	// returns (client.go:1230 @ efa4357), so there is nothing to close.
@@ -278,7 +281,24 @@ func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body
 		return nil, 0, errors.New("device returned no log job id")
 	}
 	body, err = waitLogJob(ctx, d, id)
+	if err != nil && ctx.Err() != nil {
+		finishLogJob(ctx, d, id)
+	}
 	return body, id, err
+}
+
+// finishLogJob asks the device to drop a log job the query stopped waiting for
+// (the caller cancelled or JobWait ran out), so the job does not stay queued on
+// the device. ctx is already done, so the request runs on a detached context
+// with its own short timeout. A failure is only logged, because the query has
+// already failed.
+func finishLogJob(ctx context.Context, d *Deps, id uint) {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logFinishTimeout)
+	defer cancel()
+	//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
+	if _, _, err := d.Client.Communicate(fctx, &xmlapi.Log{Action: "finish", JobId: id}, false, nil); err != nil {
+		d.Logger.Warn("panos_log_query: finish log job", "job", id, "error", err)
+	}
 }
 
 // logJobError maps a submit or poll error to a tool result. Our own JobWait
@@ -380,7 +400,9 @@ func logPage(in *LogQueryInput, nlogs int, entries []logEntry) (map[string]any, 
 }
 
 // logQueryHandler submits a type=log query, waits (bounded by JobWait) for the
-// job, and returns the entries. It takes no lock: it reads the log database,
+// job, and returns the entries. When the wait ends because ctx is done it
+// spends up to logFinishTimeout more asking the device to drop the job. It
+// takes no lock: it reads the log database,
 // not the candidate config, and a lock held across the poll would stall every
 // commit and, through RWMutex writer preference, every other tool (see the
 // writeMu doc in tools.go).

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"slices"
 	"strconv"
@@ -32,6 +33,23 @@ func logSubmit() func(url.Values) bool {
 
 func logGet() func(url.Values) bool {
 	return func(v url.Values) bool { return v.Get("type") == "log" && v.Get("action") == "get" }
+}
+
+func logFinish() func(url.Values) bool {
+	return func(v url.Values) bool { return v.Get("type") == "log" && v.Get("action") == "finish" }
+}
+
+const logFinishBody = `<response status='success'><msg>Job has been removed.</msg></response>`
+
+// finishedJobs returns the job ids of the action=finish requests f recorded.
+func finishedJobs(f *fakeAPI) []string {
+	var ids []string
+	for _, v := range f.Requests() {
+		if logFinish()(v) {
+			ids = append(ids, v.Get("job-id"))
+		}
+	}
+	return ids
 }
 
 // pendingOnce matches the first log poll only.
@@ -444,6 +462,92 @@ func TestLogQueryWaitBounds(t *testing.T) {
 			t.Fatalf("a caller cancel must be a plain error, got IsError=%v %q", res.IsError, got)
 		}
 	})
+}
+
+// TestLogQueryFinishesAbandonedJob pins that a query whose wait ends because
+// its context is done asks the device to drop the job, and that a job the
+// query collected gets no finish request.
+func TestLogQueryFinishesAbandonedJob(t *testing.T) {
+	submit := fakeRoute{Match: logSubmit(), Body: logSubmitBody}
+	running := fakeRoute{Match: logGet(), Body: logRunningBody}
+	finish := fakeRoute{Match: logFinish(), Body: logFinishBody}
+	cases := []struct {
+		name       string
+		routes     []fakeRoute
+		ctx        func(t *testing.T) (context.Context, fakeRoute)
+		wantFinish []string
+		wantWarn   bool
+	}{
+		{name: "own budget runs out", routes: []fakeRoute{submit, running, finish}, wantFinish: []string{"7"}},
+		{name: "caller deadline", routes: []fakeRoute{submit, running, finish}, ctx: deadlineAtFirstPoll, wantFinish: []string{"7"}},
+		{name: "caller cancel", routes: []fakeRoute{submit, running, finish}, ctx: cancelAtFirstPoll, wantFinish: []string{"7"}},
+		// No finish route: the fake answers the finish with a PAN-OS error.
+		{name: "failed finish is only logged", routes: []fakeRoute{submit, running}, wantFinish: []string{"7"}, wantWarn: true},
+		{name: "collected job", routes: []fakeRoute{submit, {Match: pendingOnce(), Body: logRunningBody}, {Match: logGet(), Body: logFinBody(logEntryXML(1, ""))}, finish}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			shortLogPoll(t, 10*time.Millisecond)
+			ctx, routes := t.Context(), c.routes
+			if c.ctx != nil {
+				var hook fakeRoute
+				ctx, hook = c.ctx(t)
+				routes = append([]fakeRoute{hook}, routes...)
+			}
+			d, f := newTestDeps(t, "PA-VM", routes...)
+			var logs bytes.Buffer
+			d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+			d.JobWait = 500 * time.Millisecond
+			if c.ctx != nil {
+				d.JobWait = time.Minute // the caller's context must end the wait, not JobWait
+			}
+			res, _, _ := logQueryHandler(d)(ctx, nil, LogQueryInput{LogType: "traffic"})
+			if wantErr := c.wantFinish != nil; res.IsError != wantErr {
+				t.Fatalf("IsError = %v, want %v: %q", res.IsError, wantErr, textContent(t, res))
+			}
+			// Only our own JobWait running out is reported as not seen finished.
+			if own := c.wantFinish != nil && c.ctx == nil; strings.Contains(textContent(t, res), "not seen finished") != own {
+				t.Errorf("not-seen-finished error = %v, want %v: %q", !own, own, textContent(t, res))
+			}
+			if ids := finishedJobs(f); !slices.Equal(ids, c.wantFinish) {
+				t.Errorf("finish requests = %q, want %q", ids, c.wantFinish)
+			}
+			if warned := strings.Contains(logs.String(), "panos_log_query: finish log job"); warned != c.wantWarn {
+				t.Errorf("finish failure logged = %v, want %v: %q", warned, c.wantWarn, logs.String())
+			}
+		})
+	}
+}
+
+// cancelAtFirstPoll returns a context and a never-matching route that cancels
+// it when the first log poll arrives, so the job id is always known first.
+func cancelAtFirstPoll(t *testing.T) (context.Context, fakeRoute) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	get := logGet()
+	return ctx, fakeRoute{Match: func(v url.Values) bool {
+		if get(v) {
+			cancel()
+		}
+		return false
+	}}
+}
+
+// deadlineAtFirstPoll returns a context with a deadline and a never-matching
+// route that holds the first log poll until that deadline passes, so the wait
+// ends on the deadline after the job id is known.
+func deadlineAtFirstPoll(t *testing.T) (context.Context, fakeRoute) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	t.Cleanup(cancel)
+	get := logGet()
+	return ctx, fakeRoute{Match: func(v url.Values) bool {
+		if get(v) {
+			<-ctx.Done()
+		}
+		return false
+	}}
 }
 
 func decodeLogEntryXML(t *testing.T, entryXML string) logEntry {

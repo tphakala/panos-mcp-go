@@ -28,7 +28,7 @@ The API user's Admin Role profile needs specific XML API permissions. Grant thes
 
 - **Operational Requests** (`type=op`): required at startup and for device operations. The server runs a warm-up at startup (it retrieves system info and detects whether the device is a firewall or Panorama) before it serves anything, and that warm-up is an operational request. `panos_system_info`, `panos_job_status`, `panos_config_diff` (a `show config list changes` operational command), and the job polling behind commit, validate, and push also need it. The operational-visibility and policy-test tools (`panos_system_resources`, `panos_ha_status`, `panos_session_list`, `panos_interface_status`, `panos_route_list`, `panos_test_security_policy_match`, `panos_test_nat_policy_match`) are operational requests too.
 - **Configuration** (`type=config`): required for every object and policy tool (address, service, group, tag, and security, NAT, decryption, authentication and PBF rule create/update/delete/move).
-- **Log** (`type=log`): the XML API log permission, required for `panos_log_query`. The exact label of this checkbox on the Admin Role XML API tab has not been checked here.
+- **Log** (`type=log`): required for `panos_log_query`.
 - **Commit**: required for `panos_commit`, and for `panos_push` to a Panorama device group.
 
 A Configuration-only role cannot start the server: the warm-up is an operational request, so startup fails with
@@ -281,7 +281,7 @@ These are read-only operational commands (`type=op`), not configuration changes.
 
 ### Log queries
 
-`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama the query can return logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error when that time runs out (naming the job once one has started). Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
+`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama the query can return logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error when that time runs out (naming the job once one has started). When the wait ends early, because that time ran out or the caller cancelled, it asks the device to drop the unfinished job. Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
 
 | Tool | Mode | Description |
 |------|------|-------------|
