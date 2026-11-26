@@ -621,6 +621,13 @@ func newPanFake(t *testing.T, f *panFake) (host string, port int) {
 	t.Helper()
 	ts := httptest.NewTLSServer(f.handler())
 	t.Cleanup(ts.Close)
+	return serverHostPort(t, ts)
+}
+
+// serverHostPort splits the address of an httptest server into the host and port
+// a Config needs.
+func serverHostPort(t *testing.T, ts *httptest.Server) (host string, port int) {
+	t.Helper()
 	u, err := url.Parse(ts.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -897,15 +904,8 @@ func writeServerCertPEM(t *testing.T, ts *httptest.Server) string {
 // unless the caller overrides it.
 func configFor(t *testing.T, ts *httptest.Server) *Config {
 	t.Helper()
-	u, err := url.Parse(ts.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.Atoi(u.Port())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &Config{Host: u.Hostname(), Port: port, APIKey: "k", SkipVerify: true}
+	host, port := serverHostPort(t, ts)
+	return &Config{Host: host, Port: port, APIKey: "k", SkipVerify: true}
 }
 
 // TestPangoTransportBoundsStalledDevice drives a real pango call through
