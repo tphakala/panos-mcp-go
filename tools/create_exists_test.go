@@ -221,17 +221,10 @@ func recordCall(sites map[string]*callSite, fn string, call *ast.CallExpr) {
 }
 
 // recvTypeName returns the base type name of a method receiver, looking through
-// a pointer and type arguments.
+// a pointer and type arguments (builderIdentName handles the latter).
 func recvTypeName(e ast.Expr) string {
-	switch t := e.(type) {
-	case *ast.StarExpr:
-		return recvTypeName(t.X)
-	case *ast.IndexExpr:
-		return recvTypeName(t.X)
-	case *ast.IndexListExpr:
-		return recvTypeName(t.X)
-	case *ast.Ident:
-		return t.Name
+	if star, ok := e.(*ast.StarExpr); ok {
+		e = star.X
 	}
-	return ""
+	return builderIdentName(e)
 }
