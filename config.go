@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -17,13 +18,22 @@ const (
 	defaultHTTPPort = 8080
 	defaultJobWait  = 120 * time.Second
 
-	// maxJobWaitSec caps PANOS_JOB_WAIT at 24 hours. An upper bound is required,
-	// not merely tidy: time.Duration is int64 nanoseconds, so waitSec * time.Second
-	// overflows above math.MaxInt64/int64(time.Second) = 9223372036 and wraps to a
-	// negative duration, which a positivity check placed before the multiplication
-	// cannot see. A negative deadline expires immediately, and time.NewTicker panics
-	// on a non-positive duration.
-	maxJobWaitSec = 24 * 60 * 60
+	// defaultRequestTimeout is the PANOS_REQUEST_TIMEOUT default: the longest one
+	// request to the device may take, from connecting to the last response byte.
+	defaultRequestTimeout = 300 * time.Second
+
+	// minHTTPTokenLen is the shortest MCP_HTTP_TOKEN, in characters, accepted on
+	// the http transport.
+	minHTTPTokenLen = 32
+
+	// maxWaitSec caps every whole-seconds duration setting (PANOS_JOB_WAIT,
+	// PANOS_REQUEST_TIMEOUT) at 24 hours. An upper bound is required, not merely
+	// tidy: time.Duration is int64 nanoseconds, so sec * time.Second overflows
+	// above math.MaxInt64/int64(time.Second) = 9223372036 and wraps to a negative
+	// duration, which a positivity check placed before the multiplication cannot
+	// see. A negative deadline expires immediately, and time.NewTicker panics on a
+	// non-positive duration.
+	maxWaitSec = 24 * 60 * 60
 
 	minPort = 1
 	maxPort = 65535
@@ -52,9 +62,12 @@ type Config struct {
 	CACert           string
 	ReadOnly         bool
 	JobWait          time.Duration
-	Transport        string
-	HTTPHost         string
-	HTTPPort         int
+	// RequestTimeout bounds one request to the device, connect to last response
+	// byte (PANOS_REQUEST_TIMEOUT).
+	RequestTimeout time.Duration
+	Transport      string
+	HTTPHost       string
+	HTTPPort       int
 	// HTTPToken, when set, is the bearer token the http transport requires on
 	// /mcp. It is a secret: json:"-" for the same reason as APIKey and Password,
 	// and LogValue reports only http_token_set (issue #5).
@@ -82,6 +95,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("ca_cert", c.CACert),
 		slog.Bool("read_only", c.ReadOnly),
 		slog.Duration("job_wait", c.JobWait),
+		slog.Duration("request_timeout", c.RequestTimeout),
 		slog.String("transport", c.Transport),
 		slog.String("http_host", c.HTTPHost),
 		slog.Int("http_port", c.HTTPPort),
@@ -156,14 +170,12 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 
-	waitSec, err := intEnv("PANOS_JOB_WAIT", int(defaultJobWait/time.Second))
-	if err != nil {
+	if cfg.JobWait, err = secondsEnv("PANOS_JOB_WAIT", defaultJobWait); err != nil {
 		return Config{}, err
 	}
-	if waitSec < 1 || waitSec > maxJobWaitSec {
-		return Config{}, fmt.Errorf("PANOS_JOB_WAIT must be between 1 and %d seconds, got %d", maxJobWaitSec, waitSec)
+	if cfg.RequestTimeout, err = secondsEnv("PANOS_REQUEST_TIMEOUT", defaultRequestTimeout); err != nil {
+		return Config{}, err
 	}
-	cfg.JobWait = time.Duration(waitSec) * time.Second
 
 	cfg.Transport = envOr("MCP_TRANSPORT", transportStdio)
 	switch cfg.Transport {
@@ -254,6 +266,20 @@ func intEnv(key string, def int) (int, error) {
 	return n, nil
 }
 
+// secondsEnv parses an environment variable holding whole seconds, returning def
+// when it is unset or empty. A value that is present must be in the range 1 to
+// maxWaitSec, which also keeps the conversion to a Duration from overflowing.
+func secondsEnv(key string, def time.Duration) (time.Duration, error) {
+	n, err := intEnv(key, int(def/time.Second))
+	if err != nil {
+		return 0, err
+	}
+	if n < 1 || n > maxWaitSec {
+		return 0, fmt.Errorf("%s must be between 1 and %d seconds, got %d", key, maxWaitSec, n)
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
 // portEnv parses a TCP port environment variable, returning def when the
 // variable is unset or empty. A value that is present must be in the range 1 to
 // 65535. def is returned unchecked, so a caller may pass 0 to leave the port
@@ -315,8 +341,9 @@ func readOnlyFromEnv() (bool, error) {
 
 // validateTLSAndAuth enforces the cross-field invariants that a per-field parse
 // cannot: PANOS_SKIP_VERIFY and PANOS_CA_CERT are mutually exclusive, a CA bundle
-// must be readable and hold a certificate, and an http transport bound to a
-// non-loopback interface requires MCP_HTTP_TOKEN.
+// must be readable and hold a certificate, an http transport bound to a
+// non-loopback interface requires MCP_HTTP_TOKEN, and on the http transport a
+// token must be at least minHTTPTokenLen characters.
 func validateTLSAndAuth(cfg *Config) error {
 	// A CA bundle is pointless when verification is disabled, and pango cannot
 	// honour both at once, so silently ignoring one would hide an operator mistake
@@ -341,6 +368,12 @@ func validateTLSAndAuth(cfg *Config) error {
 	if cfg.Transport == transportHTTP && cfg.HTTPToken == "" && !isLoopback(cfg.HTTPHost) {
 		return fmt.Errorf(
 			"MCP_HTTP_TOKEN is required when MCP_HTTP_HOST (%q) is not a loopback address", cfg.HTTPHost)
+	}
+	// The length is counted on the trimmed value (LoadConfig trims it). The message
+	// never carries the token or its length.
+	if cfg.Transport == transportHTTP && cfg.HTTPToken != "" && utf8.RuneCountInString(cfg.HTTPToken) < minHTTPTokenLen {
+		return fmt.Errorf(
+			"MCP_HTTP_TOKEN must be at least %d characters; generate one with: openssl rand -hex 32", minHTTPTokenLen)
 	}
 	return nil
 }

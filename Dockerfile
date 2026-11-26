@@ -36,7 +36,8 @@ USER appuser
 # exposes the server to the LAN by accident. Inside a container loopback makes a
 # published port unreachable from the host, so bind the container interface. A
 # non-loopback bind requires MCP_HTTP_TOKEN: the server refuses to start on
-# 0.0.0.0 without one, so pass MCP_HTTP_TOKEN when running the http transport.
+# 0.0.0.0 without one, so pass MCP_HTTP_TOKEN (at least 32 characters) when running
+# the http transport.
 ENV MCP_HTTP_HOST=0.0.0.0
 
 ENTRYPOINT ["./panos-mcp-go"]

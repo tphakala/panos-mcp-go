@@ -34,9 +34,14 @@ import (
 var configEnvVars = []string{
 	"PANOS_HOST", "PANOS_HOSTNAME", "PANOS_PORT", "PANOS_API_KEY", "PANOS_USERNAME", "PANOS_PASSWORD",
 	"PANOS_SKIP_VERIFY", "PANOS_SKIP_VERIFY_CERTIFICATE", "PANOS_CA_CERT",
-	"PANOS_ALLOW_WRITES", "PANOS_READ_ONLY", "PANOS_JOB_WAIT",
+	"PANOS_ALLOW_WRITES", "PANOS_READ_ONLY", "PANOS_JOB_WAIT", "PANOS_REQUEST_TIMEOUT",
 	"MCP_TRANSPORT", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "MCP_HTTP_TOKEN", "PANOS_LOG_LEVEL", "LOG_LEVEL",
 }
+
+// testHTTPToken is a bearer token of exactly the minimum accepted length (32
+// characters). It is built with strings.Repeat so no credential-looking literal
+// appears in the source.
+var testHTTPToken = strings.Repeat("t", 32)
 
 // setEnv unsets every configuration variable, then applies kv. The variables are
 // genuinely removed rather than set to empty, because that is the state an MCP
@@ -220,6 +225,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.JobWait != 120*time.Second {
 		t.Errorf("JobWait = %v, want 2m0s", cfg.JobWait)
 	}
+	if cfg.RequestTimeout != 300*time.Second {
+		t.Errorf("RequestTimeout = %v, want 5m0s", cfg.RequestTimeout)
+	}
 	if cfg.HTTPPort != 8080 {
 		t.Errorf("HTTPPort = %d, want 8080", cfg.HTTPPort)
 	}
@@ -249,9 +257,9 @@ func TestLoadConfigParsesValues(t *testing.T) {
 		"PANOS_HOST": "fw.example.net", "PANOS_PORT": "8443",
 		"PANOS_USERNAME": "admin", "PANOS_PASSWORD": "pw",
 		"PANOS_SKIP_VERIFY": "true", "PANOS_ALLOW_WRITES": "true",
-		"PANOS_JOB_WAIT": "30",
-		"MCP_TRANSPORT":  "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_PORT": "9090",
-		"MCP_HTTP_TOKEN":  "tok",
+		"PANOS_JOB_WAIT": "30", "PANOS_REQUEST_TIMEOUT": "45",
+		"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_PORT": "9090",
+		"MCP_HTTP_TOKEN":  testHTTPToken,
 		"PANOS_LOG_LEVEL": "debug",
 	})
 	cfg, err := LoadConfig()
@@ -266,7 +274,7 @@ func TestLoadConfigParsesValues(t *testing.T) {
 		{"Password", cfg.Password, "pw"},
 		{"Transport", cfg.Transport, "http"},
 		{"HTTPHost", cfg.HTTPHost, "0.0.0.0"},
-		{"HTTPToken", cfg.HTTPToken, "tok"},
+		{"HTTPToken", cfg.HTTPToken, testHTTPToken},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -288,6 +296,9 @@ func TestLoadConfigParsesValues(t *testing.T) {
 	}
 	if cfg.JobWait != 30*time.Second {
 		t.Errorf("JobWait = %v, want 30s", cfg.JobWait)
+	}
+	if cfg.RequestTimeout != 45*time.Second {
+		t.Errorf("RequestTimeout = %v, want 45s", cfg.RequestTimeout)
 	}
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Errorf("LogLevel = %v, want DEBUG", cfg.LogLevel)
@@ -450,9 +461,10 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 		{"http port zero", map[string]string{"MCP_HTTP_PORT": "0"}, "MCP_HTTP_PORT"},
 		{"job wait not a number", map[string]string{"PANOS_JOB_WAIT": "abc"}, "PANOS_JOB_WAIT"},
 		{"job wait zero", map[string]string{"PANOS_JOB_WAIT": "0"}, "PANOS_JOB_WAIT"},
+		{"request timeout zero", map[string]string{"PANOS_REQUEST_TIMEOUT": "0"}, "PANOS_REQUEST_TIMEOUT"},
 		{"job wait negative", map[string]string{"PANOS_JOB_WAIT": "-5"}, "PANOS_JOB_WAIT"},
 		{"job wait above cap", map[string]string{"PANOS_JOB_WAIT": "86401"}, "PANOS_JOB_WAIT"},
-		// Above the point where waitSec * time.Second wraps int64 negative. It
+		// Above the point where sec * time.Second wraps int64 negative. It
 		// is rejected by the same cap as the case above rather than by any
 		// overflow-specific branch; the cap is what keeps the multiplication in
 		// range, so this case pins that the cap sits below the wrap point.
@@ -572,7 +584,7 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 		"PANOS_HOST": "  fw  ", "PANOS_API_KEY": "  k  ",
 		"PANOS_USERNAME": "  admin  ",
 		"MCP_TRANSPORT":  "  http  ", "MCP_HTTP_HOST": "  0.0.0.0  ",
-		"MCP_HTTP_PORT": "  9090  ", "MCP_HTTP_TOKEN": "  tok  ",
+		"MCP_HTTP_PORT": "  9090  ", "MCP_HTTP_TOKEN": "  " + testHTTPToken + "  ",
 		"PANOS_JOB_WAIT":    "  30  ",
 		"PANOS_SKIP_VERIFY": "  true  ", "PANOS_ALLOW_WRITES": "  true  ",
 		"PANOS_LOG_LEVEL": "  debug  ",
@@ -587,7 +599,7 @@ func TestLoadConfigTrimsStringInputs(t *testing.T) {
 		{"Username", cfg.Username, "admin"},
 		{"Transport", cfg.Transport, "http"},
 		{"HTTPHost", cfg.HTTPHost, "0.0.0.0"},
-		{"HTTPToken", cfg.HTTPToken, "tok"},
+		{"HTTPToken", cfg.HTTPToken, testHTTPToken},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
@@ -683,7 +695,7 @@ func TestLoadConfigHTTPTokenRequiredWhenNonLoopback(t *testing.T) {
 			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0",
 		}, "MCP_HTTP_TOKEN"},
 		{"non-loopback http with token", map[string]string{
-			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_TOKEN": "tok",
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "0.0.0.0", "MCP_HTTP_TOKEN": testHTTPToken,
 		}, ""},
 		{"loopback http without token", map[string]string{
 			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "127.0.0.1",
@@ -705,6 +717,53 @@ func TestLoadConfigHTTPTokenRequiredWhenNonLoopback(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("LoadConfig error = %v, want substring %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadConfigHTTPTokenMinLength pins the 32-character floor on MCP_HTTP_TOKEN:
+// it applies to the http transport only, on the trimmed value, and the error
+// names the variable and how to generate a token without echoing the token.
+func TestLoadConfigHTTPTokenMinLength(t *testing.T) {
+	short := strings.Repeat("s", 31)
+	for _, tc := range []struct {
+		name    string
+		env     map[string]string
+		wantErr string // substring; "" means expect success
+	}{
+		{"http with 31 characters", map[string]string{
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "127.0.0.1", "MCP_HTTP_TOKEN": short,
+		}, "MCP_HTTP_TOKEN"},
+		{"http with 32 characters", map[string]string{
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "127.0.0.1", "MCP_HTTP_TOKEN": testHTTPToken,
+		}, ""},
+		{"http with 31 characters padded by whitespace", map[string]string{
+			"MCP_TRANSPORT": "http", "MCP_HTTP_HOST": "127.0.0.1", "MCP_HTTP_TOKEN": "  " + short + "  ",
+		}, "MCP_HTTP_TOKEN"},
+		{"stdio ignores a short token", map[string]string{
+			"MCP_TRANSPORT": "stdio", "MCP_HTTP_TOKEN": short,
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"PANOS_HOST": "fw", "PANOS_API_KEY": "k"}
+			maps.Copy(env, tc.env)
+			setEnv(t, env)
+			_, err := LoadConfig()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("LoadConfig: unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("LoadConfig error = %v, want substring %q", err, tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), "openssl rand -hex 32") {
+				t.Errorf("error %q should say how to generate a token", err)
+			}
+			if strings.Contains(err.Error(), short) {
+				t.Errorf("error %q must not contain the token", err)
 			}
 		})
 	}

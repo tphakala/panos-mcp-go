@@ -464,25 +464,37 @@ func TestLogQueryWaitBounds(t *testing.T) {
 	})
 }
 
-// TestLogQueryFinishesAbandonedJob pins that a query whose wait ends because
-// its context is done asks the device to drop the job, and that a job the
-// query collected gets no finish request.
+// TestLogQueryFinishesAbandonedJob pins that a query whose wait fails before
+// the device reports the job finished (its context is done, or a poll failed)
+// asks the device to drop the job, and that a job the device reported finished,
+// collected or failed, gets no finish request.
 func TestLogQueryFinishesAbandonedJob(t *testing.T) {
 	submit := fakeRoute{Match: logSubmit(), Body: logSubmitBody}
 	running := fakeRoute{Match: logGet(), Body: logRunningBody}
 	finish := fakeRoute{Match: logFinish(), Body: logFinishBody}
+	pollFails := fakeRoute{Match: logGet(), Body: `<response status="error" code="13"><msg><line>log job poll failed</line></msg></response>`}
+	noStatus := fakeRoute{Match: logGet(), Body: `<response status="success"><result><job><id>7</id></job></result></response>`}
+	jobFailed := fakeRoute{Match: logGet(), Body: `<response status="success"><result><job><status>FIN</status><result>FAIL</result>` +
+		`<details><line>collector disk 100% full</line></details></job></result></response>`}
 	cases := []struct {
 		name       string
 		routes     []fakeRoute
 		ctx        func(t *testing.T) (context.Context, fakeRoute)
+		wantErr    bool
+		wantOwn    bool // reported as our own JobWait running out
 		wantFinish []string
 		wantWarn   bool
 	}{
-		{name: "own budget runs out", routes: []fakeRoute{submit, running, finish}, wantFinish: []string{"7"}},
-		{name: "caller deadline", routes: []fakeRoute{submit, running, finish}, ctx: deadlineAtFirstPoll, wantFinish: []string{"7"}},
-		{name: "caller cancel", routes: []fakeRoute{submit, running, finish}, ctx: cancelAtFirstPoll, wantFinish: []string{"7"}},
+		{name: "own budget runs out", routes: []fakeRoute{submit, running, finish}, wantErr: true, wantOwn: true, wantFinish: []string{"7"}},
+		{name: "caller deadline", routes: []fakeRoute{submit, running, finish}, ctx: deadlineAtFirstPoll, wantErr: true, wantFinish: []string{"7"}},
+		{name: "caller cancel", routes: []fakeRoute{submit, running, finish}, ctx: cancelAtFirstPoll, wantErr: true, wantFinish: []string{"7"}},
+		// The context is still live when the poll fails, as with a device request
+		// that runs into PANOS_REQUEST_TIMEOUT before JobWait.
+		{name: "poll fails", routes: []fakeRoute{submit, pollFails, finish}, wantErr: true, wantFinish: []string{"7"}},
+		{name: "poll without a job status", routes: []fakeRoute{submit, noStatus, finish}, wantErr: true, wantFinish: []string{"7"}},
 		// No finish route: the fake answers the finish with a PAN-OS error.
-		{name: "failed finish is only logged", routes: []fakeRoute{submit, running}, wantFinish: []string{"7"}, wantWarn: true},
+		{name: "failed finish is only logged", routes: []fakeRoute{submit, running}, wantErr: true, wantOwn: true, wantFinish: []string{"7"}, wantWarn: true},
+		{name: "failed job", routes: []fakeRoute{submit, jobFailed, finish}, wantErr: true},
 		{name: "collected job", routes: []fakeRoute{submit, {Match: pendingOnce(), Body: logRunningBody}, {Match: logGet(), Body: logFinBody(logEntryXML(1, ""))}, finish}},
 	}
 	for _, c := range cases {
@@ -498,16 +510,15 @@ func TestLogQueryFinishesAbandonedJob(t *testing.T) {
 			var logs bytes.Buffer
 			d.Logger = slog.New(slog.NewTextHandler(&logs, nil))
 			d.JobWait = 500 * time.Millisecond
-			if c.ctx != nil {
-				d.JobWait = time.Minute // the caller's context must end the wait, not JobWait
+			if !c.wantOwn {
+				d.JobWait = time.Minute // something other than JobWait must end the wait
 			}
 			res, _, _ := logQueryHandler(d)(ctx, nil, LogQueryInput{LogType: "traffic"})
-			if wantErr := c.wantFinish != nil; res.IsError != wantErr {
-				t.Fatalf("IsError = %v, want %v: %q", res.IsError, wantErr, textContent(t, res))
+			if res.IsError != c.wantErr {
+				t.Fatalf("IsError = %v, want %v: %q", res.IsError, c.wantErr, textContent(t, res))
 			}
-			// Only our own JobWait running out is reported as not seen finished.
-			if own := c.wantFinish != nil && c.ctx == nil; strings.Contains(textContent(t, res), "not seen finished") != own {
-				t.Errorf("not-seen-finished error = %v, want %v: %q", !own, own, textContent(t, res))
+			if own := strings.Contains(textContent(t, res), "not seen finished"); own != c.wantOwn {
+				t.Errorf("not-seen-finished error = %v, want %v: %q", own, c.wantOwn, textContent(t, res))
 			}
 			if ids := finishedJobs(f); !slices.Equal(ids, c.wantFinish) {
 				t.Errorf("finish requests = %q, want %q", ids, c.wantFinish)

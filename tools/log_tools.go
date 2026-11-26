@@ -229,8 +229,9 @@ func projectLogFields(e *logEntry, want, matched map[string]bool) []logField {
 // cancelled or expired ctx ends the wait at once instead of after the next
 // sleep, and so a poll response with no job status fails at once instead of
 // polling until the deadline. Between polls it waits logPollInterval, or
-// JobWait/pollsPerBudget when that is shorter.
-func waitLogJob(ctx context.Context, d *Deps, id uint) ([]byte, error) {
+// JobWait/pollsPerBudget when that is shorter. fin is true when the device
+// reported the job finished (FIN), failed or not.
+func waitLogJob(ctx context.Context, d *Deps, id uint) (body []byte, fin bool, err error) {
 	cmd := &xmlapi.Log{Action: "get", JobId: id}
 	// A short JobWait still gets a second poll instead of one poll and a sleep
 	// that ends with the budget.
@@ -238,32 +239,33 @@ func waitLogJob(ctx context.Context, d *Deps, id uint) ([]byte, error) {
 	for {
 		var job util.BasicJob
 		//nolint:bodyclose // pango's sendRequest already drained and closed the response body (client.go:1230 @ efa4357).
-		body, _, err := d.Client.Communicate(ctx, cmd, false, &job)
+		body, _, err = d.Client.Communicate(ctx, cmd, false, &job)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		switch job.Status {
 		case "FIN":
 			if job.Result == "FAIL" {
-				return nil, errors.New(cmp.Or(job.Details.String(), "log job failed"))
+				return nil, true, errors.New(cmp.Or(job.Details.String(), "log job failed"))
 			}
-			return body, nil
+			return body, true, nil
 		case "":
-			return nil, errors.New("log job poll response carries no job status")
+			return nil, false, errors.New("log job poll response carries no job status")
 		}
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
 // runLogJob submits the query and waits for the job, dropping the job on the
-// device when the wait ends because ctx is done. It returns the job id (0 when
-// the submit failed) with any error, so the caller can name the job.
+// device when the wait fails before the device reports it finished. It returns
+// the job id (0 when the submit failed) with any error, so the caller can name
+// the job.
 func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body []byte, id uint, err error) {
 	// pango's sendRequest drains and closes the response body before it
 	// returns (client.go:1230 @ efa4357), so there is nothing to close.
@@ -280,18 +282,18 @@ func runLogJob(ctx context.Context, d *Deps, in *LogQueryInput, nlogs int) (body
 	if id == 0 {
 		return nil, 0, errors.New("device returned no log job id")
 	}
-	body, err = waitLogJob(ctx, d, id)
-	if err != nil && ctx.Err() != nil {
+	body, fin, err := waitLogJob(ctx, d, id)
+	if err != nil && !fin {
 		finishLogJob(ctx, d, id)
 	}
 	return body, id, err
 }
 
 // finishLogJob asks the device to drop a log job the query stopped waiting for
-// (the caller cancelled or JobWait ran out), so the job does not stay queued on
-// the device. ctx is already done, so the request runs on a detached context
-// with its own short timeout. A failure is only logged, because the query has
-// already failed.
+// (ctx is done, or a poll failed, such as a request that hit
+// PANOS_REQUEST_TIMEOUT), so the job does not stay queued on the device. ctx may
+// already be done, so the request runs on a detached context with its own short
+// timeout. A failure is only logged, because the query has already failed.
 func finishLogJob(ctx context.Context, d *Deps, id uint) {
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logFinishTimeout)
 	defer cancel()
@@ -400,7 +402,7 @@ func logPage(in *LogQueryInput, nlogs int, entries []logEntry) (map[string]any, 
 }
 
 // logQueryHandler submits a type=log query, waits (bounded by JobWait) for the
-// job, and returns the entries. When the wait ends because ctx is done it
+// job, and returns the entries. When the wait fails before the job finishes it
 // spends up to logFinishTimeout more asking the device to drop the job. It
 // takes no lock: it reads the log database,
 // not the candidate config, and a lock held across the poll would stall every
