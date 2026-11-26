@@ -205,9 +205,8 @@ func assertFamilySummary(t *testing.T, m map[string]any, toggles map[string]bool
 // "name is required" and the device sees no config request at all. Two guards
 // produce that message, the build in registerLogSettingsFamily and the blank-name
 // check in rejectExisting, so removing either one alone leaves this test green.
-// It goes red when both are removed: the entry then reaches pango, whose own
-// "name is not specified" message replaces the guard's and which would
-// have sent a get.
+// It goes red when both are removed: the create then sends the pre-read get for
+// the blank name and the message is no longer the guard's.
 func TestLogSettingsBuildRequiresName(t *testing.T) {
 	d, f := newTestDeps(t, "Panorama")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
