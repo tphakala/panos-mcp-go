@@ -109,6 +109,10 @@ var (
 	goVersionInputNo = regexp.MustCompile(`^[ \t]*go-version-input:[ \t]*(?:""|'')[ \t]*$`)
 	checkLatestKey   = regexp.MustCompile(`^[ \t]*(?:-[ \t]+)?["']?check-latest["']?[ \t]*:`)
 	checkLatestTrue  = regexp.MustCompile(`^[ \t]*check-latest:[ \t]*(?:true|"true"|'true')[ \t]*$`)
+
+	// trailingComment matches a # at the start of the line or after a space or
+	// tab, through the end of the line.
+	trailingComment = regexp.MustCompile(`(?:^|[ \t])#.*$`)
 )
 
 // stepsUsing returns the text of every block-style step whose uses line matches
@@ -219,13 +223,7 @@ func settingLines(text string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for line := range strings.Lines(text) {
 			line = strings.TrimRight(line, "\r\n")
-			for i := range len(line) {
-				if line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t') {
-					line = line[:i]
-					break
-				}
-			}
-			line = strings.TrimRight(line, " \t")
+			line = strings.TrimRight(trailingComment.ReplaceAllString(line, ""), " \t")
 			if line == "" {
 				continue
 			}
