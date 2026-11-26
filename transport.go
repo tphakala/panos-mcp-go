@@ -57,7 +57,7 @@ func deviceTransport(tc *tls.Config) (*http.Transport, error) {
 // (*http.Transport).RegisterProtocol; net/http consults a registered protocol
 // before dialing (net/http transport.go:643-651, go1.27.4), and the HTTP/1-only
 // Protocols setting keeps net/http from registering its own https handler over it
-// (transport.go:476-478, http2.go:284-294). The wrapper delegates to a second
+// (transport.go:465-468 and :476-478, http2.go:284-294). The wrapper delegates to a second
 // transport that does the dialing, so every request pango sends, startup included,
 // gets one whole-exchange deadline. Both transports take their TLS policy from
 // deviceTLSConfig.
@@ -107,9 +107,8 @@ type deadlineTransport struct {
 // is returned as text without the DeadlineExceeded chain; otherwise pass through.
 //
 // A 101 Switching Protocols answer is refused: net/http hands the connection to
-// the caller on a protocol switch and cancels the request context itself
-// (net/http transport.go:2547-2574, go1.27.4), so the deadline would no longer
-// reach the body.
+// the caller on a protocol switch (net/http transport.go:2547-2574, go1.27.4),
+// so the deadline would no longer reach the body.
 func (d deadlineTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithTimeoutCause(req.Context(), d.timeout, d.cause)
 	resp, err := d.next.RoundTrip(req.WithContext(ctx))
