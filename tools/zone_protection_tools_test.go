@@ -163,7 +163,7 @@ func TestOverlayZoneProtectionPreservesDeferred(t *testing.T) {
 // TestZoneProtectionCreateFirewallXpath drives a firewall create and pins the
 // set reaches the zone-protection-profile node.
 func TestZoneProtectionCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="zp"/></result></response>`},
 	)
@@ -190,7 +190,7 @@ func TestZoneProtectionCreateFirewallXpath(t *testing.T) {
 // template and pins the set reaches the zone-protection-profile node inside that
 // template's config.
 func TestZoneProtectionCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="zp"/></result></response>`},
 	)

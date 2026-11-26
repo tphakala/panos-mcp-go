@@ -252,7 +252,7 @@ func TestLogExportScheduleNoOpUpdateIssuesNoWrite(t *testing.T) {
 // from the panos_log_export_schedule_create registration; this test turns red.
 func TestLogExportScheduleCreateRedactsPasswordOnError(t *testing.T) {
 	const fixture = "FTP-CREATE-SECRET-abc123"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for password ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

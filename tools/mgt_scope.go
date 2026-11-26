@@ -130,7 +130,7 @@ func mgtDeleteHandler[L, E any](
 
 // mgtCreateHandler mirrors deviceCreateHandler for the management-plane resolver.
 func mgtCreateHandler[L, E any, In mgtScoped](
-	d *Deps, tool string, svc crudService[L, E], p mgtScopeParts[L],
+	d *Deps, tool string, svc createService[L, E], p mgtScopeParts[L],
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],

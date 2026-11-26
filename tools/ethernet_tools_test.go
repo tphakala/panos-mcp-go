@@ -199,7 +199,7 @@ func TestAggregateInterfaceSummaryTriState(t *testing.T) {
 // service by mistake, since "interface/ethernet" is not a substring of
 // "interface/aggregate-ethernet".
 func TestEthernetInterfaceCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="ethernet1/3"/></result></response>`},
 	)
@@ -220,7 +220,7 @@ func TestEthernetInterfaceCreateFirewallXpath(t *testing.T) {
 // TestEthernetInterfaceCreatePanoramaTemplateXpath pins that a Panorama create
 // resolves through the template scope AND still targets the ethernet node.
 func TestEthernetInterfaceCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="ethernet1/3"/></result></response>`},
 	)
@@ -239,10 +239,11 @@ func TestEthernetInterfaceCreatePanoramaTemplateXpath(t *testing.T) {
 	if !strings.Contains(xp, "/template/entry[@name='edge']") {
 		t.Fatalf("panorama create must resolve through the template scope: %s", xp)
 	}
+	assertReadBackGet(t, f)
 }
 
 func TestAggregateInterfaceCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="ae1"/></result></response>`},
 	)

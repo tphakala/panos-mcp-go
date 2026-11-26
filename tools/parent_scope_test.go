@@ -16,7 +16,7 @@ import (
 // parentFixAdapter.Create makes the set target the child entry node instead, so
 // the recorded xpath ends at the route entry and this assertion shifts.
 func TestParentFixAdapterCreateXpathTwoComponents(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="r1"/></result></response>`},
 	)

@@ -92,7 +92,7 @@ func assertSetXpath(t *testing.T, f *fakeAPI, want ...string) {
 func TestNetProfileCreateFirewallXpath(t *testing.T) {
 	for _, c := range netProfileScopeCases {
 		t.Run(c.name, func(t *testing.T) {
-			d, f := newTestDeps(t, "PA-VM",
+			d, f := newCreateTestDeps(t, "PA-VM",
 				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 				fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="` + c.entryName + `"/></result></response>`},
 			)
@@ -122,7 +122,7 @@ func TestNetProfileCreateFirewallXpath(t *testing.T) {
 func TestNetProfileCreatePanoramaTemplateXpath(t *testing.T) {
 	for _, c := range netProfileScopeCases {
 		t.Run(c.name, func(t *testing.T) {
-			d, f := newTestDeps(t, "Panorama",
+			d, f := newCreateTestDeps(t, "Panorama",
 				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 				fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="` + c.entryName + `"/></result></response>`},
 			)

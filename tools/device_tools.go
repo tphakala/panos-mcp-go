@@ -576,7 +576,9 @@ func zoneSummary(e *zone.Entry) any {
 }
 
 // zoneCreateHandler creates a zone. It mirrors the generic createHandler but
-// resolves the flat zone location instead of a LocationInput.
+// resolves the flat zone location instead of a LocationInput. Like every create
+// it reads the zone first under the write lock and fails without writing when the
+// name already exists (see rejectExisting).
 func zoneCreateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, ZoneWriteInput) (*mcp.CallToolResult, any, error) {
 	svc := newZoneService(d)
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in ZoneWriteInput) (*mcp.CallToolResult, any, error) {
@@ -591,6 +593,9 @@ func zoneCreateHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, Zone
 			return res, v, nil
 		}
 		defer d.LockWrites()()
+		if res := rejectExisting(ctx, d, "panos_zone_create", svc, loc, in.Name); res != nil {
+			return res, nil, nil
+		}
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
 			d.Logger.Error("failed: panos_zone_create", "error", err)

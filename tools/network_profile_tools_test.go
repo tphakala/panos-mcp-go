@@ -121,7 +121,7 @@ func TestInterfaceManagementProfileCreateXpath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d, f := newTestDeps(t, c.model,
+			d, f := newCreateTestDeps(t, c.model,
 				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 				fakeRoute{Match: configAction("get"), Body: entryBody},
 			)

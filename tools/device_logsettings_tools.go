@@ -128,11 +128,13 @@ func logMatchCommonSummary(name string, desc, filter *string, email, http, snmpt
 // registerLogSettingsFamily wires the five CRUD tools for one log-settings
 // family. The read tools are always registered; the write tools are skipped in
 // read-only mode. build is assembled from newEntry and overlayFn so the seven
-// families need supply only their pango types and field mapping.
+// families need supply only their pango types and field mapping. svc is a
+// createService because the create tool reads the entry first (see
+// rejectExisting).
 func registerLogSettingsFamily[L, E any, In deviceScoped](
 	s *mcp.Server, d *Deps,
 	prefix, human string,
-	svc crudService[L, E], parts deviceScopeParts[L],
+	svc createService[L, E], parts deviceScopeParts[L],
 	nameFn func(*E) string,
 	newEntry func(name string) *E,
 	nameOf func(In) string,

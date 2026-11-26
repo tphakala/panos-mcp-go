@@ -181,7 +181,7 @@ func TestRedactWriteErrorSurfacesDeviceCode(t *testing.T) {
 // wired into deviceCreateHandler (issue #92), not just that redactSecrets works.
 func TestServerProfileCreateRedactsSecretOnError(t *testing.T) {
 	const secret = "SUPERSECRET-abc123"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for secret ` + secret + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -432,6 +432,24 @@ func TestUpdateSeedReadCollapsesRawResponse(t *testing.T) {
 		func(in AddressInput) string { return in.Name }, overlayAddress, addressSummary)
 
 	res, _, err := h(t.Context(), nil, AddressInput{Name: "nope", Description: "x"})
+	assertCollapsedRawResponse(t, res, err, logs)
+}
+
+// TestCreatePreReadCollapsesRawResponse covers the existence pre-read every
+// create runs before its set. It is a read, so it collapses like the other reads
+// for a family carrying no secret (address). One test serves all three create
+// callers because the seam is the single deviceReadErrorResult call inside
+// rejectExisting.
+//
+// Sabotage: replace that call with errorResult("failed: %s: %v", tool, err).
+func TestCreatePreReadCollapsesRawResponse(t *testing.T) {
+	d, _ := newTestDeps(t, "PA-VM", fakeRoute{Match: configAction("get"), Body: rawEchoBody})
+	logs := captureLogs(t, d)
+	h := createHandler[address.Location, address.Entry, AddressInput](d, "panos_address_create",
+		newAddressService(d), addressResolve(d), func(in AddressInput) LocationInput { return in.Location },
+		buildAddressEntry, addressSummary)
+
+	res, _, err := h(t.Context(), nil, AddressInput{Name: "nope", IPNetmask: "10.0.0.1/32"})
 	assertCollapsedRawResponse(t, res, err, logs)
 }
 

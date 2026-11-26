@@ -223,7 +223,7 @@ func TestOverlaySecurityRuleFields(t *testing.T) {
 }
 
 func TestSecurityRuleCreateDefaults(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the rule back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: ruleGetBody("allow-web")},
@@ -264,6 +264,7 @@ func TestSecurityRuleCreateDefaults(t *testing.T) {
 	if !sawSet {
 		t.Fatal("no config set request recorded")
 	}
+	assertReadBackGet(t, f)
 }
 
 func TestSecurityRuleCreateRequiresAction(t *testing.T) {
@@ -285,7 +286,7 @@ func TestSecurityRuleCreateRequiresAction(t *testing.T) {
 
 func TestSecurityRuleCreateWithPosition(t *testing.T) {
 	t.Run("positions after create", func(t *testing.T) {
-		d, f := newTestDeps(t, "PA-VM",
+		d, f := newCreateTestDeps(t, "PA-VM",
 			// Order matters: the entry-specific get answers Create's read-back;
 			// the generic get answers MoveGroup's rulebase listing.
 			fakeRoute{Match: getEntryXpath("allow-web"), Body: ruleGetBody("allow-web")},
@@ -317,11 +318,9 @@ func TestSecurityRuleCreateWithPosition(t *testing.T) {
 		if !res.IsError {
 			t.Fatal("position before without relative_to must be an error")
 		}
-		for _, req := range f.Requests() {
-			if req.Get("action") == "set" {
-				t.Fatal("invalid position must be rejected before the rule is created")
-			}
-		}
+		// The position check runs before the existence pre-read, so no config
+		// request at all may reach the device.
+		assertNoConfigRequest(t, f)
 	})
 }
 
@@ -423,7 +422,7 @@ func TestSecurityRuleList(t *testing.T) {
 //nolint:gocognit // three independent Panorama and firewall rulebase subtests kept in one place.
 func TestSecurityRulePanoramaRulebase(t *testing.T) {
 	t.Run("device group post create", func(t *testing.T) {
-		d, f := newTestDeps(t, "Panorama",
+		d, f := newCreateTestDeps(t, "Panorama",
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 			fakeRoute{Match: configAction("get"), Body: ruleGetBody("allow-web")},
 		)
@@ -448,6 +447,7 @@ func TestSecurityRulePanoramaRulebase(t *testing.T) {
 		if !sawXpath {
 			t.Fatal("set xpath must target the dg1 post-rulebase")
 		}
+		assertReadBackGet(t, f)
 	})
 
 	t.Run("shared list defaults to pre", func(t *testing.T) {
@@ -1210,7 +1210,7 @@ func TestNatRuleCreateTranslations(t *testing.T) {
 
 	create := func(t *testing.T, name string) (func(NatRuleInput) *mcp.CallToolResult, *fakeAPI) {
 		t.Helper()
-		d, f := newTestDeps(t, "PA-VM",
+		d, f := newCreateTestDeps(t, "PA-VM",
 			fakeRoute{Match: getEntryXpath(name), Body: natRuleGetBody(name)},
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		)
@@ -1280,7 +1280,7 @@ func TestNatRuleCreateTranslations(t *testing.T) {
 }
 
 func TestNatRuleCreateDefaults(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the rule back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: natRuleGetBody("out-snat")},
@@ -1331,7 +1331,7 @@ func TestNatRuleCreateDefaults(t *testing.T) {
 //nolint:gocognit,gocyclo // three independent create-positioning subtests kept in one place.
 func TestNatRuleCreateWithPosition(t *testing.T) {
 	t.Run("positions after create", func(t *testing.T) {
-		d, f := newTestDeps(t, "PA-VM",
+		d, f := newCreateTestDeps(t, "PA-VM",
 			// Order matters: the entry-specific get answers Create's read-back;
 			// the generic get answers MoveGroup's rulebase listing.
 			fakeRoute{Match: getEntryXpath("out-snat"), Body: natRuleGetBody("out-snat")},
@@ -1363,9 +1363,9 @@ func TestNatRuleCreateWithPosition(t *testing.T) {
 		if !res.IsError {
 			t.Fatal("position before without relative_to must be an error")
 		}
-		if len(setElements(f)) != 0 {
-			t.Fatal("invalid position must be rejected before the rule is created")
-		}
+		// The position check runs before the existence pre-read, so no config
+		// request at all may reach the device.
+		assertNoConfigRequest(t, f)
 	})
 
 	t.Run("relative_to names a missing rule", func(t *testing.T) {
@@ -1375,7 +1375,7 @@ func TestNatRuleCreateWithPosition(t *testing.T) {
 		// This is the only test pinning ruleCreateHandler's partial-failure
 		// branch, which every rulebase that uses ruleCreateHandler shares
 		// (security, NAT, decryption, authentication, PBF).
-		d, f := newTestDeps(t, "PA-VM",
+		d, f := newCreateTestDeps(t, "PA-VM",
 			fakeRoute{Match: getEntryXpath("out-snat"), Body: natRuleGetBody("out-snat")},
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 			fakeRoute{Match: configAction("get"), Body: natCreateMoveListBody},
@@ -1539,7 +1539,7 @@ func TestNatRuleList(t *testing.T) {
 //nolint:gocognit // three independent Panorama and firewall rulebase subtests kept in one place.
 func TestNatRulePanoramaRulebase(t *testing.T) {
 	t.Run("device group post create", func(t *testing.T) {
-		d, f := newTestDeps(t, "Panorama",
+		d, f := newCreateTestDeps(t, "Panorama",
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 			fakeRoute{Match: configAction("get"), Body: natRuleGetBody("out-snat")},
 		)

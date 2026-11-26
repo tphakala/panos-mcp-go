@@ -118,7 +118,7 @@ const applicationGroupCreatedBody = `<response status="success"><result>` +
 	`<entry name="apps-web"><members><member>web-browsing</member></members></entry></result></response>`
 
 func TestApplicationGroupCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: applicationGroupCreatedBody},
 	)
@@ -395,7 +395,7 @@ func TestApplicationSummary(t *testing.T) {
 }
 
 func TestApplicationCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("my-app")},
 	)
@@ -958,7 +958,7 @@ const edlCreatedBody = `<response status="success"><result>` +
 	`<entry name="edl1"><type><ip><url>https://ex.com/l.txt</url><recurring><hourly/></recurring></ip></type></entry></result></response>`
 
 func TestEdlCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: edlCreatedBody},
 	)

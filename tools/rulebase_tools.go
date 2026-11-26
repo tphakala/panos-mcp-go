@@ -249,7 +249,7 @@ func decryptionRuleSummary(e *decryption.Entry) any {
 // ordering and partial-failure contract).
 func decryptionRuleCreateHandler(d *Deps, svc *decryption.Service) func(context.Context, *mcp.CallToolRequest, DecryptionRuleInput) (*mcp.CallToolResult, any, error) {
 	return ruleCreateHandler[decryption.Location, decryption.Entry, DecryptionRuleInput](
-		d, "panos_decryption_rule_create", svc,
+		d, "panos_decryption_rule_create", svc, newDecryptionRuleService(d),
 		func(in LocationInput) (decryption.Location, error) { return resolveLocation(d, in, decryptionParts()) },
 		buildDecryptionRuleEntry,
 		func(in DecryptionRuleInput) LocationInput { return in.Location },
@@ -455,7 +455,7 @@ func authenticationRuleSummary(e *authentication.Entry) any {
 // positions it via the shared ruleCreateHandler.
 func authenticationRuleCreateHandler(d *Deps, svc *authentication.Service) func(context.Context, *mcp.CallToolRequest, AuthenticationRuleInput) (*mcp.CallToolResult, any, error) {
 	return ruleCreateHandler[authentication.Location, authentication.Entry, AuthenticationRuleInput](
-		d, "panos_authentication_rule_create", svc,
+		d, "panos_authentication_rule_create", svc, newAuthenticationRuleService(d),
 		func(in LocationInput) (authentication.Location, error) {
 			return resolveLocation(d, in, authenticationParts())
 		},
@@ -804,7 +804,7 @@ func pbfRuleSummary(e *pbf.Entry) any {
 // shared ruleCreateHandler.
 func pbfRuleCreateHandler(d *Deps, svc *pbf.Service) func(context.Context, *mcp.CallToolRequest, PbfRuleInput) (*mcp.CallToolResult, any, error) {
 	return ruleCreateHandler[pbf.Location, pbf.Entry, PbfRuleInput](
-		d, "panos_pbf_rule_create", svc,
+		d, "panos_pbf_rule_create", svc, newPbfRuleService(d),
 		func(in LocationInput) (pbf.Location, error) { return resolveLocation(d, in, pbfParts()) },
 		buildPbfRuleEntry,
 		func(in PbfRuleInput) LocationInput { return in.Location },

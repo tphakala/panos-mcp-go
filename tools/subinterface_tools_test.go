@@ -57,7 +57,7 @@ func TestBuildSubinterfaceEmptyName(t *testing.T) {
 // ethernet/<parent>/layer3/units node. Sabotage: swapping the ethernet and
 // aggregate service constructors flips the segment to aggregate-ethernet.
 func TestEthernetSubinterfaceCreateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="ethernet1/1.100"/></result></response>`},
 	)
@@ -84,7 +84,7 @@ func TestEthernetSubinterfaceCreateXpath(t *testing.T) {
 // aggregate-ethernet/<parent>/layer3/units node. Sabotage: swapping the service
 // constructors flips the segment to ethernet.
 func TestAggregateSubinterfaceCreateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="ae1.100"/></result></response>`},
 	)

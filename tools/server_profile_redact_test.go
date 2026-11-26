@@ -34,7 +34,7 @@ import (
 // Confirmed red when removed, confirmed green when restored (see report).
 func TestLdapProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "LDAP-BIND-SECRET-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for bind-password ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -77,7 +77,7 @@ func TestLdapProfileUpdateRedactsSecretOnError(t *testing.T) {
 // Confirmed red when removed, confirmed green when restored (see report).
 func TestRadiusProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "RADIUS-SECRET-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for secret ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -120,7 +120,7 @@ func TestRadiusProfileUpdateRedactsSecretOnError(t *testing.T) {
 // Confirmed red when removed, confirmed green when restored (see report).
 func TestSnmpTrapProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "SNMP-COMMUNITY-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for community ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -173,7 +173,7 @@ func TestSnmpTrapProfileUpdateRedactsSecretOnError(t *testing.T) {
 // Confirmed red when removed, confirmed green when restored (see report).
 func TestEmailProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "EMAIL-SMTP-PW-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for password ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

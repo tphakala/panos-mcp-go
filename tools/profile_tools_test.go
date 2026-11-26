@@ -633,7 +633,7 @@ func TestProfileGroupSummary(t *testing.T) {
 // --- Antivirus: wire-level tests --------------------------------------------
 
 func TestAntivirusProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("av-new")},
 	)
@@ -720,7 +720,7 @@ func TestAntivirusProfileDelete(t *testing.T) {
 }
 
 func TestAntivirusProfilePanoramaLocation(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("av-new")},
 	)
@@ -775,7 +775,7 @@ func TestAntivirusProfileGetUpdateViaRegisteredTools(t *testing.T) {
 // --- URL filtering: wire-level tests (nil-vsys behavior) --------------------
 
 func TestURLFilteringProfileCreateSharedOnFirewall(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("u-new")},
 	)
@@ -811,13 +811,13 @@ func TestURLFilteringProfileVsysRejected(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("explicit vsys on a vsys-less type must be rejected")
 	}
-	assertNoConfigWrite(t, f)
+	assertNoConfigRequest(t, f)
 }
 
 // --- File blocking and profile group: create wire shape ---------------------
 
 func TestFileBlockingProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("fb-new")},
 	)
@@ -843,7 +843,7 @@ func TestFileBlockingProfileCreate(t *testing.T) {
 }
 
 func TestProfileGroupCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("pg-new")},
 	)
@@ -870,7 +870,7 @@ func TestProfileGroupCreate(t *testing.T) {
 // --- Vulnerability, anti-spyware, WildFire: create wire shape + location -----
 
 func TestVulnerabilityProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("v-new")},
 	)
@@ -897,7 +897,7 @@ func TestVulnerabilityProfileCreate(t *testing.T) {
 }
 
 func TestSpywareProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("s-new")},
 	)
@@ -921,7 +921,7 @@ func TestSpywareProfileCreate(t *testing.T) {
 }
 
 func TestWildfireAnalysisProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("wf-new")},
 	)
@@ -1125,7 +1125,7 @@ func TestLogForwardingSummary(t *testing.T) {
 }
 
 func TestLogForwardingProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("lf-new")},
 	)
@@ -1166,7 +1166,7 @@ func TestLogForwardingProfileVsysRejected(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("explicit vsys on a vsys-less type must be rejected")
 	}
-	assertNoConfigWrite(t, f)
+	assertNoConfigRequest(t, f)
 }
 
 func TestLogForwardingProfileGetUpdateViaRegisteredTools(t *testing.T) {
@@ -1315,7 +1315,7 @@ func TestDecryptionProfileSummary(t *testing.T) {
 }
 
 func TestDecryptionProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("dp-new")},
 	)

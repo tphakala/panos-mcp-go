@@ -87,7 +87,7 @@ func TestBuildStaticRouteV4NexthopDiscard(t *testing.T) {
 // pins that the set reaches the static-route node under the parent VR. Sabotage:
 // pointing staticRouteV4Parts at a different resource shifts the xpath.
 func TestStaticRouteV4CreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="r1"/></result></response>`},
 	)
@@ -111,13 +111,14 @@ func TestStaticRouteV4CreateFirewallXpath(t *testing.T) {
 		return strings.Contains(xp, "static-route") && strings.Contains(xp, "routing-table") &&
 			strings.Contains(xp, "/ip/") && !strings.Contains(xp, "ipv6") && strings.Contains(xp, "vr1")
 	})
+	assertReadBackGet(t, f)
 }
 
 // TestStaticRouteV4CreatePanoramaTemplateXpath drives a Panorama create under a
 // template and pins the template scope resolves in. Sabotage: dropping the
 // template branch of staticRouteV4Parts drops the template segment.
 func TestStaticRouteV4CreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="r1"/></result></response>`},
 	)
@@ -292,7 +293,7 @@ func TestBuildStaticRouteV6NexthopOneOf(t *testing.T) {
 // Sabotage: aliasing newStaticRouteV6Service to the v4 package shifts "ipv6" to
 // "ip".
 func TestStaticRouteV6CreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="r1"/></result></response>`},
 	)

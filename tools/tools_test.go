@@ -242,8 +242,10 @@ func (s *fakeSvc) Read(_ context.Context, _ fakeLoc, name, _ string) (*fakeEntry
 			return e, nil
 		}
 	}
-	return nil, fmt.Errorf("entry %q not found", name)
+	return nil, panoserr.ObjectNotFound()
 }
+
+func (s *fakeSvc) entryName(e *fakeEntry) string { return e.Name }
 
 func (s *fakeSvc) Update(_ context.Context, _ fakeLoc, e *fakeEntry, _ string) (*fakeEntry, error) {
 	if s.updateErr != nil {
@@ -362,6 +364,19 @@ func TestCreateHandler(t *testing.T) {
 	}
 	if body := textContent(t, res); !strings.Contains(body, `"projected": true`) {
 		t.Fatalf("create must return the summarized projection, got: %s", body)
+	}
+
+	// A name the build leaves blank is rejected before any read: the read-error
+	// service makes the pre-read visible if it runs.
+	blank := &fakeSvc{readErr: errors.New("read must not run")}
+	hb := createHandler[fakeLoc, fakeEntry, NameInput](handlerDeps(), "panos_create", blank, okResolve, loc,
+		func(NameInput) (*fakeEntry, error) { return &fakeEntry{Name: ""}, nil }, entrySummary)
+	res, _, err = hb(t.Context(), nil, NameInput{})
+	if err != nil || !res.IsError || !strings.Contains(textContent(t, res), "name is required") {
+		t.Fatalf("a blank entry name must be rejected before the pre-read: err=%v body=%s", err, textContent(t, res))
+	}
+	if len(blank.created) != 0 {
+		t.Fatalf("a blank entry name must not reach Create: %v", blank.created)
 	}
 }
 

@@ -412,8 +412,9 @@ func errorResult(format string, args ...any) (res *mcp.CallToolResult, anyVal an
 // and the zone family's flat-location list, get and delete handlers share, so a
 // device error on any of them has its raw body collapsed to the response code
 // rather than echoed. The seed reads that carry a "read %q" message shape
-// (updateCore, the zone update handler and moveHandler) share deviceReadErrorResult
-// instead, which threads the entry name into the message.
+// (updateCore, the zone update handler and moveHandler) and the create pre-reads
+// (rejectExisting) share deviceReadErrorResult instead, which threads the entry
+// name into the message.
 // Each call site is its own deletable seam: reverting one core to hand the raw
 // error to errorResult reddens exactly that core's collapse test. Write paths do
 // NOT use it: they carry submitted secret values and go through redactWriteError.
@@ -424,13 +425,14 @@ func deviceErrorResult(d *Deps, tool string, err error) (res *mcp.CallToolResult
 }
 
 // deviceReadErrorResult is deviceErrorResult for the seed read of a
-// read-modify-write update and the move handlers, whose message names the entry:
+// read-modify-write update, the move handlers and the create pre-read, whose
+// message names the entry:
 // "failed: <tool>: read %q: <msg>". It collapses the raw-response fallback the same
 // way (issue #108) so a device error on the seed read cannot echo the body it read
-// back, and surfaces the response code when the collapse fires. updateCore passes
-// the secret values that call submitted, since its seed read is a read that happens
-// to have them in hand; the move and zone-update seed reads carry no secret and
-// pass none. Each call site stays a deletable seam: reverting one to hand the raw
+// back, and surfaces the response code when the collapse fires. updateCore and
+// createCore pass the secret values that call submitted, since their reads happen
+// to have them in hand; the move and zone-update seed reads and the zone and rule
+// create pre-reads carry no secret and pass none. Each call site stays a deletable seam: reverting one to hand the raw
 // error to errorResult reddens exactly that path's collapse test.
 func deviceReadErrorResult(d *Deps, tool, name string, err error, secrets ...string) (res *mcp.CallToolResult, anyVal any) {
 	red := redactDeviceError(err, secrets...)
@@ -475,7 +477,8 @@ func replaceListOrRejectEmpty(dst *[]string, in []string, emptyErr string) error
 }
 
 // crudService is the five-method surface pango's CRUD config services expose;
-// the generic handler builders below are written against it.
+// the generic handler builders below are written against it. The create cores
+// take createService, which adds the entry-name accessor.
 type crudService[L, E any] interface {
 	Create(ctx context.Context, loc L, entry *E) (*E, error)
 	Read(ctx context.Context, loc L, name, action string) (*E, error)
@@ -494,6 +497,8 @@ type crudService[L, E any] interface {
 // 12.1.7), indistinguishable from an empty node. So a list against a mistyped
 // location reads as empty rather than an error; telling the two apart would
 // need a separate existence check per call, not worth the extra round-trip.
+// The create pre-read (rejectExisting) accepts the same ambiguity: a missing
+// parent reads as an absent entry and the create proceeds as it did before.
 func isObjectNotFound(err error) bool {
 	pe, ok := errors.AsType[panoserr.Panos](err)
 	return ok && pe.ObjectNotFound()
@@ -513,8 +518,10 @@ func isObjectNotFound(err error) bool {
 // not whatever a given call submitted, is what arms the raw-response collapse
 // (issue #99) at the create and update WRITE sinks, because a read-modify-write
 // update resends a stored secret the caller never sent. The seed read of an
-// update is a read, so it collapses unconditionally like the three read cores. opts is empty for object families, which carry no secret
-// and so keep their device WRITE error verbatim.
+// update is a read, so it collapses unconditionally like the three read cores.
+// createCore likewise reads under the write lock first (rejectExisting) and that
+// pre-read collapses the same way. opts is empty for object families, which carry
+// no secret and so keep their device WRITE error verbatim.
 //
 // The read, list and delete cores collapse pango's raw-response fallback for
 // every family routed through them, not only secret-bearing ones. A per-family
@@ -609,8 +616,72 @@ func deleteCore[L, E, In any](
 	}
 }
 
+// entryReader is the one capability the create pre-read needs.
+type entryReader[L, E any] interface {
+	Read(ctx context.Context, loc L, name, action string) (*E, error)
+}
+
+// createService is the crudService a create core needs, plus the entry-name
+// accessor both adapters already carry (generics cannot read E.Name).
+type createService[L, E any] interface {
+	crudService[L, E]
+	entryName(e *E) string
+}
+
+// createsWithoutUpdate lists the create tools that have no matching _update tool
+// by design, so the "already exists" error does not point at a tool that is not
+// registered. TestCreateToolsHaveUpdateSibling pins this set against the
+// registered tools.
+var createsWithoutUpdate = map[string]bool{
+	"panos_logical_router_create": true,
+	"panos_vsys_create":           true,
+}
+
+// rejectExisting is the existence pre-read every create runs before it writes.
+// PAN-OS merges a config set into an existing entry (reported on 12.1.7 in
+// issue #136; NOT MEASURED here), so a create that skipped this read would
+// silently change an entry it did not create. It returns nil when name is absent at loc and the create may go
+// ahead; otherwise it returns the tool result to return: an "already exists"
+// error, or the redacted read error for any failure other than not-found
+// (a failed read never counts as absent). Nothing is written in either case.
+//
+// The caller holds d.LockWrites(), so the read and the set cannot interleave
+// with another write through this server. Another admin editing the same
+// candidate between the two requests is not guarded against.
+//
+// Code 7 also answers a get under a missing parent location (see
+// isObjectNotFound), so a create at a nonexistent parent reads as absent and
+// proceeds to the same set it would have sent without this read.
+//
+// secrets are the values the call submitted, replaced in a read error like the
+// seed read of updateCore. A blank name returns before any request.
+func rejectExisting[L, E any](ctx context.Context, d *Deps, tool string,
+	svc entryReader[L, E], loc L, name string, secrets ...string,
+) *mcp.CallToolResult {
+	if name == "" {
+		res, _ := errorResult("%s: name is required", tool)
+		return res
+	}
+	_, err := svc.Read(ctx, loc, name, "get")
+	switch {
+	case err == nil:
+		d.Logger.Warn(tool+" rejected: entry exists", "name", name)
+		msg := fmt.Sprintf("%s: %q already exists at the requested location", tool, name)
+		if !createsWithoutUpdate[tool] {
+			msg += "; use " + strings.TrimSuffix(tool, "_create") + "_update to change it"
+		}
+		res, _ := errorResult("%s", msg)
+		return res
+	case isObjectNotFound(err):
+		return nil
+	default:
+		res, _ := deviceReadErrorResult(d, tool, name, err, secrets...)
+		return res
+	}
+}
+
 func createCore[L, E, In any](
-	d *Deps, tool string, svc crudService[L, E],
+	d *Deps, tool string, svc createService[L, E],
 	resolve func(In) (L, error),
 	build func(In) (*E, error),
 	summarize func(*E) any,
@@ -628,6 +699,9 @@ func createCore[L, E, In any](
 			return res, v, nil
 		}
 		defer d.LockWrites()()
+		if res := rejectExisting(ctx, d, tool, svc, loc, svc.entryName(entry), gatherSecrets(&in, opts)...); res != nil {
+			return res, nil, nil
+		}
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
 			red := redactWriteError(err, &in, opts)
@@ -742,7 +816,7 @@ func deleteHandler[L, E any](
 // would trade thirty closures for thirty methods and win nothing. The same
 // applies to updateHandler below.
 func createHandler[L, E, In any](
-	d *Deps, tool string, svc crudService[L, E],
+	d *Deps, tool string, svc createService[L, E],
 	resolve func(LocationInput) (L, error),
 	location func(In) LocationInput,
 	build func(In) (*E, error),

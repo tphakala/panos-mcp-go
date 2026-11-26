@@ -698,7 +698,7 @@ func TestAuthProfileSummaryHidesKeytab(t *testing.T) {
 // panos_auth_profile_create registration and this goes red.
 func TestAuthProfileCreateRedactsKeytabOnError(t *testing.T) {
 	const keytab = "KEYTAB-SECRET-abc123"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>bad keytab ` + keytab + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

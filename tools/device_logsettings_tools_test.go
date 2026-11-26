@@ -201,15 +201,14 @@ func assertFamilySummary(t *testing.T, m map[string]any, toggles map[string]bool
 }
 
 // TestLogSettingsBuildRequiresName drives a create with an empty name through the
-// registered handler and expects the build's own client-side rejection, before
-// the entry reaches pango. The scope is valid (template edge), so the only thing
-// that can fail the call client-side is the name guard, and the message must be
-// the guard's "name is required" rather than pango's own "name is not specified"
-// (which the entry would hit only if the guard were removed). Sabotage: delete
-// the name guard in registerLogSettingsFamily's build and the message becomes
-// pango's, reddening the message assertion.
+// registered handler and expects a client-side rejection: the call fails with
+// "name is required" and the device sees no config request at all. Two guards
+// produce that message, the build in registerLogSettingsFamily and the blank-name
+// check in rejectExisting, so removing either one alone leaves this test green.
+// It goes red when both are removed: the create then sends the pre-read get for
+// the blank name and the message is no longer the guard's.
 func TestLogSettingsBuildRequiresName(t *testing.T) {
-	d, _ := newTestDeps(t, "Panorama")
+	d, f := newTestDeps(t, "Panorama")
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterLogSettingsTools(srv, d)
 	cs := connectInMemory(t, srv)
@@ -225,6 +224,7 @@ func TestLogSettingsBuildRequiresName(t *testing.T) {
 	if out := textContent(t, res); !strings.Contains(out, "name is required") {
 		t.Fatalf("the build name guard must reject an empty name before pango does, got %q", out)
 	}
+	assertNoConfigRequest(t, f)
 }
 
 // TestLogSettingsGetSingleWrap pins that a get reaches the API with the entry

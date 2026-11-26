@@ -204,7 +204,7 @@ const zoneCreatedBody = `<response status="success"><result>` +
 //nolint:gocognit,gocyclo // two independent create-scoping subtests (firewall vsys, Panorama template).
 func TestZoneCreateFirewallAndPanorama(t *testing.T) {
 	t.Run("firewall targets the vsys xpath", func(t *testing.T) {
-		d, f := newTestDeps(t, "PA-VM",
+		d, f := newCreateTestDeps(t, "PA-VM",
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 			fakeRoute{Match: configAction("get"), Body: zoneCreatedBody},
 		)
@@ -234,7 +234,7 @@ func TestZoneCreateFirewallAndPanorama(t *testing.T) {
 		assertReadBackGet(t, f)
 	})
 	t.Run("panorama targets the template xpath", func(t *testing.T) {
-		d, f := newTestDeps(t, "Panorama",
+		d, f := newCreateTestDeps(t, "Panorama",
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 			fakeRoute{Match: configAction("get"), Body: zoneCreatedBody},
 		)
