@@ -63,6 +63,40 @@ func TestCreateRejectsExistingEntry(t *testing.T) {
 	}
 }
 
+// TestCreateRejectionOmitsUpdateHintWithoutUpdateTool pins the other branch of the
+// "already exists" error: a create with no update tool must not name one.
+//
+// Sabotage: invert or delete the createsWithoutUpdate check in rejectExisting.
+func TestCreateRejectionOmitsUpdateHintWithoutUpdateTool(t *testing.T) {
+	rows := []struct {
+		model, tool string
+		args        map[string]any
+	}{
+		{"PA-VM", "panos_logical_router_create", map[string]any{"name": "dup"}},
+		{"Panorama", "panos_vsys_create", map[string]any{"name": "dup", "template": "t1"}},
+	}
+	for _, r := range rows {
+		t.Run(r.tool, func(t *testing.T) {
+			d, f := newTestDeps(t, r.model, fakeRoute{Match: configAction("get"), Body: existingEntryBody})
+			srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+			RegisterAll(srv, d)
+			cs := connectInMemory(t, srv)
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: r.tool, Arguments: r.args})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := textContent(t, res)
+			if !res.IsError || !strings.Contains(body, `"dup" already exists`) {
+				t.Fatalf("%s on an existing entry must fail with the exists error, got: %s", r.tool, body)
+			}
+			if strings.Contains(body, "_update") {
+				t.Fatalf("%s has no update tool, so the error must not name one, got: %s", r.tool, body)
+			}
+			assertNoConfigWrite(t, f)
+		})
+	}
+}
+
 // TestCreatePreReadErrorAbortsAndRedacts pins that a pre-read failing for any
 // reason other than not-found stops the create (a flaky read must not be taken
 // as "absent" and merge into an entry) and that the read error carries none of
