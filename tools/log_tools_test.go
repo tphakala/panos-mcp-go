@@ -1197,10 +1197,10 @@ func resultMessage(log string) string {
 	return wire
 }
 
-// TestLogQueryWireSize pins the documented size of a reply: the page is sent
-// twice as compact JSON (text and structured content), about 2.15 times the
-// entry bytes for typical entries, not more. It measures the bytes the SDK
-// writes for the tool result.
+// TestLogQueryWireSize pins the documented size of a full reply: the page is
+// sent twice as compact JSON (text and structured content), about 2.15 times the
+// entry bytes for a full page of typical entries, and the test fails above
+// 2.25x. It measures the bytes the SDK writes for the tool result.
 func TestLogQueryWireSize(t *testing.T) {
 	const entries = 500
 	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(wideLogEntries(entries, 40)...)...)

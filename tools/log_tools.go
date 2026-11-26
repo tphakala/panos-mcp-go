@@ -24,10 +24,13 @@ const (
 	// logResultBudget caps the compact JSON bytes of the entries in one response.
 	// A page over the budget is cut at the tail and reports truncated/next_skip.
 	// The reply carries the page twice, as compact text and as structured content,
-	// so the encoded reply is a little over twice the budget for typical entries
-	// (measured about 2.15x) and at most three times: the text copy is escaped
-	// inside the JSON-RPC string, which only grows a quote or backslash from one
-	// byte to two.
+	// so a full page of typical entries encodes to a little over twice its entry
+	// JSON (measured about 2.15x). The entries themselves grow at most threefold:
+	// the text copy is escaped inside the JSON-RPC string, which only grows a
+	// quote or backslash from one byte to two. On top of that each reply carries
+	// the page metadata (logPage's keys besides entries) in both copies plus
+	// the JSON-RPC envelope, so a small or empty page can exceed three times its
+	// entry JSON.
 	logResultBudget = 256 << 10
 	logBudgetKiB    = logResultBudget >> 10
 	// pollsPerBudget bounds the poll interval to JobWait/pollsPerBudget.
