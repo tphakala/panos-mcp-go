@@ -639,12 +639,12 @@ func TestLogEntryRejectsRepeatedAttribute(t *testing.T) {
 	var w struct {
 		Entries []logEntry `xml:"entry"`
 	}
-	err := xml.Unmarshal([]byte(`<logs><entry><m code="1" code="2">v</m></entry></logs>`), &w)
+	err := xml.Unmarshal([]byte(`<logs><entry><proto code="1" code="2">v</proto></entry></logs>`), &w)
 	if err == nil {
 		t.Fatal("decode succeeded, want an error for a repeated attribute")
 	}
-	if got := err.Error(); !strings.Contains(got, "m") || !strings.Contains(got, "code") {
-		t.Errorf("error = %q, want it to name the child m and the attribute code", got)
+	if got := err.Error(); !strings.Contains(got, "child proto ") || !strings.Contains(got, "attribute code ") {
+		t.Errorf("error = %q, want it to name the child proto and the attribute code", got)
 	}
 }
 
@@ -861,8 +861,8 @@ func TestLogQueryTakesNoLock(t *testing.T) {
 	}
 }
 
-// logToolSchema returns the input schema of panos_log_query as a client sees it.
-func logToolSchema(t *testing.T) *jsonschema.Schema {
+// logTool returns panos_log_query as a client lists it.
+func logTool(t *testing.T) *mcp.Tool {
 	t.Helper()
 	d, _ := newTestDeps(t, "PA-VM")
 	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
@@ -873,21 +873,39 @@ func logToolSchema(t *testing.T) *jsonschema.Schema {
 		t.Fatal(err)
 	}
 	for _, tl := range list.Tools {
-		if tl.Name != "panos_log_query" {
-			continue
+		if tl.Name == "panos_log_query" {
+			return tl
 		}
-		raw, err := json.Marshal(tl.InputSchema)
-		if err != nil {
-			t.Fatal(err)
-		}
-		schema := new(jsonschema.Schema)
-		if err := json.Unmarshal(raw, schema); err != nil {
-			t.Fatal(err)
-		}
-		return schema
 	}
 	t.Fatal("panos_log_query is not listed")
 	return nil
+}
+
+// logToolSchema returns the input schema of panos_log_query as a client sees it.
+func logToolSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	raw, err := json.Marshal(logTool(t).InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := new(jsonschema.Schema)
+	if err := json.Unmarshal(raw, schema); err != nil {
+		t.Fatal(err)
+	}
+	return schema
+}
+
+// TestLogQueryDescription pins the two figures the tool description states, so
+// a swapped or stale Sprintf argument shows up. The literals are the point: when
+// a constant changes this fails, and the README paragraph on log queries, which
+// names the limit, needs the same edit.
+func TestLogQueryDescription(t *testing.T) {
+	desc := logTool(t).Description
+	for _, want := range []string{"limited to 256 KiB of entry JSON", "At most 5 log queries run at once"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description lacks %q: %s", want, desc)
+		}
+	}
 }
 
 func TestLogQuerySchema(t *testing.T) {
@@ -919,6 +937,35 @@ func TestLogQuerySchemaBounds(t *testing.T) {
 	}
 	if sk := schema.Properties["skip"]; sk.Minimum == nil || *sk.Minimum != 0 {
 		t.Errorf("skip minimum = %v, want 0", sk.Minimum)
+	}
+}
+
+// TestLogQuerySlotIsFreedOnEveryReturn runs more queries than there are slots, one
+// after another on one Deps, for each way a query can end. A path that kept its
+// slot would make a later query fail with the limit error.
+func TestLogQuerySlotIsFreedOnEveryReturn(t *testing.T) {
+	submit := fakeRoute{Match: logSubmit(), Body: logSubmitBody}
+	cases := []struct {
+		name   string
+		routes []fakeRoute
+	}{
+		{"collected page", immediateLogRoutes(logEntryXML(1, ""))},
+		{"failed job", []fakeRoute{submit, {Match: logGet(), Body: `<response status="success"><result><job><status>FIN</status><result>FAIL</result>` +
+			`<details><line>collector disk 100% full</line></details></job></result></response>`}}},
+		{"undecodable page", immediateLogRoutes(`<entry><m code="1" code="2">v</m></entry>`)},
+		{"unrecognized result", []fakeRoute{submit, {Match: logGet(), Body: `<response status="success"><result><job><status>FIN</status><id>7</id></job><other/></result></response>`}}},
+		{"failed submit", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d, _ := newTestDeps(t, "PA-VM", c.routes...)
+			for i := range maxLogQueries + 1 {
+				res := runLogQuery(t, d, &LogQueryInput{LogType: "traffic"})
+				if got := textContent(t, res); strings.Contains(got, "already running") {
+					t.Fatalf("query %d hit the limit after earlier queries ended: %s", i+1, got)
+				}
+			}
+		})
 	}
 }
 
