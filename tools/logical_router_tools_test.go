@@ -68,7 +68,7 @@ func TestLogicalRouterNoUpdateTool(t *testing.T) {
 // TestLogicalRouterCreateFirewallXpath drives a firewall create and pins the set
 // reaches the logical-router node.
 func TestLogicalRouterCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="lr1"/></result></response>`},
 	)
@@ -95,7 +95,7 @@ func TestLogicalRouterCreateFirewallXpath(t *testing.T) {
 // template and pins the set reaches the logical-router node inside that
 // template's config.
 func TestLogicalRouterCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="lr1"/></result></response>`},
 	)

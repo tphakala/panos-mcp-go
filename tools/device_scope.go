@@ -261,7 +261,7 @@ func deviceDeleteHandler[L, E any](
 
 // deviceCreateHandler mirrors netCreateHandler for the device-scope resolver.
 func deviceCreateHandler[L, E any, In deviceScoped](
-	d *Deps, tool string, svc crudService[L, E], p deviceScopeParts[L],
+	d *Deps, tool string, svc createService[L, E], p deviceScopeParts[L],
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],

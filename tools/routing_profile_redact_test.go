@@ -21,7 +21,7 @@ import (
 // panos_bgp_auth_profile_create registration in RegisterBgpAuthProfileTools.
 func TestBgpAuthProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "BGP-AUTH-SECRET-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for secret ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -63,7 +63,7 @@ func TestBgpAuthProfileUpdateRedactsSecretOnError(t *testing.T) {
 // panos_ospf_auth_profile_create registration in RegisterOspfAuthProfileTools.
 func TestOspfAuthProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "OSPF-MD5-KEY-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for key ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

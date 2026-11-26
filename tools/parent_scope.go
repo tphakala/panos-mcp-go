@@ -49,12 +49,16 @@ type parentFixService[E any] interface {
 // assembles the parent+child xpath itself, drives the *WithXpath methods, and
 // deletes via client.MultiConfig, mirroring the SDK's own delete. The name
 // accessor returns an entry's Name field, which generics cannot read off E
-// directly.
+// directly; it also serves createCore's pre-read through entryName.
 type parentFixAdapter[L xpathLocation, E any] struct {
 	svc    parentFixService[E]
 	client util.PangoClient
 	name   func(*E) string
 }
+
+// entryName returns the name Create writes the child entry under, so a create
+// can read that entry first (see createService).
+func (a parentFixAdapter[L, E]) entryName(e *E) string { return a.name(e) }
 
 // Create mirrors the SDK Create for a two-component service: build the full
 // parent+child path, set at the child collection node (path without its last
@@ -195,7 +199,7 @@ func parentDeleteHandler[L xpathLocation, E any, In netScoped](
 }
 
 func parentCreateHandler[L xpathLocation, E any, In netScoped](
-	d *Deps, tool string, svc crudService[parentScopeLoc[L], E], p netScopeParts[L],
+	d *Deps, tool string, svc createService[parentScopeLoc[L], E], p netScopeParts[L],
 	parent func(In) string,
 	build func(In) (*E, error), summarize func(*E) any,
 	opts ...writeOption[In],

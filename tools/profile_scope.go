@@ -154,7 +154,7 @@ func profileDeleteHandler[L, E any](
 
 // profileCreateHandler mirrors deviceCreateHandler for the profile-scope resolver.
 func profileCreateHandler[L, E any, In profileScoped](
-	d *Deps, tool string, svc crudService[L, E], p profileScopeParts[L],
+	d *Deps, tool string, svc createService[L, E], p profileScopeParts[L],
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],

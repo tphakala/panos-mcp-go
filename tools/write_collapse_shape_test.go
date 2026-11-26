@@ -65,7 +65,7 @@ func assertCollapsedWriteError(t *testing.T, res *mcp.CallToolResult, err error,
 // reaches the tool result.
 func TestLdapProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 	const fixture = "LDAP-BIND-SECRET-DN-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error" code="12"><msg><line><line>validation error for bind-password ` + fixture + `</line></line></msg></response>`},
 	)
 	logs := captureLogs(t, d)
@@ -83,7 +83,7 @@ func TestLdapProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 // panos_radius_profile_create registration in RegisterRadiusProfileTools.
 func TestRadiusProfileCreateCollapsesDoubleNestedDeviceError(t *testing.T) {
 	const fixture = "RADIUS-SECRET-DN-001"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error" code="12"><msg><line><line>validation error for secret ` + fixture + `</line></line></msg></response>`},
 	)
 	logs := captureLogs(t, d)

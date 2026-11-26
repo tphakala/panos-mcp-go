@@ -109,7 +109,9 @@ func redactWriteError[In any](err error, in *In, opts []writeOption[In]) string 
 // through this seam too (issue #108): the zone list, get and delete handlers via
 // deviceErrorResult, and the zone update and moveHandler seed reads via
 // deviceReadErrorResult, which wraps this seam for their "read %q" message shape,
-// and the log query's submit and poll errors via deviceErrorResult.
+// and the log query's submit and poll errors via deviceErrorResult. The create
+// pre-read (rejectExisting) of every create path, including the zone and rule
+// handlers, goes through deviceReadErrorResult as well.
 // No bespoke read path is left echoing the raw body, and no
 // secret-bearing family has a bespoke handler, so nothing with a withSecrets
 // extractor sits outside this seam.
@@ -131,8 +133,8 @@ func redactWriteError[In any](err error, in *In, opts []writeOption[In]) string 
 // modes were NOT MEASURED. This closes one shape of the leak, not the leak.
 //
 // secrets is empty for the three cores, which hold no submitted value. The seed
-// read of a read-modify-write update passes the values that call submitted, since
-// it is a read that happens to have them in hand.
+// read of a read-modify-write update and createCore's pre-read pass the values
+// that call submitted, since they are reads that happen to have them in hand.
 //
 // It takes the error rather than its string so that the device's numeric code
 // survives the collapse. pango puts the fallback marker at offset 0 for an

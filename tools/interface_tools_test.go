@@ -95,7 +95,7 @@ func TestLoopbackInterfaceCreateXpath(t *testing.T) {
 
 func loopbackCreateSetXpath(t *testing.T, model string, args map[string]any) string {
 	t.Helper()
-	d, f := newTestDeps(t, model,
+	d, f := newCreateTestDeps(t, model,
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="loopback.1"/></result></response>`},
 	)
@@ -213,7 +213,7 @@ func TestVlanInterfaceCreateXpath(t *testing.T) {
 
 func vlanCreateSetXpath(t *testing.T, model string, args map[string]any) string {
 	t.Helper()
-	d, f := newTestDeps(t, model,
+	d, f := newCreateTestDeps(t, model,
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="vlan.1"/></result></response>`},
 	)
@@ -333,7 +333,7 @@ func TestTunnelInterfaceCreateXpath(t *testing.T) {
 
 func tunnelCreateSetXpath(t *testing.T, model string, args map[string]any) string {
 	t.Helper()
-	d, f := newTestDeps(t, model,
+	d, f := newCreateTestDeps(t, model,
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="tunnel.1"/></result></response>`},
 	)

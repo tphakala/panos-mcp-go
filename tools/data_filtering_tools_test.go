@@ -326,7 +326,7 @@ func TestDataFilteringAndPatternScope(t *testing.T) {
 // --- End-to-end through the fake device -------------------------------------
 
 func TestDataFilteringProfileCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("df-new")},
 	)
@@ -387,7 +387,7 @@ func TestDataFilteringProfileUpdatePreservesRules(t *testing.T) {
 }
 
 func TestDataPatternCreate(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: minimalEntryBody("dp-new")},
 	)

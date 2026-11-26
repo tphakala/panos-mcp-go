@@ -53,7 +53,7 @@ func checkNoRename(name, entryName string) error {
 // (see nameFixService). Create, Delete, and List wrap the name themselves in the
 // SDK and pass through unchanged. Every object resource shares this one adapter;
 // the name accessor returns an entry's Name field, which generics cannot read
-// off E directly.
+// off E directly; it also serves createCore's pre-read through entryName.
 //
 // Revisit on any pango upgrade: if the SDK starts wrapping names internally,
 // this adapter would double-wrap. Every object resource's *APIErrorSurfaces test
@@ -65,6 +65,10 @@ type nameFixAdapter[L xpathLocation, E any] struct {
 	client util.PangoClient
 	name   func(*E) string
 }
+
+// entryName returns the name the SDK's Create writes the entry under, so a
+// create can read that entry first (see createService).
+func (a nameFixAdapter[L, E]) entryName(e *E) string { return a.name(e) }
 
 // Create passes through: the SDK wraps the entry name itself.
 func (a nameFixAdapter[L, E]) Create(ctx context.Context, loc L, entry *E) (*E, error) {

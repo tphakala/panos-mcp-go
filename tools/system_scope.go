@@ -256,7 +256,7 @@ func systemEntryDeleteHandler[L, E any](
 
 // systemEntryCreateHandler mirrors netCreateHandler for the system-scope resolver.
 func systemEntryCreateHandler[L, E any, In systemScoped](
-	d *Deps, tool string, svc crudService[L, E], p systemScopeParts[L],
+	d *Deps, tool string, svc createService[L, E], p systemScopeParts[L],
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],

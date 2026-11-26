@@ -32,7 +32,7 @@ func TestBuildIkeCryptoProfile(t *testing.T) {
 }
 
 func TestIkeCryptoProfileCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="ike-cp"/></result></response>`},
 	)

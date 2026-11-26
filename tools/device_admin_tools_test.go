@@ -331,7 +331,7 @@ func TestAdministratorSummaryOmitsAbsentToggle(t *testing.T) {
 // wired into the handler, not merely defined.
 func TestAdministratorCreateRedactsPasswordHashOnError(t *testing.T) {
 	const phash = "$1$secretsalt$SUPERSECRETHASH"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for phash ` + phash + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

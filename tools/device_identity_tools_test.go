@@ -45,7 +45,7 @@ func setXpaths(f *fakeAPI) []string {
 // the setPtr in applyLocalUser that writes the name-bearing entry) fails this.
 func TestLocalUserCreateXpath(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: localUserCreatedBody},
 	)
@@ -85,7 +85,7 @@ func TestLocalUserCreateXpath(t *testing.T) {
 // request an error result.
 func TestLocalUserCreateSharedScope(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: localUserCreatedBody},
 	)
@@ -122,7 +122,7 @@ func TestLocalUserCreateSharedScope(t *testing.T) {
 // fails the leak assertions.
 func TestLocalUserHasPasswordHashNoLeak(t *testing.T) {
 	ctx := t.Context()
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: localUserCreatedBody},
 	)
@@ -246,7 +246,7 @@ func TestMfaProfileSummaryHidesConfigValue(t *testing.T) {
 // constructor in samlIdpProfileParts fails the xpath assertion.
 func TestSamlIdpProfileCreateXpath(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: samlIdpCreatedBody},
 	)
@@ -285,7 +285,7 @@ func TestSamlIdpProfileCreateXpath(t *testing.T) {
 // shared request an error result.
 func TestSamlIdpProfileCreateSharedScope(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: samlIdpCreatedBody},
 	)
@@ -321,7 +321,7 @@ func TestSamlIdpProfileCreateSharedScope(t *testing.T) {
 // applyMfaProfile fails the element field check.
 func TestMfaProfileCreateXpath(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: mfaCreatedBody},
 	)
@@ -366,7 +366,7 @@ func TestMfaProfileCreateXpath(t *testing.T) {
 // request an error result.
 func TestMfaProfileCreateSharedScope(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: mfaCreatedBody},
 	)

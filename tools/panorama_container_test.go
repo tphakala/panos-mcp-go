@@ -289,7 +289,7 @@ func TestTemplateStackDeleteViaRegisteredTool(t *testing.T) {
 // (tools/panorama_container_tools.go); this test turns red.
 func TestDeviceGroupCreateRedactsAuthCodeOnError(t *testing.T) {
 	const fixture = "AUTHCODE-SECRET-abc123"
-	d, _ := newTestDeps(t, "Panorama",
+	d, _ := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for authorization-code ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

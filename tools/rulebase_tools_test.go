@@ -542,7 +542,7 @@ func TestOverlayPbfRuleAction(t *testing.T) {
 
 func TestDecryptionRuleCreateDefaults(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: decryptionRuleGetBody("dec-new")},
 	)
@@ -687,7 +687,7 @@ func TestDecryptionRuleMove(t *testing.T) {
 }
 
 func TestDecryptionRulePanoramaRulebase(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: decryptionRuleGetBody("dec-new")},
 	)
@@ -750,7 +750,7 @@ func TestDecryptionRuleGetUpdateViaRegisteredTools(t *testing.T) {
 // --- Authentication: wire-level tests ---------------------------------------
 
 func TestAuthenticationRuleCreateDefaults(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: authRuleGetBody("auth-new")},
 	)
@@ -877,7 +877,7 @@ func TestAuthenticationRuleGetUpdateViaRegisteredTools(t *testing.T) {
 // --- PBF: wire-level tests --------------------------------------------------
 
 func TestPbfRuleCreateDefaults(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: pbfRuleGetBody("pbf-new")},
 	)
@@ -1068,7 +1068,7 @@ func TestPbfRuleGetUpdateViaRegisteredTools(t *testing.T) {
 // the ssl-inbound-inspection type: the certificates reach the set element,
 // which TestDecryptionRuleCreateDefaults (ssl-forward-proxy) does not exercise.
 func TestDecryptionRuleCreateInboundCertificates(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: decryptionInboundGetBody("inbound")},
 	)
@@ -1089,7 +1089,7 @@ func TestDecryptionRuleCreateInboundCertificates(t *testing.T) {
 // forward-to-vsys action, which TestPbfRuleCreateDefaults (forward) does not
 // exercise.
 func TestPbfRuleCreateForwardToVsys(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: pbfRuleGetBody("vsys-fwd")},
 	)

@@ -84,7 +84,7 @@ func TestBuildSslTlsProfileCertOnly(t *testing.T) {
 // /config/shared to /config/panorama and fails the shared assertion.
 func TestSslTlsProfileCreateFirewallSharedXpath(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: sslTlsCreatedBody},
 	)
@@ -120,7 +120,7 @@ func TestSslTlsProfileCreateFirewallSharedXpath(t *testing.T) {
 // the template branch to p.templateStack() drops "template/" and fails.
 func TestSslTlsProfileCreatePanoramaTemplateXpath(t *testing.T) {
 	ctx := t.Context()
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: sslTlsCreatedBody},
 	)

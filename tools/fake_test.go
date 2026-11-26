@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -137,6 +138,56 @@ func newTestDeps(t *testing.T, model string, routes ...fakeRoute) (*Deps, *fakeA
 		IsPanorama: pano,
 		JobWait:    5 * time.Second,
 	}, f
+}
+
+// absentUntilSet matches a config get until the first config set has been seen,
+// and never matches anything else. It models the one piece of device state a
+// create needs: the entry the create is about to write does not exist yet, so
+// the existence pre-read gets code 7, while every later get (pango's read-back
+// after the set) falls through to the test's own get route. It records the set
+// as it passes and leaves it for the test's own set route.
+func absentUntilSet() func(url.Values) bool {
+	var setSeen atomic.Bool
+	return func(v url.Values) bool {
+		if v.Get("type") != "config" {
+			return false
+		}
+		switch v.Get("action") {
+		case "set":
+			setSeen.Store(true)
+		case "get":
+			return !setSeen.Load()
+		}
+		return false
+	}
+}
+
+// newCreateTestDeps is newTestDeps for a test that sends a create tool request to
+// the device and expects it to reach the set. Every create reads the entry first
+// and fails if it exists, so the first route here answers every config get with
+// code 7 (object not found) until the first config set. The route must come
+// first: a matcher only sees the requests no earlier route claimed.
+//
+// A test that never sends a set must use newTestDeps instead: here every get
+// answers code 7, and a list over code 7 reads as empty, which would let a list
+// test pass while ignoring its own fixture. The cleanup below fails a test that
+// used this constructor and sent no set, so that mix-up cannot go unnoticed.
+func newCreateTestDeps(t *testing.T, model string, routes ...fakeRoute) (*Deps, *fakeAPI) {
+	t.Helper()
+	d, f := newTestDeps(t, model,
+		append([]fakeRoute{{Match: absentUntilSet(), Body: objectNotFoundBody}}, routes...)...)
+	t.Cleanup(func() {
+		if t.Failed() {
+			return
+		}
+		for _, r := range f.Requests() {
+			if r.Get("type") == "config" && r.Get("action") == "set" {
+				return
+			}
+		}
+		t.Error("newCreateTestDeps used by a test that sent no config set; use newTestDeps")
+	})
+	return d, f
 }
 
 // TestLockWritesSerializes proves LockWrites gives mutual exclusion: concurrent
@@ -286,13 +337,14 @@ func textContent(t *testing.T, res *mcp.CallToolResult) string {
 }
 
 // assertNoConfigWrite fails if the fake recorded any config-write action
-// (multi-config, edit, or set), naming the offending action. Used by the
-// no-op update tests, where an identical overlay must issue no write.
+// (multi-config, edit, or set), naming the offending action. Used where a call
+// must write nothing: the no-op update tests, where an identical overlay must
+// issue no write, and the create tests that must be rejected before any set.
 func assertNoConfigWrite(t *testing.T, f *fakeAPI) {
 	t.Helper()
 	for _, req := range f.Requests() {
 		if a := req.Get("action"); a == "multi-config" || a == "edit" || a == "set" {
-			t.Fatalf("no-op update must not issue a config write, got action=%q", a)
+			t.Fatalf("expected no config write, got action=%q", a)
 		}
 	}
 }

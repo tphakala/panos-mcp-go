@@ -433,9 +433,10 @@ func moveHandler[L, E any](
 
 // ruleCreator is the create-and-position surface of a raw pango rule
 // service: Create plus the MoveGroup capability shared with moveHandler.
-// The create handlers take the raw service alone: nameFixAdapter's Create
-// is a pass-through, so raw Create is wire-identical, and MoveGroup only
-// exists on the raw service.
+// The create handlers take the raw service for these two calls:
+// nameFixAdapter's Create is a pass-through, so raw Create is wire-identical,
+// and MoveGroup only exists on the raw service. The raw service's name-based
+// Read cannot be used, so the pre-read goes through a separate entryReader.
 type ruleCreator[L, E any] interface {
 	Create(ctx context.Context, loc L, entry *E) (*E, error)
 	ruleMover[L, E]
@@ -443,14 +444,15 @@ type ruleCreator[L, E any] interface {
 
 // ruleCreateHandler builds a rule create tool handler: build and validate
 // the entry, validate any requested position BEFORE creating (a malformed
-// call leaves no rule behind), create under the write lock, then optionally
-// position the new rule via MoveGroup. A position whose relative_to names a
+// call leaves no rule behind), then under the write lock read the rule through
+// reader and fail without writing if the name exists (see rejectExisting),
+// create it, and optionally position the new rule via MoveGroup. A position whose relative_to names a
 // rule that does not exist passes the syntax check but fails at MoveGroup
 // after the create; the result then reports the rule was created but left
 // at the rulebase bottom, never silently mispositioned. Shared by the
 // rule create tools.
 func ruleCreateHandler[L, E, In any](
-	d *Deps, tool string, svc ruleCreator[L, E],
+	d *Deps, tool string, svc ruleCreator[L, E], reader entryReader[L, E],
 	resolve func(LocationInput) (L, error),
 	build func(In) (*E, error),
 	location func(In) LocationInput,
@@ -477,6 +479,9 @@ func ruleCreateHandler[L, E, In any](
 			return res, v, nil
 		}
 		defer d.LockWrites()()
+		if res := rejectExisting(ctx, d, tool, reader, loc, name(in)); res != nil {
+			return res, nil, nil
+		}
 		created, err := svc.Create(ctx, loc, entry)
 		if err != nil {
 			d.Logger.Error("failed: "+tool, "error", err)
@@ -503,7 +508,7 @@ func ruleCreateHandler[L, E, In any](
 // the raw service (see ruleCreator).
 func securityRuleCreateHandler(d *Deps, svc *security.Service) func(context.Context, *mcp.CallToolRequest, SecurityRuleInput) (*mcp.CallToolResult, any, error) {
 	return ruleCreateHandler[security.Location, security.Entry, SecurityRuleInput](
-		d, "panos_security_rule_create", svc,
+		d, "panos_security_rule_create", svc, newSecurityRuleService(d),
 		func(in LocationInput) (security.Location, error) { return resolveLocation(d, in, securityParts()) },
 		buildSecurityRuleEntry,
 		func(in SecurityRuleInput) LocationInput { return in.Location },
@@ -775,7 +780,7 @@ func overlayNatRule(e *nat.Entry, in NatRuleInput) error {
 // partial-failure contract).
 func natRuleCreateHandler(d *Deps, svc *nat.Service) func(context.Context, *mcp.CallToolRequest, NatRuleInput) (*mcp.CallToolResult, any, error) {
 	return ruleCreateHandler[nat.Location, nat.Entry, NatRuleInput](
-		d, "panos_nat_rule_create", svc,
+		d, "panos_nat_rule_create", svc, newNatRuleService(d),
 		func(in LocationInput) (nat.Location, error) { return resolveLocation(d, in, natParts()) },
 		buildNatRuleEntry,
 		func(in NatRuleInput) LocationInput { return in.Location },

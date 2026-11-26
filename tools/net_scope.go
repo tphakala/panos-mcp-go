@@ -124,7 +124,7 @@ func netDeleteHandler[L, E any](
 
 // netCreateHandler mirrors createHandler for the net-scope resolver.
 func netCreateHandler[L, E any, In netScoped](
-	d *Deps, tool string, svc crudService[L, E], p netScopeParts[L],
+	d *Deps, tool string, svc createService[L, E], p netScopeParts[L],
 	build func(In) (*E, error),
 	summarize func(*E) any,
 	opts ...writeOption[In],

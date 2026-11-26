@@ -25,7 +25,7 @@ import (
 // (tools/device_identity_tools.go); this test turns red.
 func TestLocalUserCreateRedactsPasswordHashOnError(t *testing.T) {
 	const phash = "$1$createsalt$CREATESECRETHASH"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for phash ` + phash + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -69,7 +69,7 @@ func TestLocalUserUpdateRedactsPasswordHashOnError(t *testing.T) {
 // this test turns red.
 func TestMfaProfileCreateRedactsSecretOnError(t *testing.T) {
 	const fixture = "MFA-VENDOR-SECRET-abc123"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for value ` + fixture + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
@@ -113,7 +113,7 @@ func TestMfaProfileUpdateRedactsSecretOnError(t *testing.T) {
 // (tools/vpn_tools.go); this test turns red.
 func TestIkeGatewayCreateRedactsPreSharedKeyOnError(t *testing.T) {
 	const psk = "IKE-PRESHARED-KEY-abc123"
-	d, _ := newTestDeps(t, "PA-VM",
+	d, _ := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: `<response status="error"><msg><line>validation error for key ` + psk + `</line></msg></response>`},
 	)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)

@@ -107,7 +107,7 @@ func TestAddressListEmptyObjectSetReturnsEmpty(t *testing.T) {
 }
 
 func TestAddressCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the object back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: addressCreatedBody},
@@ -470,14 +470,41 @@ func getConfigXpaths(f *fakeAPI) []string {
 	return xs
 }
 
-// assertReadBackGet fails unless some recorded request is a config get, proving
-// pango's Create issued the read-back that follows the set. Without it a create
-// test asserting only the set would still pass if the SDK stopped reading the
-// object back (or the get route were dropped).
+// assertReadBackGet pins the config gets around a create's first config set:
+// exactly one get before it (the existence pre-read), at least one after it
+// (pango's read-back), and the first get after equal to the one before, so the
+// pre-read looks at the entry the create writes and not another. Without the
+// read-back check a create test asserting only the set would still pass if the
+// SDK stopped reading the object back; without the equality check the absent-until-set
+// route would answer a pre-read of any xpath. Gets after the read-back (a rule
+// create's MoveGroup listing) are allowed.
 func assertReadBackGet(t *testing.T, f *fakeAPI) {
 	t.Helper()
-	if len(getConfigXpaths(f)) == 0 {
-		t.Fatal("pango Create must read the object back with a config get")
+	var pre, post []string
+	setSeen := false
+	for _, req := range f.Requests() {
+		if req.Get("type") != "config" {
+			continue
+		}
+		switch req.Get("action") {
+		case "set":
+			setSeen = true
+		case "get":
+			if setSeen {
+				post = append(post, req.Get("xpath"))
+			} else {
+				pre = append(pre, req.Get("xpath"))
+			}
+		}
+	}
+	if len(pre) != 1 {
+		t.Fatalf("a create must send exactly one config get (the existence pre-read) before its set, got %d: %v", len(pre), pre)
+	}
+	if len(post) == 0 {
+		t.Fatal("pango Create must read the object back with a config get after the set")
+	}
+	if post[0] != pre[0] {
+		t.Fatalf("the pre-read must target the entry the create writes\n pre:  %s\n post: %s", pre[0], post[0])
 	}
 }
 
@@ -783,7 +810,7 @@ func TestOverlayAddressGroupFields(t *testing.T) {
 }
 
 func TestAddressGroupCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the object back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: addressGroupCreatedBody},
@@ -1396,7 +1423,7 @@ func TestOverlayServiceFields(t *testing.T) {
 }
 
 func TestServiceCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the object back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: serviceCreatedBody},
@@ -1914,7 +1941,7 @@ func serviceGroupResolve(d *Deps) func(LocationInput) (service_group.Location, e
 func serviceGroupName(e *service_group.Entry) string { return e.Name }
 
 func TestServiceGroupCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the object back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: serviceGroupCreatedBody},
@@ -2361,7 +2388,7 @@ func tagResolve(d *Deps) func(LocationInput) (admintag.Location, error) {
 func tagName(e *admintag.Entry) string { return e.Name }
 
 func TestTagCreateBuildsEntry(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		// pango's Create reads the object back with a config get after the set.
 		fakeRoute{Match: configAction("get"), Body: tagCreatedBody},

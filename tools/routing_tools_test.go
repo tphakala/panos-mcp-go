@@ -95,7 +95,7 @@ func TestBuildVirtualRouterEmptyName(t *testing.T) {
 // virtualRouterParts at a different pango resource shifts the xpath and this
 // fails.
 func TestVirtualRouterCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="vr1"/></result></response>`},
 	)
@@ -132,7 +132,7 @@ func TestVirtualRouterCreateFirewallXpath(t *testing.T) {
 // template branch of virtualRouterParts (or the template arg wiring) drops the
 // "template" segment and this fails.
 func TestVirtualRouterCreatePanoramaTemplateXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="vr1"/></result></response>`},
 	)

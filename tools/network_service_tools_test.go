@@ -34,7 +34,7 @@ func TestDhcpCreateXpath(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d, f := newTestDeps(t, c.model,
+			d, f := newCreateTestDeps(t, c.model,
 				fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 				fakeRoute{Match: configAction("get"), Body: entryBody},
 			)
@@ -91,7 +91,7 @@ func TestDhcpNetScopeGating(t *testing.T) {
 	})
 	t.Run("firewall create without template is accepted", func(t *testing.T) {
 		entryBody := `<response status="success"><result><entry name="ethernet1/2"/></result></response>`
-		d, _ := newTestDeps(t, "PA-VM",
+		d, _ := newCreateTestDeps(t, "PA-VM",
 			fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 			fakeRoute{Match: configAction("get"), Body: entryBody},
 		)
@@ -189,7 +189,7 @@ func TestDhcpOverlayModeSwitch(t *testing.T) {
 // is template-only, so there is no firewall case here (see the gating test).
 func TestDnsProxyCreateXpath(t *testing.T) {
 	entryBody := `<response status="success"><result><entry name="dp1"/></result></response>`
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: entryBody},
 	)

@@ -116,7 +116,7 @@ func TestOverlayDynamicUserGroupReplacesAndPreserves(t *testing.T) {
 // vsys. Sabotage: pointing dynamicUserGroupParts at another pango resource
 // shifts the xpath.
 func TestDynamicUserGroupCreateFirewallXpath(t *testing.T) {
-	d, f := newTestDeps(t, "PA-VM",
+	d, f := newCreateTestDeps(t, "PA-VM",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="dug1"/></result></response>`},
 	)
@@ -147,7 +147,7 @@ func TestDynamicUserGroupCreateFirewallXpath(t *testing.T) {
 // dynamic-user-group node, not a vsys. Sabotage: nil-ing the shared branch of
 // dynamicUserGroupParts makes this an error result.
 func TestDynamicUserGroupCreatePanoramaSharedXpath(t *testing.T) {
-	d, f := newTestDeps(t, "Panorama",
+	d, f := newCreateTestDeps(t, "Panorama",
 		fakeRoute{Match: configAction("set"), Body: configSuccessBody},
 		fakeRoute{Match: configAction("get"), Body: `<response status="success"><result><entry name="dug1"/></result></response>`},
 	)
