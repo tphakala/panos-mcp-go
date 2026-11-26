@@ -49,8 +49,8 @@ func TestGoVersionCoordinated(t *testing.T) {
 // version, so builds pick up standard library fixes without a commit: go.mod
 // names only the minor and has no toolchain line, the Dockerfile tag has no
 // patch, every actions/setup-go step in .github/workflows reads go.mod with
-// check-latest: true, and the govulncheck action reads go.mod without turning
-// check-latest off.
+// check-latest: true, and every govulncheck action step reads go.mod without
+// turning check-latest off.
 func TestGoVersionTracksLatestPatch(t *testing.T) {
 	mod := readRepoFile(t, "go.mod")
 	if !regexp.MustCompile(`(?m)^go \d+\.\d+$`).MatchString(mod) {
@@ -79,17 +79,8 @@ func TestGoVersionTracksLatestPatch(t *testing.T) {
 		t.Errorf("no actions/setup-go step found in %d workflow files; if setup moved, update this test", len(workflows))
 	}
 
-	vuln := readRepoFile(t, ".github/workflows/govulncheck.yml")
-	if !regexp.MustCompile(`(?m)^\s*go-version-input:\s*""\s*$`).MatchString(vuln) {
-		t.Errorf(`govulncheck.yml: set go-version-input: "" so the action's "stable" default does not override go-version-file`)
-	}
-	if !regexp.MustCompile(`(?m)^\s*go-version-file:\s*go\.mod\s*$`).MatchString(vuln) {
-		t.Errorf("govulncheck.yml: the action must use go-version-file: go.mod")
-	}
-	for line := range settingLines(vuln) {
-		if strings.Contains(line, "check-latest") && !checkLatestTrue.MatchString(line) {
-			t.Errorf("govulncheck.yml: %q; leave check-latest at the action's default (true) or set it to true", strings.TrimSpace(line))
-		}
+	for _, p := range govulncheckProblems(readRepoFile(t, ".github/workflows/govulncheck.yml")) {
+		t.Errorf("govulncheck.yml: %s", p)
 	}
 }
 
@@ -98,28 +89,37 @@ const (
 	msgCheckLatest   = "setup-go must set check-latest: true"
 	msgGoVersion     = "setup-go must not set go-version; it overrides go-version-file"
 	msgUnreadable    = "an actions/setup-go reference is not on a uses line this test can read; write the step in block style with uses: actions/setup-go@<sha>"
+
+	msgVulnNone        = "no golang/govulncheck-action step found; if the scan moved, update this test"
+	msgVulnInput       = `every govulncheck-action step must set go-version-input: "" so the action's "stable" default does not override go-version-file`
+	msgVulnFile        = "every govulncheck-action step must use go-version-file: go.mod"
+	msgVulnCheckLatest = "govulncheck-action must leave check-latest at the action's default (true) or set it to true"
+	msgVulnUnreadable  = "a golang/govulncheck-action reference is not on a uses line this test can read; write the step in block style with uses: golang/govulncheck-action@<sha>"
 )
 
 var (
-	// setupGoUses matches the uses line of a block-style step, whether uses is
-	// the step's first key or comes after name, and whether the value is quoted.
-	setupGoUses     = regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]+)?uses:[ \t]*["']?actions/setup-go@`)
-	stepStart       = regexp.MustCompile(`(?m)^[ \t]*-(?:[ \t]|$)`)
-	goVersionFileGo = regexp.MustCompile(`^[ \t]*go-version-file:[ \t]*(?:go\.mod|"go\.mod"|'go\.mod')[ \t]*(?:#.*)?$`)
-	checkLatestTrue = regexp.MustCompile(`^[ \t]*check-latest:[ \t]*(?:true|"true"|'true')[ \t]*(?:#.*)?$`)
+	// setupGoUses and govulncheckUses match the uses line of a block-style step,
+	// whether uses is the step's first key or comes after name, and whether the
+	// value is quoted.
+	setupGoUses      = regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]+)?uses:[ \t]*["']?actions/setup-go@`)
+	govulncheckUses  = regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]+)?uses:[ \t]*["']?golang/govulncheck-action@`)
+	stepStart        = regexp.MustCompile(`(?m)^[ \t]*-(?:[ \t]|$)`)
+	goVersionFileGo  = regexp.MustCompile(`^[ \t]*go-version-file:[ \t]*(?:go\.mod|"go\.mod"|'go\.mod')[ \t]*$`)
+	goVersionKey     = regexp.MustCompile(`^[ \t]*(?:-[ \t]+)?["']?go-version["']?[ \t]*:`)
+	goVersionInputNo = regexp.MustCompile(`^[ \t]*go-version-input:[ \t]*(?:""|'')[ \t]*$`)
+	checkLatestKey   = regexp.MustCompile(`^[ \t]*(?:-[ \t]+)?["']?check-latest["']?[ \t]*:`)
+	checkLatestTrue  = regexp.MustCompile(`^[ \t]*check-latest:[ \t]*(?:true|"true"|'true')[ \t]*$`)
 )
 
-// setupGoProblems checks every actions/setup-go step in the workflow text wf
-// and returns one message per problem, plus the number of steps it found. A
-// step runs from the sequence dash at or before its uses line to the next one. It must have go-version-file: go.mod and check-latest: true, and no
-// other setting line in it may mention go-version, since setup-go prefers
-// go-version over go-version-file. The check fails closed: a setup-go
-// reference that is not on a uses line it can read is a problem, and so is a
-// go-version key written in any other form (quoted, spaced).
-func setupGoProblems(wf string) (problems []string, steps int) {
+// stepsUsing returns the text of every block-style step whose uses line matches
+// uses. A step runs from the sequence dash at or before its uses line to the
+// next dash. unreadable reports that ref (the action name up to the @) appears
+// on a non-comment line more often than uses matched, so some reference is
+// written in a form this test cannot read, such as flow style.
+func stepsUsing(wf string, uses *regexp.Regexp, ref string) (steps []string, unreadable bool) {
 	starts := stepStart.FindAllStringIndex(wf, -1)
-	uses := setupGoUses.FindAllStringIndex(wf, -1)
-	for _, u := range uses {
+	found := uses.FindAllStringIndex(wf, -1)
+	for _, u := range found {
 		begin, end := 0, len(wf)
 		for _, s := range starts {
 			if s[0] <= u[0] {
@@ -129,14 +129,33 @@ func setupGoProblems(wf string) (problems []string, steps int) {
 			end = s[0]
 			break
 		}
+		steps = append(steps, wf[begin:end])
+	}
+	refs := 0
+	for line := range settingLines(wf) {
+		refs += strings.Count(line, ref)
+	}
+	return steps, refs != len(found)
+}
+
+// setupGoProblems checks every actions/setup-go step in the workflow text wf
+// and returns one message per problem, plus the number of steps it found. A
+// step must have go-version-file: go.mod and check-latest: true, and no
+// go-version key, since setup-go prefers go-version over go-version-file. The
+// check fails closed: a setup-go reference that is not on a uses line it can
+// read is a problem, and so is a go-version key written in any other form
+// (quoted, spaced).
+func setupGoProblems(wf string) (problems []string, steps int) {
+	found, unreadable := stepsUsing(wf, setupGoUses, "actions/setup-go@")
+	for _, step := range found {
 		var hasFile, hasLatest bool
-		for line := range settingLines(wf[begin:end]) {
+		for line := range settingLines(step) {
 			switch {
 			case goVersionFileGo.MatchString(line):
 				hasFile = true
 			case checkLatestTrue.MatchString(line):
 				hasLatest = true
-			case strings.Contains(line, "go-version"):
+			case goVersionKey.MatchString(line):
 				problems = append(problems, msgGoVersion)
 			}
 		}
@@ -147,19 +166,67 @@ func setupGoProblems(wf string) (problems []string, steps int) {
 			problems = append(problems, msgCheckLatest)
 		}
 	}
-	if strings.Count(wf, "actions/setup-go@") != len(uses) {
+	if unreadable {
 		problems = append(problems, msgUnreadable)
 	}
-	return problems, len(uses)
+	return problems, len(found)
 }
 
-// settingLines yields the lines of text without their line ending, skipping
-// comment lines, which cannot set a value.
+// govulncheckProblems checks every golang/govulncheck-action step in the
+// workflow text wf on its own range and returns one message per problem. The
+// action defaults go-version-input to "stable", which setup-go prefers over
+// go-version-file, so each step must blank it and set go-version-file: go.mod,
+// and none may turn check-latest off. A workflow with no readable step is a
+// problem, so a renamed or restyled action cannot pass unchecked.
+func govulncheckProblems(wf string) []string {
+	var problems []string
+	steps, unreadable := stepsUsing(wf, govulncheckUses, "golang/govulncheck-action@")
+	if len(steps) == 0 && !unreadable {
+		problems = append(problems, msgVulnNone)
+	}
+	for _, step := range steps {
+		var hasInput, hasFile bool
+		for line := range settingLines(step) {
+			switch {
+			case goVersionInputNo.MatchString(line):
+				hasInput = true
+			case goVersionFileGo.MatchString(line):
+				hasFile = true
+			case checkLatestKey.MatchString(line) && !checkLatestTrue.MatchString(line):
+				problems = append(problems, msgVulnCheckLatest)
+			}
+		}
+		if !hasInput {
+			problems = append(problems, msgVulnInput)
+		}
+		if !hasFile {
+			problems = append(problems, msgVulnFile)
+		}
+	}
+	if unreadable {
+		problems = append(problems, msgVulnUnreadable)
+	}
+	return problems
+}
+
+// settingLines yields the lines of text without their line ending and without
+// a trailing comment, skipping lines that are blank or only a comment, which
+// cannot set a value. A comment starts at a # at the start of the line or after
+// a space or tab. The scan ignores quotes, so a # inside a quoted value also
+// cuts the line; the patterns above only accept whole-line values, so a cut
+// value fails to match instead of matching wrongly.
 func settingLines(text string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for line := range strings.Lines(text) {
 			line = strings.TrimRight(line, "\r\n")
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			for i := range len(line) {
+				if line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t') {
+					line = line[:i]
+					break
+				}
+			}
+			line = strings.TrimRight(line, " \t")
+			if line == "" {
 				continue
 			}
 			if !yield(line) {
@@ -188,12 +255,47 @@ func TestSetupGoProblems(t *testing.T) {
 		{"quoted values and trailing comments", "- uses: actions/setup-go@abc # v7\n  with:\n    go-version-file: 'go.mod' # minor only\n    check-latest: \"true\"\n", nil, 1},
 		{"bare dash step after a compliant one", good + "-\n  uses: actions/setup-go@abc\n", []string{msgGoVersionFile, msgCheckLatest}, 2},
 		{"flow style", "- {uses: actions/setup-go@abc, with: {go-version: \"1.27.1\"}}\n", []string{msgUnreadable}, 0},
+		{"go-version-file is another file", "- uses: actions/setup-go@abc\n  with:\n    go-version-file: .go-version\n    check-latest: true\n", []string{msgGoVersionFile}, 1},
+		{"go-version-file is ./go.mod", "- uses: actions/setup-go@abc\n  with:\n    go-version-file: ./go.mod\n    check-latest: true\n", []string{msgGoVersionFile}, 1},
+		{"with first, compliant", "- with:\n    go-version-file: go.mod\n    check-latest: true\n  uses: actions/setup-go@abc\n", nil, 1},
+		{"step name mentioning go-version", "- name: Set up Go (go-version from go.mod)\n  uses: actions/setup-go@abc\n  with:\n    go-version-file: go.mod\n    check-latest: true\n", nil, 1},
+		{"uses comment mentioning go-version", "- uses: actions/setup-go@abc # reads go-version-file\n  with:\n    go-version-file: go.mod\n    check-latest: true\n", nil, 1},
+		{"comment naming setup-go", "# actions/setup-go@v7 reads go.mod\n" + good, nil, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, steps := setupGoProblems(tt.wf)
 			if !slices.Equal(got, tt.want) || steps != tt.steps {
 				t.Errorf("setupGoProblems() = %q, %d steps; want %q, %d steps", got, steps, tt.want, tt.steps)
+			}
+		})
+	}
+}
+
+func TestGovulncheckProblems(t *testing.T) {
+	const good = "- uses: golang/govulncheck-action@abc\n  with:\n    go-version-input: \"\"\n    go-version-file: go.mod\n    go-package: ./...\n"
+	tests := []struct {
+		name string
+		wf   string
+		want []string
+	}{
+		{"compliant", good, nil},
+		{"second step pinned input", good + "- uses: golang/govulncheck-action@abc\n  with:\n    go-version-input: \"1.27.1\"\n    go-version-file: go.mod\n", []string{msgVulnInput}},
+		{"second step without input", good + "- uses: golang/govulncheck-action@abc\n  with:\n    go-version-file: go.mod\n    check-latest: true\n", []string{msgVulnInput}},
+		{"go-version-file is another file", "- uses: golang/govulncheck-action@abc\n  with:\n    go-version-input: \"\"\n    go-version-file: .go-version\n", []string{msgVulnFile}},
+		{"check-latest false", good + "    check-latest: false\n", []string{msgVulnCheckLatest}},
+		{"check-latest true", good + "    check-latest: true\n", nil},
+		{"quoted values and trailing comments", "- uses: golang/govulncheck-action@abc # v1\n  with:\n    go-version-input: '' # blank on purpose\n    go-version-file: 'go.mod' # minor only\n    check-latest: \"true\"\n", nil},
+		{"with first, compliant", "- with:\n    go-version-input: \"\"\n    go-version-file: go.mod\n  uses: golang/govulncheck-action@abc\n", nil},
+		{"next step's keys do not count", "- uses: golang/govulncheck-action@abc\n- uses: actions/setup-go@abc\n  with:\n    go-version-input: \"\"\n    go-version-file: go.mod\n", []string{msgVulnInput, msgVulnFile}},
+		{"comment naming the action", "# golang/govulncheck-action@v1 runs below\n" + good, nil},
+		{"no step", "- uses: actions/checkout@abc\n", []string{msgVulnNone}},
+		{"flow style", "- {uses: golang/govulncheck-action@abc, with: {go-version-input: \"\"}}\n", []string{msgVulnUnreadable}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := govulncheckProblems(tt.wf); !slices.Equal(got, tt.want) {
+				t.Errorf("govulncheckProblems() = %q; want %q", got, tt.want)
 			}
 		})
 	}
