@@ -253,6 +253,7 @@ func TestSetupGoProblems(t *testing.T) {
 		{"quoted values and trailing comments", "- uses: actions/setup-go@abc # v7\n  with:\n    go-version-file: 'go.mod' # minor only\n    check-latest: \"true\"\n", nil, 1},
 		{"bare dash step after a compliant one", good + "-\n  uses: actions/setup-go@abc\n", []string{msgGoVersionFile, msgCheckLatest}, 2},
 		{"flow style", "- {uses: actions/setup-go@abc, with: {go-version: \"1.27.1\"}}\n", []string{msgUnreadable}, 0},
+		{"flow style after a compliant step", good + "- {uses: actions/setup-go@abc, with: {go-version: \"1.27.1\"}}\n", []string{msgUnreadable}, 1},
 		{"go-version-file is another file", "- uses: actions/setup-go@abc\n  with:\n    go-version-file: .go-version\n    check-latest: true\n", []string{msgGoVersionFile}, 1},
 		{"go-version-file is ./go.mod", "- uses: actions/setup-go@abc\n  with:\n    go-version-file: ./go.mod\n    check-latest: true\n", []string{msgGoVersionFile}, 1},
 		{"with first, compliant", "- with:\n    go-version-file: go.mod\n    check-latest: true\n  uses: actions/setup-go@abc\n", nil, 1},
@@ -289,6 +290,7 @@ func TestGovulncheckProblems(t *testing.T) {
 		{"comment naming the action", "# golang/govulncheck-action@v1 runs below\n" + good, nil},
 		{"no step", "- uses: actions/checkout@abc\n", []string{msgVulnNone}},
 		{"flow style", "- {uses: golang/govulncheck-action@abc, with: {go-version-input: \"\"}}\n", []string{msgVulnUnreadable}},
+		{"flow style after a compliant step", good + "- {uses: golang/govulncheck-action@abc, with: {go-version-input: \"1.27.1\"}}\n", []string{msgVulnUnreadable}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
