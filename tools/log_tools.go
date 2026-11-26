@@ -489,13 +489,13 @@ func logPageResult(page map[string]any) (res *mcp.CallToolResult, v any) {
 
 // logQueryHandler submits a type=log query, waits (bounded by JobWait) for the
 // job, and returns the entries. It runs only while fewer than maxLogQueries log
-// queries are in flight in this process, and holds its slot from the submit
-// until the job is collected or dropped. When the wait fails before the job
-// finishes it spends up to logFinishTimeout more asking the device to drop the
-// job. It takes no lock: it reads the log database,
-// not the candidate config, and a lock held across the poll would stall every
-// commit and, through RWMutex writer preference, every other tool (see the
-// writeMu doc in tools.go).
+// queries are in flight in this process, and holds its slot from before the
+// submit until it returns, which is after the job is collected or the request
+// that drops it has returned. When the wait fails before the job finishes it
+// spends up to logFinishTimeout more asking the device to drop the job. It takes
+// no lock: it reads the log database, not the candidate config, and a lock held
+// across the poll would stall every commit and, through RWMutex writer
+// preference, every other tool (see the writeMu doc in tools.go).
 func logQueryHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, LogQueryInput) (*mcp.CallToolResult, any, error) {
 	const tool = "panos_log_query"
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in LogQueryInput) (*mcp.CallToolResult, any, error) {

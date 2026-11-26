@@ -53,7 +53,7 @@ type Deps struct {
 	// 2026-08-17. Revisit on any pango upgrade.
 	writeMu sync.RWMutex
 
-	// logQueries counts the panos_log_query calls holding a device log job
+	// logQueries counts the panos_log_query calls that passed input validation and have not yet returned
 	// (tryLogSlot). It is not a lock: a call over maxLogQueries fails instead of
 	// waiting, and nothing else is held while it counts.
 	logQueries atomic.Int32
