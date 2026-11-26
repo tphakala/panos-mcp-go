@@ -16,9 +16,10 @@ const existingEntryBody = `<response status="success"><result total-count="1" co
 // TestCreateRejectsExistingEntry drives one create tool per handler kind through
 // the registered server against a device whose every config get finds the entry,
 // and expects the tool to fail naming the entry and its update tool, with no
-// config write. PAN-OS merges a set into an existing entry, so a create path that
-// skipped the pre-read would send the set (and, with no set route here, would see
-// the fake's unmatched error instead of "already exists").
+// config write. PAN-OS merges a set into an existing entry (issue #136, NOT
+// MEASURED here), so a create path that skipped the pre-read would send the set
+// (and, with no set route here, would see the fake's unmatched error instead of
+// "already exists").
 //
 // Sabotage: delete the rejectExisting call in createCore (rows object through
 // system-entry), in zoneCreateHandler (zone) or in ruleCreateHandler (rule); or

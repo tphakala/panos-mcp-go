@@ -638,9 +638,9 @@ var createsWithoutUpdate = map[string]bool{
 }
 
 // rejectExisting is the existence pre-read every create runs before it writes.
-// PAN-OS answers a config set on an existing entry by merging into it, so a
-// create that skipped this read would silently change an entry it did not
-// create. It returns nil when name is absent at loc and the create may go
+// PAN-OS merges a config set into an existing entry (reported on 12.1.7 in
+// issue #136; NOT MEASURED here), so a create that skipped this read would
+// silently change an entry it did not create. It returns nil when name is absent at loc and the create may go
 // ahead; otherwise it returns the tool result to return: an "already exists"
 // error, or the redacted read error for any failure other than not-found
 // (a failed read never counts as absent). Nothing is written in either case.
