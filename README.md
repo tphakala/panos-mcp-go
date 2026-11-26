@@ -54,13 +54,14 @@ Configuration comes from environment variables. `PANOS_HOST` is required, along 
 | `PANOS_CA_CERT` | (empty) | Path to a PEM-encoded CA certificate for the firewall. Validated at startup: an unreadable file, or one with no PEM certificate, is a startup error. Mutually exclusive with `PANOS_SKIP_VERIFY=true`. |
 | `PANOS_ALLOW_WRITES` | `false` | Set to a true value (`true`, `1`, `t`) to register write tools. Unset, empty, or false keeps the server read-only. A non-boolean value is a startup error. Replaces `PANOS_READ_ONLY`, which is now rejected at startup. |
 | `PANOS_JOB_WAIT` | `120` | Maximum seconds a commit, push, or log query waits for its job. Integer, 1 to 86400. |
+| `PANOS_REQUEST_TIMEOUT` | `300` | Maximum seconds one request to the device may take, from connecting to reading the last byte of the response. A device that does not answer in time fails that tool call with an error naming this variable; a write that timed out may still have been applied, so check before retrying. Job waits poll with short requests, so each poll is bounded by this too. Integer, 1 to 86400. |
 | `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `http`. |
 | `MCP_HTTP_HOST` | `127.0.0.1` | Bind address for the `http` transport. Loopback by default. A non-loopback bind requires `MCP_HTTP_TOKEN`. |
 | `MCP_HTTP_PORT` | `8080` | Port for the `http` transport. |
-| `MCP_HTTP_TOKEN` | (empty) | Bearer token for the `http` transport. When set, every request to `/mcp` must send `Authorization: Bearer <token>`; requests without it get 401. Required when `MCP_HTTP_HOST` is not a loopback address. |
+| `MCP_HTTP_TOKEN` | (empty) | Bearer token for the `http` transport. When set, every request to `/mcp` must send `Authorization: Bearer <token>`; requests without it get 401. Required when `MCP_HTTP_HOST` is not a loopback address. Must be at least 32 characters on the `http` transport, for example the output of `openssl rand -hex 32`; a shorter token is a startup error. |
 | `PANOS_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error` (case-insensitive). An unrecognized value is a startup error. Renamed from `LOG_LEVEL`, which is no longer read, so an unrelated `LOG_LEVEL` inherited from the MCP client cannot change this server's verbosity. |
 
-The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http://host:port/mcp`) and answers unauthenticated liveness probes at `/health`. Cross-site browser requests are refused regardless of the token.
+The `http` transport serves the MCP endpoint at `/mcp` (point clients at `http://host:port/mcp`) and answers unauthenticated liveness probes at `/health`, which returns `{"status":"ok"}` (the server version is in the MCP initialize handshake). Requests to `/mcp` rejected for a missing or wrong token are logged at warn with the method, path, and remote address. A session with no client request for 8 hours is closed and the client must initialize a new one; an open event stream alone does not keep a session alive. Cross-site browser requests are refused regardless of the token.
 
 ## Tools
 
