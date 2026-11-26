@@ -318,11 +318,9 @@ func TestSecurityRuleCreateWithPosition(t *testing.T) {
 		if !res.IsError {
 			t.Fatal("position before without relative_to must be an error")
 		}
-		for _, req := range f.Requests() {
-			if req.Get("action") == "set" {
-				t.Fatal("invalid position must be rejected before the rule is created")
-			}
-		}
+		// The position check runs before the existence pre-read, so no config
+		// request at all may reach the device.
+		assertNoConfigRequest(t, f)
 	})
 }
 
@@ -1365,9 +1363,9 @@ func TestNatRuleCreateWithPosition(t *testing.T) {
 		if !res.IsError {
 			t.Fatal("position before without relative_to must be an error")
 		}
-		if len(setElements(f)) != 0 {
-			t.Fatal("invalid position must be rejected before the rule is created")
-		}
+		// The position check runs before the existence pre-read, so no config
+		// request at all may reach the device.
+		assertNoConfigRequest(t, f)
 	})
 
 	t.Run("relative_to names a missing rule", func(t *testing.T) {
