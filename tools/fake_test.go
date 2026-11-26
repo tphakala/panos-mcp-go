@@ -349,6 +349,18 @@ func assertNoConfigWrite(t *testing.T, f *fakeAPI) {
 	}
 }
 
+// assertNoConfigRequest fails if the fake recorded any type=config request, read
+// or write. A create that is rejected client-side must not even send the
+// existence pre-read, and assertNoConfigWrite alone would not notice a get.
+func assertNoConfigRequest(t *testing.T, f *fakeAPI) {
+	t.Helper()
+	for _, req := range f.Requests() {
+		if req.Get("type") == "config" {
+			t.Fatalf("expected no config request, got action=%q", req.Get("action"))
+		}
+	}
+}
+
 // connectInMemory wires an in-memory client session to srv and returns it,
 // registering both session closes as cleanups.
 func connectInMemory(t *testing.T, srv *mcp.Server) *mcp.ClientSession {

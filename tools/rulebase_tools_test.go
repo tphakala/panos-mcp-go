@@ -575,7 +575,7 @@ func TestDecryptionRuleCreateRequiresAction(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("create without action must fail")
 	}
-	assertNoConfigWrite(t, f)
+	assertNoConfigRequest(t, f)
 }
 
 func TestDecryptionRuleList(t *testing.T) {
@@ -923,7 +923,7 @@ func TestPbfRuleCreateRequiresActionAndFrom(t *testing.T) {
 	if !res2.IsError {
 		t.Fatal("create without from must fail")
 	}
-	assertNoConfigWrite(t, f)
+	assertNoConfigRequest(t, f)
 }
 
 func TestPbfRuleList(t *testing.T) {

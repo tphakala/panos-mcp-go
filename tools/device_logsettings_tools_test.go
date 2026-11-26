@@ -224,11 +224,7 @@ func TestLogSettingsBuildRequiresName(t *testing.T) {
 	if out := textContent(t, res); !strings.Contains(out, "name is required") {
 		t.Fatalf("the build name guard must reject an empty name before pango does, got %q", out)
 	}
-	for _, req := range f.Requests() {
-		if req.Get("type") == "config" {
-			t.Fatalf("a blank name must be rejected before any config request, got action=%q", req.Get("action"))
-		}
-	}
+	assertNoConfigRequest(t, f)
 }
 
 // TestLogSettingsGetSingleWrap pins that a get reaches the API with the entry

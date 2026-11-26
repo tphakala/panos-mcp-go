@@ -811,7 +811,7 @@ func TestURLFilteringProfileVsysRejected(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("explicit vsys on a vsys-less type must be rejected")
 	}
-	assertNoConfigWrite(t, f)
+	assertNoConfigRequest(t, f)
 }
 
 // --- File blocking and profile group: create wire shape ---------------------
@@ -1166,7 +1166,7 @@ func TestLogForwardingProfileVsysRejected(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("explicit vsys on a vsys-less type must be rejected")
 	}
-	assertNoConfigWrite(t, f)
+	assertNoConfigRequest(t, f)
 }
 
 func TestLogForwardingProfileGetUpdateViaRegisteredTools(t *testing.T) {
