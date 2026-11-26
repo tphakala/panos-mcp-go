@@ -72,17 +72,17 @@ func TestCreateRejectsExistingEntry(t *testing.T) {
 // or drop gatherSecrets(&in, opts)... from the createCore call (the secret shows
 // in the body).
 func TestCreatePreReadErrorAbortsAndRedacts(t *testing.T) {
-	const secret = "FIXTURE-bind-secret"
+	const bindValue = "FIXTURE-bind-value"
 	d, f := newTestDeps(t, "PA-VM", fakeRoute{
 		Match: configAction("get"),
-		Body:  `<response status="error" code="12"><msg><line>bad bind-password ` + secret + `</line></msg></response>`,
+		Body:  `<response status="error" code="12"><msg><line>bad bind-password ` + bindValue + `</line></msg></response>`,
 	})
 	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	RegisterLdapProfileTools(srv, d)
 	cs := connectInMemory(t, srv)
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
 		Name:      "panos_ldap_profile_create",
-		Arguments: map[string]any{"name": "ldap1", "bind_password": secret},
+		Arguments: map[string]any{"name": "ldap1", "bind_password": bindValue},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestCreatePreReadErrorAbortsAndRedacts(t *testing.T) {
 	if !strings.Contains(body, `read "ldap1"`) {
 		t.Fatalf("error must name the failed pre-read, got: %s", body)
 	}
-	if strings.Contains(body, secret) {
+	if strings.Contains(body, bindValue) {
 		t.Fatalf("the submitted secret reached the pre-read error: %s", body)
 	}
 	assertNoConfigWrite(t, f)
@@ -144,51 +144,7 @@ func TestCreateToolsHaveUpdateSibling(t *testing.T) {
 // Sabotage: move the rejectExisting call after Create in createCore, or add a
 // function that calls svc.Create or svc.CreateWithXpath.
 func TestEveryCreateCallSitePreReads(t *testing.T) {
-	type site struct{ create, pre token.Pos }
-	sites := map[string]*site{}
-	for _, f := range parseToolsPackage(t) {
-		for _, decl := range f.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Body == nil {
-				continue
-			}
-			name := fd.Name.Name
-			if fd.Recv != nil && len(fd.Recv.List) == 1 {
-				name = recvTypeName(fd.Recv.List[0].Type) + "." + name
-			}
-			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				switch fn := call.Fun.(type) {
-				case *ast.SelectorExpr:
-					if fn.Sel.Name == "Create" || fn.Sel.Name == "CreateWithXpath" {
-						s := sites[name]
-						if s == nil {
-							s = &site{}
-							sites[name] = s
-						}
-						if s.create == token.NoPos || call.Pos() < s.create {
-							s.create = call.Pos()
-						}
-					}
-				case *ast.Ident:
-					if fn.Name == "rejectExisting" {
-						s := sites[name]
-						if s == nil {
-							s = &site{}
-							sites[name] = s
-						}
-						if s.pre == token.NoPos || call.Pos() < s.pre {
-							s.pre = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-		}
-	}
+	sites := collectCreateCallSites(t)
 	var got []string
 	for name, s := range sites {
 		if s.create != token.NoPos {
@@ -205,10 +161,62 @@ func TestEveryCreateCallSitePreReads(t *testing.T) {
 			"a new create path must call rejectExisting before it writes; add it here only if it is a deliberate upsert", got, want)
 	}
 	for _, name := range []string{"createCore", "ruleCreateHandler", "zoneCreateHandler"} {
-		s := sites[name]
-		if s.pre == token.NoPos || s.pre > s.create {
+		if s := sites[name]; s.pre == token.NoPos || s.pre > s.create {
 			t.Errorf("%s must call rejectExisting before Create", name)
 		}
+	}
+}
+
+// callSite holds the position of the first Create or CreateWithXpath call and the
+// first rejectExisting call in one function.
+type callSite struct{ create, pre token.Pos }
+
+// collectCreateCallSites maps each function (methods as Type.Method) in the
+// non-test sources to where it calls Create, CreateWithXpath and rejectExisting.
+func collectCreateCallSites(t *testing.T) map[string]*callSite {
+	t.Helper()
+	sites := map[string]*callSite{}
+	for _, f := range parseToolsPackage(t) {
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			name := fd.Name.Name
+			if fd.Recv != nil && len(fd.Recv.List) == 1 {
+				name = recvTypeName(fd.Recv.List[0].Type) + "." + name
+			}
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					recordCall(sites, name, call)
+				}
+				return true
+			})
+		}
+	}
+	return sites
+}
+
+func recordCall(sites map[string]*callSite, fn string, call *ast.CallExpr) {
+	var field *token.Pos
+	get := func() *callSite {
+		if sites[fn] == nil {
+			sites[fn] = &callSite{}
+		}
+		return sites[fn]
+	}
+	switch f := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		if f.Sel.Name == "Create" || f.Sel.Name == "CreateWithXpath" {
+			field = &get().create
+		}
+	case *ast.Ident:
+		if f.Name == "rejectExisting" {
+			field = &get().pre
+		}
+	}
+	if field != nil && (*field == token.NoPos || call.Pos() < *field) {
+		*field = call.Pos()
 	}
 }
 
