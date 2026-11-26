@@ -1072,6 +1072,36 @@ func TestPangoTransportRefusesPlainHTTPRedirect(t *testing.T) {
 	}
 }
 
+// closeRecorder is a request body that records whether it was closed.
+type closeRecorder struct {
+	io.Reader
+	closed   bool
+	closeErr error
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed = true
+	return c.closeErr
+}
+
+// TestRefusePlainHTTPClosesRequestBody pins the RoundTripper contract on the
+// refusal path: the request body is closed even though the request is not sent.
+func TestRefusePlainHTTPClosesRequestBody(t *testing.T) {
+	body := &closeRecorder{Reader: strings.NewReader("x")}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://device.invalid/api", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := refusePlainHTTP{}.RoundTrip(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("want an error refusing plain http")
+	}
+	if !body.closed {
+		t.Error("request body was not closed on the refusal path")
+	}
+}
+
 // TestDeadlineTransportCancelsOnCloseNotBefore pins when the per-request context
 // is released: after the response body is closed, never earlier (pango reads the
 // body after Do returns), and immediately on an error.
