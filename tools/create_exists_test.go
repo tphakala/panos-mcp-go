@@ -169,14 +169,16 @@ func TestCreateToolsHaveUpdateSibling(t *testing.T) {
 
 // TestEveryCreateCallSitePreReads is a structural tripwire over the tools
 // package source: the only functions that call a pango Create or CreateWithXpath
-// are the three create cores (which must call rejectExisting before it), the
-// singleton seed in systemUpdateHandler (an intended upsert) and the two adapters'
-// pass-through Create methods. A new bespoke create handler that writes without
-// the pre-read fails here, which no behavioural test would catch until someone
-// wrote one for that family.
+// are the three create cores, the singleton seed in systemUpdateHandler (an
+// intended upsert) and the two adapters' pass-through Create methods. Each create
+// core must take the write lock with `defer d.LockWrites()()`, then call
+// rejectExisting, then Create, so the read and the set share one lock hold. A new bespoke create handler that writes without the
+// pre-read fails here, which no behavioural test would catch until someone wrote
+// one for that family.
 //
-// Sabotage: move the rejectExisting call after Create in createCore, or add a
-// function that calls svc.Create or svc.CreateWithXpath.
+// Sabotage: move the rejectExisting call after Create in createCore, move it above
+// the LockWrites call, or add a function that calls svc.Create or
+// svc.CreateWithXpath.
 func TestEveryCreateCallSitePreReads(t *testing.T) {
 	sites := collectCreateCallSites(t)
 	var got []string
@@ -195,18 +197,23 @@ func TestEveryCreateCallSitePreReads(t *testing.T) {
 			"a new create path must call rejectExisting before it writes; add it here only if it is a deliberate upsert", got, want)
 	}
 	for _, name := range []string{"createCore", "ruleCreateHandler", "zoneCreateHandler"} {
-		if s := sites[name]; s.pre == token.NoPos || s.pre > s.create {
+		s := sites[name]
+		if s.pre == token.NoPos || s.pre > s.create {
 			t.Errorf("%s must call rejectExisting before Create", name)
+		}
+		if s.lock == token.NoPos || s.lock > s.pre {
+			t.Errorf("%s must take `defer d.LockWrites()()` before rejectExisting, so the read and the set share one hold", name)
 		}
 	}
 }
 
-// callSite holds the position of the first Create or CreateWithXpath call and the
-// first rejectExisting call in one function.
-type callSite struct{ create, pre token.Pos }
+// callSite holds the position of the first Create or CreateWithXpath call, the
+// first rejectExisting call and the first `defer X.LockWrites()()` in one function.
+type callSite struct{ create, pre, lock token.Pos }
 
 // collectCreateCallSites maps each function (methods as Type.Method) in the
-// non-test sources to where it calls Create, CreateWithXpath and rejectExisting.
+// non-test sources to where it calls Create, CreateWithXpath and rejectExisting,
+// and where it takes the write lock with a deferred unlock.
 func collectCreateCallSites(t *testing.T) map[string]*callSite {
 	t.Helper()
 	sites := map[string]*callSite{}
@@ -221,14 +228,37 @@ func collectCreateCallSites(t *testing.T) map[string]*callSite {
 				name = recvTypeName(fd.Recv.List[0].Type) + "." + name
 			}
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					recordCall(sites, name, call)
+				switch n := n.(type) {
+				case *ast.CallExpr:
+					recordCall(sites, name, n)
+				case *ast.DeferStmt:
+					recordDeferredLock(sites, name, n)
 				}
 				return true
 			})
 		}
 	}
 	return sites
+}
+
+// recordDeferredLock records a `defer X.LockWrites()()` statement: the lock is
+// taken now and its unlock deferred. A bare X.LockWrites() or a deferred
+// X.LockWrites() (which defers the lock, not the unlock) is not recorded.
+func recordDeferredLock(sites map[string]*callSite, fn string, d *ast.DeferStmt) {
+	inner, ok := d.Call.Fun.(*ast.CallExpr)
+	if !ok {
+		return
+	}
+	sel, ok := inner.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "LockWrites" {
+		return
+	}
+	if sites[fn] == nil {
+		sites[fn] = &callSite{}
+	}
+	if s := sites[fn]; s.lock == token.NoPos || d.Pos() < s.lock {
+		s.lock = d.Pos()
+	}
 }
 
 func recordCall(sites map[string]*callSite, fn string, call *ast.CallExpr) {
@@ -241,7 +271,8 @@ func recordCall(sites map[string]*callSite, fn string, call *ast.CallExpr) {
 	}
 	switch f := call.Fun.(type) {
 	case *ast.SelectorExpr:
-		if f.Sel.Name == "Create" || f.Sel.Name == "CreateWithXpath" {
+		switch f.Sel.Name {
+		case "Create", "CreateWithXpath":
 			field = &get().create
 		}
 	case *ast.Ident:
