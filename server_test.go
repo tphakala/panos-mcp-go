@@ -405,6 +405,30 @@ func TestNewHTTPHandler(t *testing.T) {
 	})
 }
 
+// TestNewHTTPHandlerLogsRejections pins that newHTTPHandler hands its logger to
+// requireBearer, so a rejected /mcp request is logged through it.
+func TestNewHTTPHandlerLogsRejections(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		msgs []string
+		recs []slog.Record
+	)
+	logger := slog.New(captureHandler{mu: &mu, msgs: &msgs, hook: func(r slog.Record) { recs = append(recs, r.Clone()) }})
+	h := newHTTPHandler(&Config{HTTPToken: testHTTPToken}, buildServer(testDeps()), logger)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader("{}"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /mcp without auth = %d, want 401", rec.Code)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("logged %d records, want exactly 1", len(recs))
+	}
+	if recs[0].Level != slog.LevelWarn {
+		t.Errorf("log level = %v, want WARN", recs[0].Level)
+	}
+}
+
 // TestServeHTTPGracefulShutdown binds a real loopback listener, proves the
 // server answers /health, then cancels the context and requires a clean return.
 func TestServeHTTPGracefulShutdown(t *testing.T) {
