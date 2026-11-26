@@ -15,7 +15,7 @@ import (
 // errDeviceRequestTimeout is the cause attached to a device request that did not
 // complete within PANOS_REQUEST_TIMEOUT. It deliberately does not wrap
 // context.DeadlineExceeded: waitJob (tools/device_tools.go:82) and logJobError
-// (tools/log_tools.go:312) read a DeadlineExceeded with a live caller context as
+// (tools/log_tools.go:314) read a DeadlineExceeded with a live caller context as
 // "the job wait ran out, the job is still running", which is not what a stalled
 // device request means.
 var errDeviceRequestTimeout = errors.New("device request timed out")

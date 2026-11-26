@@ -282,7 +282,7 @@ These are read-only operational commands (`type=op`), not configuration changes.
 
 ### Log queries
 
-`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama the query can return logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error when that time runs out (naming the job once one has started). When the wait ends early, because that time ran out or the caller cancelled, it asks the device to drop the unfinished job. Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
+`panos_log_query` queries the traffic, threat, url, system, or config logs with a PAN-OS log filter. It is read-only (`type=log`) and takes no lock, so it neither waits for a running commit nor delays one. On Panorama the query can return logs collected from managed firewalls. It waits up to `PANOS_JOB_WAIT` for the query to finish, and returns an error when that time runs out (naming the job once one has started). When the wait ends before the job finishes, because that time ran out, the caller cancelled, or a poll failed (for example on `PANOS_REQUEST_TIMEOUT`), it asks the device to drop the unfinished job. Entries come newest first unless `direction` is `forward`; page with `skip` set to the previous response's `next_skip`.
 
 | Tool | Mode | Description |
 |------|------|-------------|
