@@ -23,14 +23,22 @@ const (
 	maxLogCount     = 500
 	// logResultBudget caps the compact JSON bytes of the entries in one response.
 	// A page over the budget is cut at the tail and reports truncated/next_skip.
+	// The reply carries the page twice, as compact text and as structured content,
+	// so the encoded reply is a little over twice the budget for typical entries
+	// (measured about 2.15x) and at most three times: the text copy is escaped
+	// inside the JSON-RPC string, which only grows a quote or backslash from one
+	// byte to two.
 	logResultBudget = 256 << 10
 	logBudgetKiB    = logResultBudget >> 10
 	// pollsPerBudget bounds the poll interval to JobWait/pollsPerBudget.
 	pollsPerBudget = 2
 	// logFinishTimeout bounds the request that drops an abandoned log job.
 	logFinishTimeout = 5 * time.Second
-	logTypeKey       = "log_type"
-	logTypeURL       = "url"
+	// maxLogQueries is the most panos_log_query calls in flight in one process:
+	// one per log type. A call over it fails at once instead of queueing.
+	maxLogQueries = 5
+	logTypeKey    = "log_type"
+	logTypeURL    = "url"
 )
 
 // logPollInterval is the wait between log job polls. It is a var only so tests
@@ -105,7 +113,9 @@ func validateLogQuery(in *LogQueryInput) string {
 // logField is one entry field. Keys are entry-local: "name" for a child
 // element, "name@attr" for a child attribute and "@attr" for an entry attribute
 // ("@" cannot appear in an XML name, so they never collide). Several values
-// come from duplicate child elements.
+// come from duplicate child elements. The "name@attr" keys of a repeated child
+// hold one value per repeat, index-aligned with the values of "name", with ""
+// where a repeat lacks the attribute.
 type logField struct {
 	key    string
 	values []string
@@ -131,22 +141,57 @@ type logChildName struct {
 }
 
 func (e *logEntry) add(key, value string) {
-	for i := range e.fields {
-		if e.fields[i].key == key {
-			e.fields[i].values = append(e.fields[i].values, value)
-			return
+	e.addAt(key, -1, value)
+}
+
+// addAt appends value to key. With idx >= 0 it first pads the field with ""
+// up to idx values, so the value lands at index idx (the repeat it came from).
+// It reports false, adding nothing, when the field already holds a value at idx.
+func (e *logEntry) addAt(key string, idx int, value string) bool {
+	i := slices.IndexFunc(e.fields, func(f logField) bool { return f.key == key })
+	if i < 0 {
+		e.fields = append(e.fields, logField{key: key})
+		i = len(e.fields) - 1
+	}
+	f := &e.fields[i]
+	if idx >= 0 {
+		if len(f.values) > idx {
+			return false
+		}
+		for len(f.values) < idx {
+			f.values = append(f.values, "")
 		}
 	}
-	e.fields = append(e.fields, logField{key: key, values: []string{value}})
+	f.values = append(f.values, value)
+	return true
+}
+
+// padRepeats pads every attribute key of a child that occurs more than once
+// (repeats maps child names to their occurrence count) to one value per repeat.
+// Entry attributes ("@attr") have no child and are left alone.
+func (e *logEntry) padRepeats(repeats map[string]int) {
+	for i := range e.fields {
+		f := &e.fields[i]
+		elem, _, ok := strings.Cut(f.key, "@")
+		if n := repeats[elem]; ok && elem != "" && n > 1 {
+			for len(f.values) < n {
+				f.values = append(f.values, "")
+			}
+		}
+	}
 }
 
 // UnmarshalXML records the entry attributes, then every child element and its
-// attributes, in document order.
+// attributes, in document order. The attribute values of a repeated child are
+// aligned with its repeats (see logField). A child that carries the same
+// attribute name twice is malformed and fails the decode, because its extra
+// value would shift the alignment of every later repeat.
 func (e *logEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	e.fields = nil
 	for _, a := range start.Attr {
 		e.add("@"+a.Name.Local, a.Value)
 	}
+	repeats := map[string]int{}
 	for {
 		tok, err := d.Token()
 		if err != nil {
@@ -154,23 +199,36 @@ func (e *logEntry) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			var c logChild
-			if err := d.DecodeElement(&c, &t); err != nil {
+			if err := e.addChild(d, &t, repeats); err != nil {
 				return err
 			}
-			name := t.Name.Local
-			value := c.Text
-			if len(c.Children) > 0 {
-				value = strings.TrimSpace(c.Inner)
-			}
-			e.add(name, value)
-			for _, a := range c.Attrs {
-				e.add(name+"@"+a.Name.Local, a.Value)
-			}
 		case xml.EndElement:
+			e.padRepeats(repeats)
 			return nil
 		}
 	}
+}
+
+// addChild decodes one child element into the entry and counts it in repeats.
+func (e *logEntry) addChild(d *xml.Decoder, t *xml.StartElement, repeats map[string]int) error {
+	var c logChild
+	if err := d.DecodeElement(&c, t); err != nil {
+		return err
+	}
+	name := t.Name.Local
+	value := c.Text
+	if len(c.Children) > 0 {
+		value = strings.TrimSpace(c.Inner)
+	}
+	idx := repeats[name]
+	repeats[name]++
+	e.add(name, value)
+	for _, a := range c.Attrs {
+		if !e.addAt(name+"@"+a.Name.Local, idx, a.Value) {
+			return fmt.Errorf("entry child %s carries attribute %s twice", name, a.Name.Local)
+		}
+	}
+	return nil
 }
 
 // encodeLogEntry writes the fields as one JSON object in field order. A single
@@ -331,7 +389,8 @@ type logResponse struct {
 }
 
 // encodeLogEntries projects (when want is set) and encodes the entries in
-// device order. The size budget cuts only the tail and always keeps the first
+// device order. The size budget, in compact entry bytes, cuts only the tail and
+// always keeps the first
 // entry, so paging advances. Every device entry is projected, cut or not, so
 // matched describes the whole page.
 func encodeLogEntries(entries []logEntry, want, matched map[string]bool) (out []json.RawMessage, truncated bool, err error) {
@@ -401,10 +460,39 @@ func logPage(in *LogQueryInput, nlogs int, entries []logEntry) (map[string]any, 
 	return page, nil
 }
 
+// tryLogSlot admits a log query when fewer than maxLogQueries are in flight and
+// returns the function that gives the slot back. The compare-and-swap loop
+// refuses only when the count it read is already at the limit.
+func (d *Deps) tryLogSlot() (release func(), ok bool) {
+	for {
+		n := d.logQueries.Load()
+		if n >= maxLogQueries {
+			return nil, false
+		}
+		if d.logQueries.CompareAndSwap(n, n+1) {
+			return func() { d.logQueries.Add(-1) }, true
+		}
+	}
+}
+
+// logPageResult returns the page as compact JSON text plus the page itself as
+// structured content. The SDK keeps a non-nil Content and adds the structured
+// copy from the returned value (go-sdk v1.8.0 mcp/server.go:454-480), so both
+// copies are the same compact bytes; jsonResult would indent the text copy.
+func logPageResult(page map[string]any) (*mcp.CallToolResult, any) {
+	b, err := json.Marshal(page)
+	if err != nil {
+		return errorResult("failed to marshal JSON: %v", err)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}, page
+}
+
 // logQueryHandler submits a type=log query, waits (bounded by JobWait) for the
-// job, and returns the entries. When the wait fails before the job finishes it
-// spends up to logFinishTimeout more asking the device to drop the job. It
-// takes no lock: it reads the log database,
+// job, and returns the entries. It runs only while fewer than maxLogQueries log
+// queries are in flight in this process, and holds its slot from the submit
+// until the job is collected or dropped. When the wait fails before the job
+// finishes it spends up to logFinishTimeout more asking the device to drop the
+// job. It takes no lock: it reads the log database,
 // not the candidate config, and a lock held across the poll would stall every
 // commit and, through RWMutex writer preference, every other tool (see the
 // writeMu doc in tools.go).
@@ -415,6 +503,12 @@ func logQueryHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, LogQue
 			res, v := errorResult("%s: %s", tool, msg)
 			return res, v, nil
 		}
+		release, ok := d.tryLogSlot()
+		if !ok {
+			res, v := errorResult("failed: %s: %d log queries are already running, the most this server runs at once; retry when one finishes", tool, maxLogQueries)
+			return res, v, nil
+		}
+		defer release()
 		nlogs := cmp.Or(in.Nlogs, defaultLogCount)
 
 		wctx, cancel := context.WithTimeout(ctx, d.JobWait)
@@ -443,7 +537,7 @@ func logQueryHandler(d *Deps) func(context.Context, *mcp.CallToolRequest, LogQue
 			res, v := errorResult("failed: %s: encode entry: %v", tool, err)
 			return res, v, nil
 		}
-		res, v := jsonResult(page)
+		res, v := logPageResult(page)
 		return res, v, nil
 	}
 }
