@@ -22,7 +22,7 @@ The server is read-only by default. Write tools are registered only when `PANOS_
 
 Each tool carries an annotation describing its effect (read-only, create, update, delete) so a client can warn before a destructive call. `panos_revert` in particular discards every pending candidate change on the device, including other admins' work; check `panos_config_diff` first.
 
-A create tool never changes an existing entry: if the name already exists at the requested location, the call fails without writing anything and, where the family has an update tool, names it.
+A create tool reads the name first: if it already exists at the requested location, the call fails without writing anything and, where the family has an update tool, names it. The read and the write are separate requests to the device, so an entry another client creates between them is not detected, and the create may then change it.
 
 ## API user permissions
 
