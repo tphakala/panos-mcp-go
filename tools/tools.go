@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PaloAltoNetworks/pango"
@@ -51,6 +52,11 @@ type Deps struct {
 	// VERIFIED against pango v0.10.3-0.20260731153743-efa43570c367 client.go, read
 	// 2026-08-17. Revisit on any pango upgrade.
 	writeMu sync.RWMutex
+
+	// logQueries counts the panos_log_query calls that passed input validation and have not yet returned
+	// (tryLogSlot). It is not a lock: a call over maxLogQueries fails instead of
+	// waiting, and nothing else is held while it counts.
+	logQueries atomic.Int32
 }
 
 // LockWrites takes the mutation lock and returns the unlock function. Callers
