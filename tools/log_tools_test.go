@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"slices"
@@ -921,24 +922,39 @@ func TestLogQuerySchemaBounds(t *testing.T) {
 	}
 }
 
-// TestLogQueryInFlightLimit pins the cap on log queries in flight: a call over
-// it fails at once and sends nothing, the slot is held until the abandoned job
-// has been finished, and a call that ends frees its slot. The fake device holds
-// every poll and finish request on a gate, and the test advances by channel
-// handshakes only.
-func TestLogQueryInFlightLimit(t *testing.T) {
+// gatedLogDevice is a fake device that holds every log poll and finish request
+// on a gate and reports each one on a channel, so a test advances by handshakes
+// only. The channels are buffered, so a signal never blocks the fake.
+type gatedLogDevice struct {
+	d               *Deps
+	f               *fakeAPI
+	arrived         chan struct{} // one per poll that reached the device
+	finishing       chan struct{} // one per finish request that reached the device
+	releasePolls    func()
+	releaseFinishes func()
+	calls           []gatedCall // the calls expected to be admitted
+}
+
+type gatedCall struct {
+	cancel context.CancelFunc
+	done   chan *mcp.CallToolResult
+}
+
+// guard is a hang breaker: the passing path never waits on it.
+func guard() <-chan time.Time { return time.After(10 * time.Second) }
+
+func newGatedLogDevice(t *testing.T) *gatedLogDevice {
+	t.Helper()
 	const signals = 2*maxLogQueries + 2
-	arrived := make(chan struct{}, signals)
-	finishing := make(chan struct{}, signals)
-	pollGate := make(chan struct{})
-	finishGate := make(chan struct{})
+	g := &gatedLogDevice{arrived: make(chan struct{}, signals), finishing: make(chan struct{}, signals)}
+	pollGate, finishGate := make(chan struct{}), make(chan struct{})
 	get, fin := logGet(), logFinish()
-	d, f := newTestDeps(t, "PA-VM",
+	g.d, g.f = newTestDeps(t, "PA-VM",
 		fakeRoute{Match: func(v url.Values) bool {
 			if !fin(v) {
 				return false
 			}
-			finishing <- struct{}{}
+			g.finishing <- struct{}{}
 			<-finishGate
 			return true
 		}, Body: logFinishBody},
@@ -946,109 +962,112 @@ func TestLogQueryInFlightLimit(t *testing.T) {
 			if !get(v) {
 				return false
 			}
-			arrived <- struct{}{}
+			g.arrived <- struct{}{}
 			<-pollGate
 			return true
 		}, Body: logRunningBody},
 		fakeRoute{Match: logSubmit(), Body: logSubmitBody})
 	// A held slot must not run out of JobWait while the test is still driving it.
-	d.JobWait = time.Minute
+	g.d.JobWait = time.Minute
+	g.releasePolls = sync.OnceFunc(func() { close(pollGate) })
+	g.releaseFinishes = sync.OnceFunc(func() { close(finishGate) })
 	// Registered after newTestDeps, so it runs before the server's Close, which
 	// waits for the gated handlers.
-	releasePolls := sync.OnceFunc(func() { close(pollGate) })
-	releaseFinishes := sync.OnceFunc(func() { close(finishGate) })
-	t.Cleanup(func() { releasePolls(); releaseFinishes() })
+	t.Cleanup(func() { g.releasePolls(); g.releaseFinishes() })
+	return g
+}
 
-	type call struct {
-		cancel context.CancelFunc
-		done   chan *mcp.CallToolResult
-	}
-	launch := func() call {
-		ctx, cancel := context.WithCancel(t.Context())
-		c := call{cancel: cancel, done: make(chan *mcp.CallToolResult, 1)}
-		go func() {
-			res, _, _ := logQueryHandler(d)(ctx, nil, LogQueryInput{LogType: "traffic"})
-			c.done <- res
-		}()
-		return c
-	}
-	// calls holds the calls expected to be admitted; rejected ones return at once.
-	var calls []call
-	start := func() { calls = append(calls, launch()) }
-	// guard is a hang breaker: the passing path never waits on it.
-	guard := func() <-chan time.Time { return time.After(10 * time.Second) }
-	waitArrived := func(what string) {
-		t.Helper()
-		select {
-		case <-arrived:
-		case <-guard():
-			t.Fatalf("%s: no call reached the device poll", what)
-		}
-	}
-	assertRejected := func(what string) {
-		t.Helper()
-		c := launch()
-		defer c.cancel()
-		select {
-		case res := <-c.done:
-			got := textContent(t, res)
-			if !res.IsError || !strings.Contains(got, strconv.Itoa(maxLogQueries)) || !strings.Contains(got, "already running") {
-				t.Errorf("%s: IsError=%v %q, want an error naming the limit %d and \"already running\"", what, res.IsError, got, maxLogQueries)
-			}
-		case <-arrived:
-			t.Fatalf("%s: the call was admitted and reached the device poll", what)
-		case <-guard():
-			t.Fatalf("%s: the call neither returned nor reached the device", what)
-		}
-	}
-	submits := func() int {
-		n := 0
-		for _, v := range f.Requests() {
-			if logSubmit()(v) {
-				n++
-			}
-		}
-		return n
-	}
+// launch runs one log query in its own goroutine.
+func (g *gatedLogDevice) launch(t *testing.T) gatedCall {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	c := gatedCall{cancel: cancel, done: make(chan *mcp.CallToolResult, 1)}
+	go func() {
+		res, _, _ := logQueryHandler(g.d)(ctx, nil, LogQueryInput{LogType: "traffic"})
+		c.done <- res
+	}()
+	return c
+}
 
+// admit starts a call and waits until it is polling the device.
+func (g *gatedLogDevice) admit(t *testing.T, what string) {
+	t.Helper()
+	g.calls = append(g.calls, g.launch(t))
+	select {
+	case <-g.arrived:
+	case <-guard():
+		t.Fatalf("%s: no call reached the device poll", what)
+	}
+}
+
+// assertRejected starts a call that must fail at once with the limit error.
+func (g *gatedLogDevice) assertRejected(t *testing.T, what string) {
+	t.Helper()
+	c := g.launch(t)
+	defer c.cancel()
+	select {
+	case res := <-c.done:
+		got := textContent(t, res)
+		if !res.IsError || !strings.Contains(got, strconv.Itoa(maxLogQueries)) || !strings.Contains(got, "already running") {
+			t.Errorf("%s: IsError=%v %q, want an error naming the limit %d and \"already running\"", what, res.IsError, got, maxLogQueries)
+		}
+	case <-g.arrived:
+		t.Fatalf("%s: the call was admitted and reached the device poll", what)
+	case <-guard():
+		t.Fatalf("%s: the call neither returned nor reached the device", what)
+	}
+}
+
+func (g *gatedLogDevice) submits() int {
+	n := 0
+	for _, v := range g.f.Requests() {
+		if logSubmit()(v) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestLogQueryInFlightLimit pins the cap on log queries in flight: a call over
+// it fails at once and sends nothing, the slot is held until the abandoned job
+// has been finished, and a call that ends frees its slot.
+func TestLogQueryInFlightLimit(t *testing.T) {
+	g := newGatedLogDevice(t)
 	for range maxLogQueries {
-		start()
-		waitArrived("filling the slots")
+		g.admit(t, "filling the slots")
 	}
 
-	assertRejected("call over the limit")
-	if n := submits(); n != maxLogQueries {
+	g.assertRejected(t, "call over the limit")
+	if n := g.submits(); n != maxLogQueries {
 		t.Errorf("submit requests = %d, want %d: a rejected call must send nothing", n, maxLogQueries)
 	}
 
 	// The cancelled call is stuck in its finish request, and still holds its slot.
-	calls[0].cancel()
+	g.calls[0].cancel()
 	select {
-	case <-finishing:
+	case <-g.finishing:
 	case <-guard():
 		t.Fatal("the cancelled call never sent its finish request")
 	}
-	assertRejected("while the abandoned job is being finished")
+	g.assertRejected(t, "while the abandoned job is being finished")
 
-	releaseFinishes()
+	g.releaseFinishes()
 	select {
-	case res := <-calls[0].done:
+	case res := <-g.calls[0].done:
 		if got := textContent(t, res); !res.IsError || strings.Contains(got, "not seen finished") {
 			t.Errorf("cancelled call: IsError=%v %q, want a plain error", res.IsError, got)
 		}
 	case <-guard():
 		t.Fatal("the cancelled call did not return once its finish request was answered")
 	}
-	start()
-	waitArrived("after a call ended")
+	g.admit(t, "after a call ended")
 
 	// Teardown inside the test body: no handler goroutine outlives it.
-	for _, c := range calls {
+	for _, c := range g.calls {
 		c.cancel()
 	}
-	releasePolls()
-	releaseFinishes()
-	for _, c := range calls[1:] {
+	g.releasePolls()
+	for _, c := range g.calls[1:] {
 		select {
 		case <-c.done:
 		case <-guard():
@@ -1083,29 +1102,12 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestLogQueryWireSize pins the documented size of a reply: the page is sent
-// twice as compact JSON (text and structured content), about 2.15 times the
-// entry bytes for typical entries, not more. It measures the bytes the SDK
-// writes for the tool result.
-func TestLogQueryWireSize(t *testing.T) {
-	const entries, fields = 500, 40
-	xmlEntries := make([]string, entries)
-	for i := range xmlEntries {
-		var b strings.Builder
-		fmt.Fprintf(&b, `<entry logid="%d">`, i)
-		for k := range fields {
-			fmt.Fprintf(&b, "<f%d>value-%d-%d-abcdefghij</f%d>", k, i, k, k)
-		}
-		b.WriteString("</entry>")
-		xmlEntries[i] = b.String()
-	}
-	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(xmlEntries...)...)
-	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	RegisterOpTools(s, d)
-
-	logs := &syncBuffer{marker: `"structuredContent"`, seen: make(chan struct{})}
+// connectLogged connects an in-memory client to srv with the server side wrapped
+// in a LoggingTransport that writes to w, and closes both sessions at cleanup.
+func connectLogged(t *testing.T, srv *mcp.Server, w io.Writer) *mcp.ClientSession {
+	t.Helper()
 	clientT, serverT := mcp.NewInMemoryTransports()
-	ss, err := s.Connect(t.Context(), &mcp.LoggingTransport{Transport: serverT, Writer: logs}, nil)
+	ss, err := srv.Connect(t.Context(), &mcp.LoggingTransport{Transport: serverT, Writer: w}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1115,6 +1117,48 @@ func TestLogQueryWireSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cs.Close() })
+	return cs
+}
+
+// wideLogEntries builds n entries of the given number of short string fields.
+func wideLogEntries(n, fields int) []string {
+	out := make([]string, n)
+	for i := range out {
+		var b strings.Builder
+		fmt.Fprintf(&b, `<entry logid="%d">`, i)
+		for k := range fields {
+			fmt.Fprintf(&b, "<f%d>value-%d-%d-abcdefghij</f%d>", k, i, k, k)
+		}
+		b.WriteString("</entry>")
+		out[i] = b.String()
+	}
+	return out
+}
+
+// resultMessage returns the JSON of the last message a LoggingTransport wrote
+// that carries structured content, without the "write: " prefix.
+func resultMessage(log string) string {
+	var wire string
+	for line := range strings.SplitSeq(log, "\n") {
+		if strings.HasPrefix(line, "write: ") && strings.Contains(line, `"structuredContent"`) {
+			wire = strings.TrimPrefix(line, "write: ")
+		}
+	}
+	return wire
+}
+
+// TestLogQueryWireSize pins the documented size of a reply: the page is sent
+// twice as compact JSON (text and structured content), about 2.15 times the
+// entry bytes for typical entries, not more. It measures the bytes the SDK
+// writes for the tool result.
+func TestLogQueryWireSize(t *testing.T) {
+	const entries = 500
+	d, _ := newTestDeps(t, "PA-VM", immediateLogRoutes(wideLogEntries(entries, 40)...)...)
+	s := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	RegisterOpTools(s, d)
+
+	logs := &syncBuffer{marker: `"structuredContent"`, seen: make(chan struct{})}
+	cs := connectLogged(t, s, logs)
 
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{
 		Name:      "panos_log_query",
@@ -1141,15 +1185,10 @@ func TestLogQueryWireSize(t *testing.T) {
 
 	select {
 	case <-logs.seen:
-	case <-time.After(10 * time.Second):
+	case <-guard():
 		t.Fatal("the result message was never written")
 	}
-	var wire string
-	for line := range strings.SplitSeq(logs.String(), "\n") {
-		if strings.HasPrefix(line, "write: ") && strings.Contains(line, `"structuredContent"`) {
-			wire = strings.TrimPrefix(line, "write: ")
-		}
-	}
+	wire := resultMessage(logs.String())
 	entryBytes := compactBytes(t, page.Entries)
 	if limit := entryBytes * 9 / 4; len(wire) > limit {
 		t.Errorf("result message = %d bytes for %d bytes of entries (%.2fx), want at most 2.25x", len(wire), entryBytes, float64(len(wire))/float64(entryBytes))

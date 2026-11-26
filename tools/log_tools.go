@@ -479,7 +479,7 @@ func (d *Deps) tryLogSlot() (release func(), ok bool) {
 // structured content. The SDK keeps a non-nil Content and adds the structured
 // copy from the returned value (go-sdk v1.8.0 mcp/server.go:454-480), so both
 // copies are the same compact bytes; jsonResult would indent the text copy.
-func logPageResult(page map[string]any) (*mcp.CallToolResult, any) {
+func logPageResult(page map[string]any) (res *mcp.CallToolResult, v any) {
 	b, err := json.Marshal(page)
 	if err != nil {
 		return errorResult("failed to marshal JSON: %v", err)
