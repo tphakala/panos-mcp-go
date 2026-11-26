@@ -910,68 +910,97 @@ func configFor(t *testing.T, ts *httptest.Server) *Config {
 
 // TestPangoTransportBoundsStalledDevice drives a real pango call through
 // buildPangoClient against a device that stalls at each stage of the exchange,
-// and requires the request to end with the device-timeout error well before the
-// safety net. The 101 row pins that a protocol switch, which would hand the
-// connection to the caller beyond the reach of the deadline, is refused.
+// and requires the request to end with the device-timeout error. The 101 row pins
+// that a protocol switch, which would hand the connection to the caller beyond
+// the reach of the deadline, is refused. Each row sets its own timeout: the stall
+// rows only need a cap short enough to keep the test quick, while the 101 row
+// must answer long before its cap fires.
 func TestPangoTransportBoundsStalledDevice(t *testing.T) {
 	const upgrade = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"
-	for _, tc := range []struct {
-		name        string
-		useCA       bool
-		stall       func(w http.ResponseWriter, release <-chan struct{})
-		wantTimeout bool // the deadline error; otherwise the 101 refusal
-	}{
-		{"no response headers", false, func(_ http.ResponseWriter, release <-chan struct{}) { <-release }, true},
-		{"headers then a stalled body", false, func(w http.ResponseWriter, release <-chan struct{}) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = io.WriteString(w, `<response status="success">`)
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-			<-release
-		}, true},
-		{"no response headers with a CA cert", true, func(_ http.ResponseWriter, release <-chan struct{}) { <-release }, true},
-		{"101 then a stall", false, func(w http.ResponseWriter, release <-chan struct{}) {
-			conn, _, err := http.NewResponseController(w).Hijack()
-			if err != nil {
-				return
-			}
-			defer func() { _ = conn.Close() }()
-			_, _ = io.WriteString(conn, upgrade)
-			<-release
-		}, false},
+	for _, tc := range []stallCase{
+		{name: "no response headers", timeout: time.Second, wantTimeout: true,
+			stall: func(_ http.ResponseWriter, release <-chan struct{}, _ chan<- struct{}) { <-release }},
+		{name: "headers then a stalled body", timeout: time.Second, wantTimeout: true, wantFlushed: true,
+			stall: func(w http.ResponseWriter, release <-chan struct{}, flushed chan<- struct{}) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `<response status="success">`)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+					close(flushed)
+				}
+				<-release
+			}},
+		{name: "no response headers with a CA cert", useCA: true, timeout: time.Second, wantTimeout: true,
+			stall: func(_ http.ResponseWriter, release <-chan struct{}, _ chan<- struct{}) { <-release }},
+		{name: "101 then a stall", timeout: 5 * time.Second, wantText: "101 Switching Protocols",
+			stall: func(w http.ResponseWriter, release <-chan struct{}, _ chan<- struct{}) {
+				conn, _, err := http.NewResponseController(w).Hijack()
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+				_, _ = io.WriteString(conn, upgrade)
+				<-release
+			}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			release := make(chan struct{})
-			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				tc.stall(w, release)
-			}))
-			// Cleanups run last in, first out: release the handlers before Close
-			// waits for them.
-			t.Cleanup(ts.Close)
-			t.Cleanup(func() { close(release) })
+		t.Run(tc.name, func(t *testing.T) { runStallCase(t, tc) })
+	}
+}
 
-			cfg := configFor(t, ts)
-			cfg.RequestTimeout = 200 * time.Millisecond
-			if tc.useCA {
-				cfg.SkipVerify = false
-				cfg.CACert = writeServerCertPEM(t, ts)
-			}
-			c, err := buildPangoClient(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = retrieveWithin(t, c, 5*time.Second)
-			if err == nil {
-				t.Fatal("RetrieveSystemInfo succeeded against a stalled device")
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				t.Errorf("error %v matches context.DeadlineExceeded: only the caller's own deadline may", err)
-			}
-			if got := errors.Is(err, errDeviceRequestTimeout); got != tc.wantTimeout {
-				t.Errorf("errors.Is(err, errDeviceRequestTimeout) = %v, want %v (err: %v)", got, tc.wantTimeout, err)
-			}
-		})
+// stallCase is one row of TestPangoTransportBoundsStalledDevice.
+type stallCase struct {
+	name        string
+	useCA       bool
+	timeout     time.Duration
+	stall       func(w http.ResponseWriter, release <-chan struct{}, flushed chan<- struct{})
+	wantTimeout bool   // the deadline error; otherwise the 101 refusal
+	wantText    string // text the 101 refusal must carry
+	wantFlushed bool   // the handler flushed its headers and a partial body (checked after the call returns)
+}
+
+// runStallCase serves tc.stall from a TLS server and checks how a pango call
+// against it ends.
+func runStallCase(t *testing.T, tc stallCase) {
+	t.Helper()
+	release := make(chan struct{})
+	flushed := make(chan struct{})
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tc.stall(w, release, flushed)
+	}))
+	// Cleanups run last in, first out: release the handlers before Close waits for
+	// them.
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { close(release) })
+
+	cfg := configFor(t, ts)
+	cfg.RequestTimeout = tc.timeout
+	if tc.useCA {
+		cfg.SkipVerify = false
+		cfg.CACert = writeServerCertPEM(t, ts)
+	}
+	c, err := buildPangoClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = retrieveWithin(t, c, tc.timeout+5*time.Second)
+	if err == nil {
+		t.Fatal("RetrieveSystemInfo succeeded against a stalled device")
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error %v matches context.DeadlineExceeded: only the caller's own deadline may", err)
+	}
+	if got := errors.Is(err, errDeviceRequestTimeout); got != tc.wantTimeout {
+		t.Errorf("errors.Is(err, errDeviceRequestTimeout) = %v, want %v (err: %v)", got, tc.wantTimeout, err)
+	}
+	if tc.wantText != "" && !strings.Contains(err.Error(), tc.wantText) {
+		t.Errorf("error %q does not say %q", err, tc.wantText)
+	}
+	if tc.wantFlushed {
+		select {
+		case <-flushed:
+		default:
+			t.Error("the handler never flushed its response headers, so this row did not exercise a stalled body")
+		}
 	}
 }
 
