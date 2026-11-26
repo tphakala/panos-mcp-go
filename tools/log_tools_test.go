@@ -941,8 +941,11 @@ func TestLogQuerySchemaBounds(t *testing.T) {
 }
 
 // TestLogQuerySlotIsFreedOnEveryReturn runs more queries than there are slots, one
-// after another on one Deps, for each way a query can end. A path that kept its
-// slot would make a later query fail with the limit error.
+// after another on one Deps, for five ways a query can end: a collected page, a
+// failed job, an undecodable page, an unrecognized result and a failed submit. A
+// path that kept its slot would make a later query fail with the limit error.
+// Poll errors, a JobWait timeout and caller cancellation are not rows here; they
+// leave through the same deferred release.
 func TestLogQuerySlotIsFreedOnEveryReturn(t *testing.T) {
 	submit := fakeRoute{Match: logSubmit(), Body: logSubmitBody}
 	cases := []struct {
