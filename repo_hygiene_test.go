@@ -49,8 +49,8 @@ func TestGoVersionCoordinated(t *testing.T) {
 // version, so builds pick up standard library fixes without a commit: go.mod
 // names only the minor and has no toolchain line, the Dockerfile tag has no
 // patch, every actions/setup-go step in .github/workflows reads go.mod with
-// check-latest: true, and every govulncheck action step reads go.mod without
-// turning check-latest off.
+// check-latest: true, and every govulncheck action step in govulncheck.yml
+// blanks go-version-input, reads go.mod and does not turn check-latest off.
 func TestGoVersionTracksLatestPatch(t *testing.T) {
 	mod := readRepoFile(t, "go.mod")
 	if !regexp.MustCompile(`(?m)^go \d+\.\d+$`).MatchString(mod) {
